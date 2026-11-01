@@ -1,0 +1,208 @@
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: "Geist Variable", Geist, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+:root {
+  color-scheme: dark;
+  --background: #030712;
+  --card: #0b1220;
+  --popover: #0f172a;
+  --muted: #111827;
+  --accent: #1f2937;
+  --border: #1f2937;
+  --input: #374151;
+  --foreground: #f3f4f6;
+  --muted-foreground: #9ca3af;
+  --primary: #465fff;
+  --primary-hover: #2b45e0;
+  --primary-soft: rgba(70, 95, 255, 0.15);
+  --primary-foreground: #ffffff;
+  --ring: #7592ff;
+  --destructive: #f23645;
+  --positive: #089981;
+  --negative: #f23645;
+  --radius: 0.375rem;
+
+  --pine-bg: #030712;
+  --pine-fg: #f3f4f6;
+  --pine-gutter-bg: #0b1220;
+  --pine-gutter: #64748b;
+  --pine-active-line: rgba(255, 255, 255, 0.03);
+  --pine-selection: rgba(70, 95, 255, 0.28);
+  --pine-caret: #465fff;
+  --pine-tooltip-bg: #0f172a;
+  --pine-tooltip-border: #1f2937;
+  --pine-keyword: #7592ff;
+  --pine-atom: #c2d6ff;
+  --pine-variable: #f3f4f6;
+  --pine-function: #c2d6ff;
+  --pine-namespace: #9cb9ff;
+  --pine-property: #c2d6ff;
+  --pine-number: #f0b90b;
+  --pine-string: #34d399;
+  --pine-comment: #6b7280;
+  --pine-meta: #7592ff;
+  --pine-operator: #9ca3af;
+  --pine-punctuation: #9ca3af;
+  --pine-invalid: #f23645;
+}
+
+html.light {
+  color-scheme: light;
+  --background: #f8fafc;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #f1f5f9;
+  --accent: #e2e8f0;
+  --border: #e2e8f0;
+  --input: #cbd5e1;
+  --foreground: #0f172a;
+  --muted-foreground: #64748b;
+  --primary: #465fff;
+  --primary-hover: #2b45e0;
+  --primary-soft: rgba(70, 95, 255, 0.1);
+  --primary-foreground: #ffffff;
+  --ring: #465fff;
+  --destructive: #e11d48;
+  --positive: #059669;
+  --negative: #e11d48;
+
+  --pine-bg: #ffffff;
+  --pine-fg: #0f172a;
+  --pine-gutter-bg: #f8fafc;
+  --pine-gutter: #94a3b8;
+  --pine-active-line: rgba(15, 23, 42, 0.035);
+  --pine-selection: rgba(70, 95, 255, 0.18);
+  --pine-caret: #465fff;
+  --pine-tooltip-bg: #ffffff;
+  --pine-tooltip-border: #e2e8f0;
+  --pine-keyword: #2b45e0;
+  --pine-atom: #1a33b8;
+  --pine-variable: #0f172a;
+  --pine-function: #1a33b8;
+  --pine-namespace: #2b45e0;
+  --pine-property: #1a33b8;
+  --pine-number: #b45309;
+  --pine-string: #047857;
+  --pine-comment: #94a3b8;
+  --pine-meta: #2b45e0;
+  --pine-operator: #475569;
+  --pine-punctuation: #64748b;
+  --pine-invalid: #e11d48;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #1f2937 transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #1f2937;
+    border-radius: 4px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #374151;
+  }
+
+  html.light * {
+    scrollbar-color: #cbd5e1 transparent;
+  }
+
+  html.light *::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+  }
+
+  html.light *::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+[data-sonner-toaster] {
+  --normal-bg: var(--popover);
+  --normal-border: var(--border);
+  --normal-text: var(--foreground);
+  --success-bg: var(--popover);
+  --success-border: var(--border);
+  --success-text: var(--positive);
+  --error-bg: var(--popover);
+  --error-border: color-mix(in srgb, var(--negative) 40%, var(--border));
+  --error-text: var(--negative);
+}
