@@ -1,18 +1,19 @@
 # Screener v2
 
-A Binance USDT-M perpetual futures screener with Vela charts and a Pine Script
-scanner. The UI is a Vite + React + TypeScript app; there is no private backend
-and no API key.
+A Binance USDT-M and OKX USDT perpetual futures screener with Vela charts and a
+Pine Script scanner. The UI is a Vite + React + TypeScript app; there is no
+private backend and no API key.
 
 ## Stack
 
 - Vite 8, React 19, TypeScript, Tailwind CSS v4
 - Base UI, Lucide, Sonner, Geist Sans / Geist Mono
-- `@luxalgo/vela` workspace and bundled Binance provider
+- `@luxalgo/vela` workspace; data comes from the venue sidecar
 - `@luxalgo/vela-pinets` + `pinets` for Pine Script indicators and the scanner
 - CodeMirror 6 (`@uiw/react-codemirror`) with a Pine language mode from the
   local Vela-pinets `editor` entry
-- Binance public futures REST API
+- Public REST/WS market data from Binance and OKX, normalized by `VenueAdapter`
+- Electron shell for the desktop build; the sidecar runs as a child process
 
 The app resolves `@luxalgo/vela` and `@luxalgo/vela-pinets/editor` to the local
 `../Vela` and `../Vela-pinets` checkouts, so chart and editor changes run live.
@@ -30,12 +31,25 @@ npm test
 npm run build
 ```
 
-The public-data sidecar skeleton runs separately:
+The public-data sidecar runs separately in development:
 
 ```bash
 npm run sidecar
 # http://127.0.0.1:8787/health
 ```
+
+## Desktop build
+
+```bash
+npm run electron:start   # build the app + sidecar, launch Electron
+npm run electron:pack    # release/win-unpacked/Screener.exe
+```
+
+The packaged app starts the bundled sidecar as a child process on
+`127.0.0.1:8787` and serves the UI from a stable local port, so tabs, the
+indicator library, and the Vela workspace persist between launches. To run a
+headless check, launch `Screener.exe --smoke`: it loads the app, waits for the
+table, writes a JSON result, and exits non-zero if the table stays empty.
 
 ## What it does
 

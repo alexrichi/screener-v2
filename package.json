@@ -3,13 +3,20 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "Binance and OKX screener with Vela charts and Pine scans",
+  "author": "Screener",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preview": "vite preview",
-    "sidecar": "tsx sidecar/server.ts"
+    "sidecar": "tsx sidecar/server.ts",
+    "sidecar:build": "node electron/build-sidecar.mjs",
+    "electron:assets": "npm run build && npm run sidecar:build",
+    "electron:start": "npm run electron:assets && electron .",
+    "electron:pack": "npm run electron:assets && electron-builder --win dir"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -43,10 +50,38 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.1.2",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vite": "^8.3.5",
     "vitest": "^4.1.0"
+  },
+  "build": {
+    "appId": "com.screener.v2",
+    "productName": "Screener",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-electron/sidecar.cjs",
+        "to": "sidecar.cjs"
+      }
+    ],
+    "win": {
+      "target": [
+        "dir"
+      ]
+    }
   }
 }

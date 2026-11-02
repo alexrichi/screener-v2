@@ -133,6 +133,9 @@ sidecar/
   hub.ts                          one adapter per venue; shared caches/fan-out
   stream.ts                       Binance kline WS plus a REST-polling stream for
                                   venues without a WS feed
+electron/
+  main.cjs                        desktop shell: sidecar child, static server, window
+  build-sidecar.mjs               esbuild bundle of sidecar/server.ts for packaging
 test/market.test.ts               pure logic tests
 test/venues.test.ts               instrument, adapter and rate-limit tests
 ```
@@ -308,6 +311,10 @@ Reach for the cheapest tool that proves the thing:
   persistence, and the scanner. Start `npm run dev` and drive the real page.
 - **Production preview** for worker or build changes: `npm run build` then
   `npm run preview -- --port 4173`.
+- **Electron** for desktop changes: `npm run electron:pack`, then run
+  `release/win-unpacked/Screener.exe --smoke`. The smoke run writes a JSON result
+  (`%TEMP%\screener-v2-smoke.json` by default) with the rendered table row count
+  and exits non-zero when the table stays empty.
 
 Two rules that earn their keep:
 
