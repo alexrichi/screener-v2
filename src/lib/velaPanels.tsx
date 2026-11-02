@@ -1,0 +1,156 @@
+import { useSyncExternalStore, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  registerIcon,
+  registerSidePanel,
+  type WidgetContext,
+} from '@luxalgo/vela/plugin';
+
+export type VelaPanelId = 'screener' | 'pine' | 'library';
+
+interface PanelMount {
+  body: HTMLElement;
+  toggle: (id: string, open?: boolean) => void;
+}
+
+const mounts = new Map<VelaPanelId, PanelMount>();
+const listeners = new Set<() => void>();
+let version = 0;
+let currentToggle: ((id: string, open?: boolean) => void) | null = null;
+let pendingOpen: VelaPanelId | null = null;
+
+function emit(): void {
+  version += 1;
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function snapshot(): number {
+  return version;
+}
+
+/** Open one of the workspace panels from app code. No-op until the workspace mounts. */
+export function openVelaPanel(id: VelaPanelId): void {
+  if (currentToggle) currentToggle(id, true);
+  else pendingOpen = id;
+}
+
+function mountPanel(
+  id: VelaPanelId,
+  ctx: WidgetContext,
+  body: HTMLElement,
+): () => void {
+  const toggle = (panelId: string, open?: boolean) => ctx.togglePanel(panelId, open);
+  const mount: PanelMount = { body, toggle };
+  mounts.set(id, mount);
+  currentToggle = toggle;
+  // The dock body starts with the kit's panel padding; the app panels own their
+  // internal scrolling and expect the full body height.
+  body.style.padding = '0';
+  body.style.overflow = 'hidden';
+  body.style.display = 'flex';
+  body.style.flexDirection = 'column';
+  body.style.minHeight = '0';
+  body.classList.add('screener-panel-body');
+  emit();
+
+  if (pendingOpen === id) {
+    pendingOpen = null;
+    queueMicrotask(() => {
+      if (mounts.get(id) === mount) toggle(id, true);
+    });
+  }
+
+  return () => {
+    if (mounts.get(id) === mount) mounts.delete(id);
+    if (currentToggle === toggle) currentToggle = null;
+    emit();
+  };
+}
+
+registerIcon(
+  'screener-panel',
+  '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5"/><path d="M1.8 6h12.4M6.2 6v7.5"/></svg>',
+);
+registerIcon(
+  'pine-panel',
+  '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/></svg>',
+);
+registerIcon(
+  'library-panel',
+  '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2.5h8.5A1.5 1.5 0 0 1 13 4v9.5H4.5A1.5 1.5 0 0 1 3 12z"/><path d="M3 12a1.5 1.5 0 0 1 1.5-1.5H13"/></svg>',
+);
+
+registerSidePanel({
+  id: 'screener',
+  title: 'Screener',
+  icon: 'screener-panel',
+  order: 40,
+  width: 420,
+  resizable: true,
+  minWidth: 320,
+  maxWidth: 760,
+  maximizable: true,
+  mount: (ctx, body) => {
+    const destroy = mountPanel('screener', ctx, body);
+    // First run after the dock migration: keep the table visible by default.
+    try {
+      if (!localStorage.getItem('screener.panels.welcomed')) {
+        localStorage.setItem('screener.panels.welcomed', '1');
+        queueMicrotask(() => {
+          if (mounts.get('screener')?.body === body) ctx.togglePanel('screener', true);
+        });
+      }
+    } catch {
+      /* storage unavailable — still show the panel this session */
+    }
+    return { destroy };
+  },
+});
+
+registerSidePanel({
+  id: 'pine',
+  title: 'Pine',
+  icon: 'pine-panel',
+  order: 50,
+  width: 460,
+  resizable: true,
+  minWidth: 340,
+  maxWidth: 900,
+  maximizable: true,
+  mount: (ctx, body) => ({ destroy: mountPanel('pine', ctx, body) }),
+});
+
+registerSidePanel({
+  id: 'library',
+  title: 'Library',
+  icon: 'library-panel',
+  order: 60,
+  width: 380,
+  resizable: true,
+  minWidth: 300,
+  maxWidth: 620,
+  maximizable: true,
+  mount: (ctx, body) => ({ destroy: mountPanel('library', ctx, body) }),
+});
+
+interface Props {
+  panels: Partial<Record<VelaPanelId, ReactNode>>;
+}
+
+/** Renders the app panels into the Vela side-panel bodies. */
+export function VelaPanelPortals({ panels }: Props) {
+  useSyncExternalStore(subscribe, snapshot, () => 0);
+  return (
+    <>
+      {(Object.entries(panels) as Array<[VelaPanelId, ReactNode]>).map(([id, node]) => {
+        const mount = mounts.get(id);
+        return mount ? createPortal(node, mount.body, id) : null;
+      })}
+    </>
+  );
+}

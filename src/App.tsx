@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type {
-  DockTab,
   MarketRow,
   PlotColumn,
   ScanProgress,
@@ -13,7 +12,6 @@ import type {
 import { AppHeader } from './components/AppHeader';
 import { LibraryPanel } from './components/LibraryPanel';
 import { PinePanel } from './components/PinePanel';
-import { RightDock } from './components/RightDock';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
 import { DEFAULT_VIEW, isScreenerView } from './lib/view';
@@ -21,6 +19,7 @@ import {
   VelaWorkspaceHost,
   type VelaWorkspaceHandle,
 } from './components/VelaWorkspaceHost';
+import { openVelaPanel, VelaPanelPortals } from './lib/velaPanels';
 import { useMarketRows } from './hooks/useMarketRows';
 import {
   isBoolean,
@@ -112,10 +111,6 @@ function makeTab(symbol: string, layout: string, timeframe = '15'): WorkspaceTab
   };
 }
 
-function isDockTabValue(value: unknown): value is DockTab {
-  return value === 'screener' || value === 'pine' || value === 'library';
-}
-
 const NEW_SCRIPT = `//@version=6
 indicator("My indicator")
 
@@ -177,22 +172,6 @@ export default function App() {
     tabs[0]?.id ?? '',
     isString,
   );
-  const [dockOpen, setDockOpen] = usePersistedState<boolean>(
-    'screener.dock.open',
-    true,
-    isBoolean,
-  );
-  const [dockWidth, setDockWidth] = usePersistedState<number>(
-    'screener.dock.width',
-    420,
-    isNumber,
-  );
-  const [dockTab, setDockTab] = usePersistedState<DockTab>(
-    'screener.dock.tab',
-    'screener',
-    isDockTabValue,
-  );
-  const [dockExpanded, setDockExpanded] = useState(false);
   const [view, setView] = usePersistedState<ScreenerView>(
     'screener.view',
     DEFAULT_VIEW,
@@ -232,6 +211,7 @@ export default function App() {
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const lastMarketError = useRef<string | null>(null);
   const workspaceRef = useRef<VelaWorkspaceHandle | null>(null);
+  const newTabRef = useRef<string | null>(null);
   const scanner = useScanner();
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
@@ -243,6 +223,12 @@ export default function App() {
     if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) return;
     setActiveTabId(tabs[0]?.id ?? '');
   }, [activeTabId, tabs, setActiveTabId]);
+
+  useEffect(() => {
+    if (!activeTabId || newTabRef.current !== activeTabId) return;
+    newTabRef.current = null;
+    openVelaPanel('screener');
+  }, [activeTabId]);
 
   useEffect(() => {
     if (currentSavedId && !currentSaved) setCurrentSavedId('');
@@ -366,6 +352,7 @@ export default function App() {
         settings.defaultLayout,
         activeTab?.timeframe ?? '15',
       );
+      newTabRef.current = tab.id;
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tab.id);
     },
@@ -577,9 +564,9 @@ export default function App() {
       if (dirty && !window.confirm('Discard unsaved changes?')) return;
       setScript(item.source);
       setCurrentSavedId(id);
-      setDockTab('pine');
+      openVelaPanel('pine');
     },
-    [dirty, library.items, setCurrentSavedId, setDockTab, setScript],
+    [dirty, library.items, setCurrentSavedId, setScript],
   );
 
   const showSource = useCallback(
@@ -589,10 +576,9 @@ export default function App() {
       const saved = library.items.find((item) => item.source === source);
       setScript(source);
       setCurrentSavedId(saved?.id ?? '');
-      setDockOpen(true);
-      setDockTab('pine');
+      openVelaPanel('pine');
     },
-    [dirty, library.items, setCurrentSavedId, setDockOpen, setDockTab, setScript],
+    [dirty, library.items, setCurrentSavedId, setScript],
   );
 
   const usePreset = useCallback(
@@ -608,8 +594,8 @@ export default function App() {
     if (dirty && !window.confirm('Discard unsaved changes?')) return;
     setScript(NEW_SCRIPT);
     setCurrentSavedId('');
-    setDockTab('pine');
-  }, [dirty, setCurrentSavedId, setDockTab, setScript]);
+    openVelaPanel('pine');
+  }, [dirty, setCurrentSavedId, setScript]);
 
   const renameIndicator = useCallback((item: SavedIndicator) => {
     setSaveDialog({
@@ -634,10 +620,10 @@ export default function App() {
       setLibrary((prev) => ({ version: 1, items: [...prev.items, copy] }));
       setScript(copy.source);
       setCurrentSavedId(copy.id);
-      setDockTab('pine');
+      openVelaPanel('pine');
       toast.success(`Duplicated as ${name}`);
     },
-    [library.items, setCurrentSavedId, setDockTab, setLibrary, setScript],
+    [library.items, setCurrentSavedId, setLibrary, setScript],
   );
 
   const deleteIndicator = useCallback(
@@ -677,7 +663,7 @@ export default function App() {
           setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
           setScript(item.source);
           setCurrentSavedId(item.id);
-          setDockTab('pine');
+          openVelaPanel('pine');
           toast.success(`Imported ${item.name}`);
           return;
         }
@@ -703,7 +689,7 @@ export default function App() {
         });
       }
     },
-    [library.items, setCurrentSavedId, setDockTab, setLibrary, setScript],
+    [library.items, setCurrentSavedId, setLibrary, setScript],
   );
 
   const addSavedToChart = useCallback(
@@ -715,22 +701,22 @@ export default function App() {
             ? `Added ${item.name} to ${count} chart${count === 1 ? '' : 's'}`
             : `Added ${item.name} to the active chart`,
         );
-        setDockTab('screener');
+        openVelaPanel('screener');
       } else {
         toast.error('The chart is not ready yet');
       }
     },
-    [setDockTab],
+    [],
   );
 
   const scanSaved = useCallback(
     (item: SavedIndicator) => {
       setScript(item.source);
       setCurrentSavedId(item.id);
-      setDockTab('pine');
+      openVelaPanel('pine');
       runScan(item.source);
     },
-    [runScan, setCurrentSavedId, setDockTab, setScript],
+    [runScan, setCurrentSavedId, setScript],
   );
 
   const saveSettings = useCallback(
@@ -777,79 +763,73 @@ export default function App() {
           )}
         </section>
 
-        <RightDock
-          open={dockOpen}
-          expanded={dockExpanded}
-          width={dockWidth}
-          tab={dockTab}
-          onTabChange={setDockTab}
-          onToggle={() => setDockOpen((prev) => !prev)}
-          onToggleExpanded={() => setDockExpanded((prev) => !prev)}
-          onWidthChange={setDockWidth}
-          screener={
-            <ScreenerTable
-              rows={tableRows}
-              view={view}
-              onViewChange={setView}
-              favorites={favoriteSymbols}
-              onToggleFavorite={toggleFavorite}
-              selectedSymbol={activeTab?.symbol ?? ''}
-              openSymbols={openSymbols}
-              scanResults={scanResults}
-              plotColumns={plotColumns}
-              loading={loading}
-              error={error}
-              onSelect={selectSymbol}
-              onOpenTab={addTab}
-              onCloseTab={closeTabBySymbol}
-            />
-          }
-          pine={
-            <PinePanel
-              script={script}
-              onScriptChange={setScript}
-              savedItems={library.items}
-              currentSavedId={currentSavedId}
-              dirty={dirty}
-              onSelectSaved={selectSaved}
-              onUsePreset={usePreset}
-              onSave={saveCurrent}
-              onNew={newDraft}
-              scanTimeframe={settings.scanTimeframe}
-              onScanTimeframeChange={(scanTimeframe) =>
-                setSettings((prev) => ({ ...prev, scanTimeframe }))
-              }
-              scanBars={settings.scanBars}
-              onScanBarsChange={(scanBars) =>
-                setSettings((prev) => ({ ...prev, scanBars }))
-              }
-              onApply={applyScript}
-              onScan={() => runScan()}
-              onCancel={cancelScan}
-              scanning={scanner.running}
-              progress={scanProgress}
-              error={scanErrorMessage}
-              resultCount={scanResults.size}
-              plotColumns={plotColumns}
-              lastScanMs={lastScanMs}
-            />
-          }
-          library={
-            <LibraryPanel
-              items={library.items}
-              currentId={currentSavedId}
-              onNew={newDraft}
-              onEdit={(item) => selectSaved(item.id)}
-              onAdd={addSavedToChart}
-              onScan={scanSaved}
-              onRename={renameIndicator}
-              onDuplicate={duplicateIndicator}
-              onDelete={deleteIndicator}
-              onExport={exportIndicator}
-              onExportAll={exportLibrary}
-              onImportFile={(file) => void importLibraryFile(file)}
-            />
-          }
+        <VelaPanelPortals
+          panels={{
+            screener: (
+              <ScreenerTable
+                rows={tableRows}
+                view={view}
+                onViewChange={setView}
+                favorites={favoriteSymbols}
+                onToggleFavorite={toggleFavorite}
+                selectedSymbol={activeTab?.symbol ?? ''}
+                openSymbols={openSymbols}
+                scanResults={scanResults}
+                plotColumns={plotColumns}
+                loading={loading}
+                error={error}
+                onSelect={selectSymbol}
+                onOpenTab={addTab}
+                onCloseTab={closeTabBySymbol}
+              />
+            ),
+            pine: (
+              <PinePanel
+                script={script}
+                onScriptChange={setScript}
+                savedItems={library.items}
+                currentSavedId={currentSavedId}
+                dirty={dirty}
+                onSelectSaved={selectSaved}
+                onUsePreset={usePreset}
+                onSave={saveCurrent}
+                onNew={newDraft}
+                scanTimeframe={settings.scanTimeframe}
+                onScanTimeframeChange={(scanTimeframe) =>
+                  setSettings((prev) => ({ ...prev, scanTimeframe }))
+                }
+                scanBars={settings.scanBars}
+                onScanBarsChange={(scanBars) =>
+                  setSettings((prev) => ({ ...prev, scanBars }))
+                }
+                onApply={applyScript}
+                onScan={() => runScan()}
+                onCancel={cancelScan}
+                scanning={scanner.running}
+                progress={scanProgress}
+                error={scanErrorMessage}
+                resultCount={scanResults.size}
+                plotColumns={plotColumns}
+                lastScanMs={lastScanMs}
+              />
+            ),
+            library: (
+              <LibraryPanel
+                items={library.items}
+                currentId={currentSavedId}
+                onNew={newDraft}
+                onEdit={(item) => selectSaved(item.id)}
+                onAdd={addSavedToChart}
+                onScan={scanSaved}
+                onRename={renameIndicator}
+                onDuplicate={duplicateIndicator}
+                onDelete={deleteIndicator}
+                onExport={exportIndicator}
+                onExportAll={exportLibrary}
+                onImportFile={(file) => void importLibraryFile(file)}
+              />
+            ),
+          }}
         />
       </main>
 

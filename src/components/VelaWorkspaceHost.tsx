@@ -10,6 +10,7 @@ import { registerIcon, registerLegendAction } from '@luxalgo/vela/plugin';
 import { PineWorkerEngine } from '@luxalgo/vela-pinets';
 import type { ThemeMode, WorkspaceTab } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
+import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 
 export interface SavedScript {
@@ -198,15 +199,35 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         }, 120);
       };
 
+      const syncMaximize = () => {
+        if (wsRef.current !== ws) return;
+        setMaximizeBridge({
+          maximized: ws.maximizedCell !== null,
+          multi: ws.cells().length > 1,
+          toggle: () => {
+            if (ws.maximizedCell !== null) ws.maximizeCell(null);
+            else if (ws.active) ws.maximizeCell(ws.active.id);
+          },
+        });
+        ws.refreshActions();
+      };
+      syncMaximize();
+
       const offState = ws.on('state:changed', scheduleSync);
       const offActive = ws.on('cell:active', scheduleSync);
-      const offLayout = ws.on('layout:changed', scheduleSync);
+      const offLayout = ws.on('layout:changed', () => {
+        scheduleSync();
+        syncMaximize();
+      });
+      const offMaximized = ws.on('cell:maximized', syncMaximize);
 
       return () => {
         if (timer !== null) window.clearTimeout(timer);
         offState();
         offActive();
         offLayout();
+        offMaximized();
+        clearMaximizeBridge();
         ws.destroy();
         if (wsRef.current === ws) wsRef.current = null;
       };

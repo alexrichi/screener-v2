@@ -1,7 +1,5 @@
 export type ThemeMode = 'dark' | 'light';
 
-export type DockTab = 'screener' | 'pine' | 'library';
-
 export type MarketFilter = 'all' | 'gainers' | 'losers' | 'favorites';
 
 export interface MarketRow {

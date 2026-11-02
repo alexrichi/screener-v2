@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import {
-  Code2,
   FilePlus2,
   Layers,
   Play,
@@ -92,8 +91,6 @@ export function PinePanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-2">
-        <Code2 className="size-3.5 shrink-0 text-primary" />
-        <span className="shrink-0 text-[12px] font-semibold text-foreground">Pine</span>
         {dirty ? (
           <span
             title="Unsaved changes"
@@ -110,7 +107,7 @@ export function PinePanel({
               if (preset) onUsePreset(preset.source);
             }
           }}
-          className="ml-1 min-w-0 flex-1 text-[11px]"
+          className="min-w-0 flex-1 text-[11px]"
           title={savedName ?? 'Script'}
         >
           <option value="draft">Draft{savedName ? ` · ${savedName}` : ''}</option>
