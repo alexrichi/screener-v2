@@ -71,9 +71,14 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
 - Screener table with search, gainers/losers filters, sorting, resizable and
   reorderable columns, and per-row actions. Screener, Pine, and Library open as
   Vela side panels from the chart header; the open panel and width persist.
-- Favorites: star a symbol and open the `Favorites` tab. Saved to localStorage
-  per instrument (`venue:kind:nativeId`) and kept visible even when a symbol
-  falls outside `topN` or the volume filter.
+- Favorites: named lists managed from the star popover in the screener toolbar.
+  `Default` is the default list; star a symbol to add it to the active list.
+  Lists are stored at `screener.favorites.v2` per instrument
+  (`venue:kind:nativeId`), and the old `screener.favorites` key folds into the
+  default list. Create, rename, clear, or delete lists; import a JSON/text file
+  into the active list; export every list as JSON. Favorites stay visible in the
+  `Favorites` tab even when a symbol falls outside `topN` or the volume filter.
+  The active list name labels the favorites button in the screener toolbar.
 - Pine editor with presets and CodeMirror highlighting, completions, folding,
   search, and lint. Apply a script to the active chart or all charts in the
   workspace.

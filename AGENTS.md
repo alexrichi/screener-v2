@@ -103,6 +103,7 @@ src/
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
+    favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
@@ -185,11 +186,18 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   on pan, so the host listens to `viewport:changed` and raises the cell's depth
   by 5000 bars (cap 100k) when the viewport reaches the oldest loaded bar;
   `history:complete` with reason `genesis` stops that cell from extending.
-- `App` keeps the global favorite list at `screener.favorites`, keyed by
-  `instrument.key` (`venue:kind:nativeId`). Legacy bare Binance tickers migrate
-  on read. The table receives the trimmed universe plus any favorite outside it,
-  so favorites stay visible in the `Favorites` tab regardless of
-  `topN`/`minVolume`; the scanner still uses the trimmed universe only.
+- `App` keeps named favorite lists at `screener.favorites.v2`
+  (`{ version: 2, lists, activeListId }`), keyed by `instrument.key`
+  (`venue:kind:nativeId`). The `default` list (named `Default`) starts empty,
+  can be renamed and edited, and cannot be deleted; other lists are created,
+  renamed, cleared, and deleted from the star popover. Legacy
+  `screener.favorites` items fold into the default list on first read. The active
+  list name labels the favorites button, while the panel title stays `Screener`.
+  Import adds every ticker to the active list; list names in the file are
+  ignored. Export writes every list as JSON. The table receives the trimmed
+  universe plus any active-list favorite outside it, so favorites stay visible in
+  the `Favorites` tab regardless of `topN`/`minVolume`; the scanner still uses the
+  trimmed universe only.
 - A table row click opens `instrument.velaSymbol`, so the active cell follows the
   row's venue. The Vela host projects that change through `setSymbol`.
 - The venue filter lives at `screener.marketVenues`; unselected venues are not
@@ -383,9 +391,14 @@ Useful browser probes:
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label; the
   selected row is matched by its venue-qualified symbol.
-- Starring a row keeps it in `Favorites` after reload and after lowering `topN`
-  so it falls out of the trimmed universe; the star click does not change the
-  active workspace symbol. Legacy bare favorites migrate to `binance:perp:...`.
+- Starring a row keeps it in the active list after reload and after lowering
+  `topN` so it falls out of the trimmed universe; the star click does not change
+  the active workspace symbol. The default list starts empty, can be renamed or
+  cleared, cannot be deleted, and legacy bare favorites migrate to
+  `binance:perp:...`. Creating `Majors`, switching to it, and starring an OKX row
+  keeps the lists separate; the favorites button follows the active list, the
+  panel title stays `Screener`, import lands in the active list, and export
+  writes every list.
 - Applying the RSI preset and scanning two venues adds RSI / Oversold /
   Overbought columns to both venues' rows; one venue's failure leaves the other
   values intact.

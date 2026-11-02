@@ -25,10 +25,25 @@ import {
   isBoolean,
   isNumber,
   isString,
-  isStringArray,
   usePersistedState,
 } from './lib/usePersistedState';
-import { favoriteKey, scanTargetsFor, trimRowsPerVenue } from './lib/universe';
+import { scanTargetsFor, trimRowsPerVenue } from './lib/universe';
+import {
+  activeFavoriteList,
+  addFavoriteList,
+  clearFavoriteList,
+  deleteFavoriteList,
+  FAVORITES_STORAGE_KEY,
+  initialFavoritesState,
+  isFavoritesState,
+  mergeFavoritesIntoActiveList,
+  parseFavoritesFile,
+  renameFavoriteList,
+  selectFavoriteList,
+  serializeFavorites,
+  toggleFavoriteInActiveList,
+  type FavoritesState,
+} from './lib/favorites';
 import {
   EMPTY_LIBRARY,
   INDICATOR_LIBRARY_KEY,
@@ -196,11 +211,13 @@ export default function App() {
     DEFAULT_VIEW,
     isScreenerView,
   );
-  const [favorites, setFavorites] = usePersistedState<string[]>(
-    'screener.favorites',
-    [],
-    isStringArray,
+  const fallbackFavorites = useMemo(initialFavoritesState, []);
+  const [favoritesState, setFavoritesState] = usePersistedState<FavoritesState>(
+    FAVORITES_STORAGE_KEY,
+    fallbackFavorites,
+    isFavoritesState,
   );
+  const activeFavorites = activeFavoriteList(favoritesState);
   const [script, setScript] = usePersistedState<string>(
     'screener.pine.script',
     DEFAULT_SCRIPT,
@@ -254,14 +271,6 @@ export default function App() {
   }, [currentSaved, currentSavedId, setCurrentSavedId]);
 
   useEffect(() => {
-    // Binance-only favorites predate the multi-venue table: migrate them in place.
-    setFavorites((prev) => {
-      const next = prev.map(favoriteKey);
-      return next.some((key, index) => key !== prev[index]) ? next : prev;
-    });
-  }, [setFavorites]);
-
-  useEffect(() => {
     if (!error) {
       lastMarketError.current = null;
       return;
@@ -277,8 +286,8 @@ export default function App() {
   );
 
   const favoriteSymbols = useMemo(
-    () => [...new Set(favorites.map(favoriteKey))],
-    [favorites],
+    () => [...new Set(activeFavorites.items)],
+    [activeFavorites.items],
   );
   const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols]);
 
@@ -295,11 +304,91 @@ export default function App() {
 
   const toggleFavorite = useCallback(
     (key: string) => {
-      setFavorites((prev) =>
-        prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
-      );
+      setFavoritesState((prev) => toggleFavoriteInActiveList(prev, key));
     },
-    [setFavorites],
+    [setFavoritesState],
+  );
+
+  const createFavoriteList = useCallback(
+    (name: string) => {
+      setFavoritesState((prev) => addFavoriteList(prev, name));
+    },
+    [setFavoritesState],
+  );
+
+  const renameFavoriteListById = useCallback(
+    (id: string, name: string) => {
+      setFavoritesState((prev) => renameFavoriteList(prev, id, name));
+    },
+    [setFavoritesState],
+  );
+
+  const deleteFavoriteListById = useCallback(
+    (id: string) => {
+      setFavoritesState((prev) => deleteFavoriteList(prev, id));
+    },
+    [setFavoritesState],
+  );
+
+  const clearFavoriteListById = useCallback(
+    (id: string) => {
+      setFavoritesState((prev) => clearFavoriteList(prev, id));
+    },
+    [setFavoritesState],
+  );
+
+  const selectFavoriteListById = useCallback(
+    (id: string) => {
+      setFavoritesState((prev) => selectFavoriteList(prev, id));
+    },
+    [setFavoritesState],
+  );
+
+  const exportFavorites = useCallback(() => {
+    downloadText(
+      'screener-favorites.json',
+      serializeFavorites(favoritesState),
+      'application/json;charset=utf-8',
+    );
+    toast.success('Favorites exported');
+  }, [favoritesState]);
+
+  const importFavorites = useCallback(
+    async (file: File) => {
+      try {
+        const parsed = parseFavoritesFile(await file.text());
+        const imported = parsed.lists.reduce(
+          (sum, list) => sum + list.items.length,
+          0,
+        );
+        if (imported === 0) {
+          toast.error('No favorite tickers found', {
+            description: parsed.skipped
+              ? `${parsed.skipped} entries skipped`
+              : undefined,
+          });
+          return;
+        }
+        setFavoritesState((prev) =>
+          mergeFavoritesIntoActiveList(prev, parsed.lists),
+        );
+        const details = [
+          `Added to ${activeFavorites.name}`,
+          parsed.skipped ? `${parsed.skipped} entries skipped` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        toast.success(
+          `Imported ${imported} favorite${imported === 1 ? '' : 's'}`,
+          { description: details || undefined },
+        );
+      } catch (cause) {
+        toast.error('Could not import favorites', {
+          description: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
+    },
+    [setFavoritesState, activeFavorites.name],
   );
 
   const openSymbols = useMemo(() => tabs.map((tab) => tab.symbol), [tabs]);
@@ -818,6 +907,16 @@ export default function App() {
                 onVenuesChange={setVenues}
                 venueErrors={venueErrors}
                 favorites={favoriteSymbols}
+                favoriteLists={favoritesState.lists}
+                activeFavoriteListId={activeFavorites.id}
+                activeFavoriteListName={activeFavorites.name}
+                onSelectFavoriteList={selectFavoriteListById}
+                onCreateFavoriteList={createFavoriteList}
+                onRenameFavoriteList={renameFavoriteListById}
+                onClearFavoriteList={clearFavoriteListById}
+                onDeleteFavoriteList={deleteFavoriteListById}
+                onImportFavorites={(file) => void importFavorites(file)}
+                onExportFavorites={exportFavorites}
                 onToggleFavorite={toggleFavorite}
                 selectedSymbol={activeTab?.symbol ?? ''}
                 openSymbols={openSymbols}

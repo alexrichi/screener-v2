@@ -11,13 +11,22 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Check,
+  ChevronDown,
   Columns3,
   Copy,
+  Download,
+  Eraser,
   ExternalLink,
   Filter,
   Globe,
+  Lock,
+  Pencil,
+  Plus,
   Search,
   Star,
+  Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -38,10 +47,11 @@ import {
   formatPct,
   formatPrice,
 } from '../lib/format';
+import { DEFAULT_FAVORITE_LIST_ID, type FavoriteList } from '../lib/favorites';
 import { mergeColumnOrder, nextSort } from '../lib/view';
 import { cn } from '../ui/cn';
-import { Input, Segmented } from '../ui/primitives';
-import { PopoverContent } from '../ui/overlays';
+import { Button, Input, Segmented } from '../ui/primitives';
+import { Modal, PopoverContent } from '../ui/overlays';
 import { sameVelaSymbol } from '../venues/instrument';
 import { VENUE_CATALOG, VENUE_IDS, venueLabel } from '../venues/catalog';
 import { VenueIcon } from '../venues/venueIcons';
@@ -97,6 +107,16 @@ interface Props {
   selectedSymbol: string;
   openSymbols: string[];
   favorites: string[];
+  favoriteLists: FavoriteList[];
+  activeFavoriteListId: string;
+  activeFavoriteListName: string;
+  onSelectFavoriteList: (id: string) => void;
+  onCreateFavoriteList: (name: string) => void;
+  onRenameFavoriteList: (id: string, name: string) => void;
+  onClearFavoriteList: (id: string) => void;
+  onDeleteFavoriteList: (id: string) => void;
+  onImportFavorites: (file: File) => void;
+  onExportFavorites: () => void;
   onToggleFavorite: (symbol: string) => void;
   scanResults: Map<string, ScanResult>;
   plotColumns: PlotColumn[];
@@ -117,6 +137,16 @@ export function ScreenerTable({
   selectedSymbol,
   openSymbols,
   favorites,
+  favoriteLists,
+  activeFavoriteListId,
+  activeFavoriteListName,
+  onSelectFavoriteList,
+  onCreateFavoriteList,
+  onRenameFavoriteList,
+  onClearFavoriteList,
+  onDeleteFavoriteList,
+  onImportFavorites,
+  onExportFavorites,
   onToggleFavorite,
   scanResults,
   plotColumns,
@@ -130,6 +160,13 @@ export function ScreenerTable({
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const [venuesOpen, setVenuesOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [listDialog, setListDialog] = useState<{
+    mode: 'create' | 'rename';
+    name: string;
+    error?: string;
+  } | null>(null);
+  const importRef = useRef<HTMLInputElement | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; symbol: string } | null>(null);
   const colRefs = useRef(new Map<string, HTMLTableColElement>());
   const resizeRef = useRef<{
@@ -306,6 +343,56 @@ export function ScreenerTable({
   };
 
   const allVenues = venues.length === VENUE_IDS.length;
+  const activeIsDefault = activeFavoriteListId === DEFAULT_FAVORITE_LIST_ID;
+
+  const openFavoriteDialog = (mode: 'create' | 'rename') => {
+    setFavoritesOpen(false);
+    setListDialog({
+      mode,
+      name: mode === 'rename' ? activeFavoriteListName : '',
+    });
+  };
+
+  const submitFavoriteDialog = () => {
+    if (!listDialog) return;
+    const name = listDialog.name.trim();
+    if (!name) {
+      setListDialog({ ...listDialog, error: 'Enter a list name' });
+      return;
+    }
+    const duplicate = favoriteLists.some(
+      (list) =>
+        list.id !== (listDialog.mode === 'rename' ? activeFavoriteListId : '') &&
+        list.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicate) {
+      setListDialog({ ...listDialog, error: 'That name is already used' });
+      return;
+    }
+    if (listDialog.mode === 'create') onCreateFavoriteList(name);
+    else onRenameFavoriteList(activeFavoriteListId, name);
+    setListDialog(null);
+  };
+
+  const deleteActiveFavoriteList = () => {
+    if (activeIsDefault || !window.confirm(`Delete "${activeFavoriteListName}"?`)) {
+      return;
+    }
+    onDeleteFavoriteList(activeFavoriteListId);
+    setFavoritesOpen(false);
+  };
+
+  const clearActiveFavoriteList = () => {
+    if (
+      favorites.length === 0 ||
+      !window.confirm(`Clear "${activeFavoriteListName}"?`)
+    ) {
+      return;
+    }
+    onClearFavoriteList(activeFavoriteListId);
+    setFavoritesOpen(false);
+  };
+
   const isOpen = (symbol: string) =>
     openSymbols.some((candidate) => sameVelaSymbol(candidate, symbol));
 
@@ -379,13 +466,13 @@ export function ScreenerTable({
                 }}
                 title={
                   favoriteSet.has(instrument.key)
-                    ? `Remove ${instrument.display} from favorites`
-                    : `Add ${instrument.display} to favorites`
+                    ? `Remove ${instrument.display} from ${activeFavoriteListName}`
+                    : `Add ${instrument.display} to ${activeFavoriteListName}`
                 }
                 aria-label={
                   favoriteSet.has(instrument.key)
-                    ? `Remove ${instrument.display} from favorites`
-                    : `Add ${instrument.display} to favorites`
+                    ? `Remove ${instrument.display} from ${activeFavoriteListName}`
+                    : `Add ${instrument.display} to ${activeFavoriteListName}`
                 }
                 className={cn(
                   'inline-flex size-4 shrink-0 items-center justify-center rounded hover:bg-accent',
@@ -497,8 +584,8 @@ export function ScreenerTable({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-2 py-2">
-        <div className="flex items-center gap-1.5">
-          <div className="relative min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="relative min-w-28 flex-1">
             <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
@@ -517,6 +604,138 @@ export function ScreenerTable({
               </button>
             ) : null}
           </div>
+          <Popover.Root open={favoritesOpen} onOpenChange={setFavoritesOpen}>
+            <Popover.Trigger
+              title={`Favorites: ${activeFavoriteListName}`}
+              aria-label={`Favorites lists: ${activeFavoriteListName}`}
+              className="inline-flex h-7 max-w-40 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Star
+                className={cn(
+                  'size-3.5 shrink-0',
+                  favorites.length > 0 && 'fill-current text-amber-400',
+                )}
+              />
+              <span className="min-w-0 truncate font-medium text-foreground">
+                {activeFavoriteListName}
+              </span>
+              <ChevronDown className="size-3 shrink-0 opacity-60" />
+            </Popover.Trigger>
+            <PopoverContent className="w-64 p-1" align="start">
+              <div className="flex items-center justify-between px-1.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Favorites</span>
+                <span className="font-mono tabular-nums">{favoriteLists.length}</span>
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {favoriteLists.map((list) => {
+                  const active = list.id === activeFavoriteListId;
+                  return (
+                    <button
+                      key={list.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectFavoriteList(list.id);
+                        setFavoritesOpen(false);
+                      }}
+                      className={cn(
+                        'flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[12px]',
+                        active
+                          ? 'bg-accent text-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{list.name}</span>
+                      {list.id === DEFAULT_FAVORITE_LIST_ID ? (
+                        <Lock
+                          className="size-3 shrink-0 text-muted-foreground/60"
+                          aria-label="Default list"
+                        />
+                      ) : null}
+                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                        {list.items.length}
+                      </span>
+                      {active ? (
+                        <Check className="size-3 shrink-0 text-primary" />
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="my-1 border-t border-border/70" />
+              <button
+                type="button"
+                onClick={() => openFavoriteDialog('create')}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <Plus className="size-3.5" />
+                New list…
+              </button>
+              <button
+                type="button"
+                onClick={() => openFavoriteDialog('rename')}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <Pencil className="size-3.5" />
+                Rename…
+              </button>
+              <button
+                type="button"
+                onClick={clearActiveFavoriteList}
+                disabled={favorites.length === 0}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Eraser className="size-3.5" />
+                Clear list…
+              </button>
+              <button
+                type="button"
+                onClick={deleteActiveFavoriteList}
+                disabled={activeIsDefault}
+                title={
+                  activeIsDefault ? 'The default list cannot be deleted' : undefined
+                }
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 className="size-3.5" />
+                Delete
+              </button>
+              <div className="my-1 border-t border-border/70" />
+              <button
+                type="button"
+                onClick={() => {
+                  setFavoritesOpen(false);
+                  importRef.current?.click();
+                }}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <Upload className="size-3.5" />
+                Import…
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onExportFavorites();
+                  setFavoritesOpen(false);
+                }}
+                disabled={favoriteLists.every((list) => list.items.length === 0)}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Download className="size-3.5" />
+                Export…
+              </button>
+            </PopoverContent>
+          </Popover.Root>
+          <input
+            ref={importRef}
+            type="file"
+            accept=".json,.txt,.csv,application/json,text/plain"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImportFavorites(file);
+              event.currentTarget.value = '';
+            }}
+          />
           <Popover.Root open={venuesOpen} onOpenChange={setVenuesOpen}>
             <Popover.Trigger
               title={`Filter venues (${venues.length}/${VENUE_IDS.length})`}
@@ -715,7 +934,7 @@ export function ScreenerTable({
                     ? 'Market data unavailable'
                     : filter === 'favorites'
                       ? favorites.length === 0
-                        ? 'No favorites yet. Click the star next to a symbol.'
+                        ? `No favorites in ${activeFavoriteListName} yet. Click the star next to a symbol.`
                         : 'No favorites match your search.'
                       : 'No markets found'}
             </span>
@@ -776,6 +995,50 @@ export function ScreenerTable({
             document.body,
           )
         : null}
+
+      <Modal
+        open={listDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setListDialog(null);
+        }}
+        title={listDialog?.mode === 'rename' ? 'Rename list' : 'New list'}
+        description="Favorites are saved on this device."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setListDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={submitFavoriteDialog}
+              disabled={!listDialog?.name.trim()}
+            >
+              {listDialog?.mode === 'rename' ? 'Rename' : 'Create'}
+            </Button>
+          </>
+        }
+      >
+        <label className="grid gap-1">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Name
+          </span>
+          <Input
+            autoFocus
+            value={listDialog?.name ?? ''}
+            placeholder="List name"
+            onChange={(event) => {
+              if (!listDialog) return;
+              setListDialog({ ...listDialog, name: event.target.value, error: undefined });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') submitFavoriteDialog();
+            }}
+          />
+        </label>
+        {listDialog?.error ? (
+          <p className="mt-2 text-[11px] text-negative">{listDialog.error}</p>
+        ) : null}
+      </Modal>
     </div>
   );
 }
