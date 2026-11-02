@@ -143,6 +143,7 @@ sidecar/
   venueStreams.ts                 OKX / Bybit / Bitget / Hyperliquid subscription specs
 electron/
   main.cjs                        desktop shell: sidecar child, static server, window
+  preload.cjs                     narrow title-bar/window IPC bridge
   build-sidecar.mjs               esbuild bundle of sidecar/server.ts for packaging
 test/market.test.ts               pure logic tests
 test/venues.test.ts               instrument, adapter and rate-limit tests
@@ -164,7 +165,10 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   in-flight de-duplication. A failed venue keeps the others visible and surfaces
   as a per-venue warning. `App` applies `minVolume` and `topN` **per venue**
   (`lib/universe.ts`), then merges by 24h quote volume before the table and
-  scanner see the rows.
+  scanner see the rows. OKX has no bulk REST funding endpoint: its adapter keeps
+  one `funding-rate` WebSocket subscription for every USDT swap and reads the
+  cached rates into `VenueTicker`. A socket failure leaves funding null without
+  failing the tickers.
 - Vela charts use `SidecarVelaProvider(venueId)`, one provider per entry in
   `venues/catalog.ts`. History, live candles and ranged backfills all go through
   the sidecar: the provider sends the requested depth (and `to` for older
@@ -296,6 +300,15 @@ with icons only; its header is empty but sortable (globe plus sort glyph) and it
 is not in the column picker. Keep numeric cells `font-mono` and `tabular-nums`,
 and keep the sticky Symbol cell opaque in all states.
 
+**The desktop window uses a custom title bar.** On Windows the native frame is
+hidden (`titleBarStyle: 'hidden'` + `titleBarOverlay`), and `AppHeader` is the
+title bar: `app-titlebar` is the drag region, interactive children are
+`no-drag`, and `padding-right` reserves the native window controls. The
+hamburger menu is Base UI `Menu` and drives existing React actions. Keep
+`electron/preload.cjs` as the only main/renderer bridge; it exposes title-bar
+theme and window actions, never `ipcRenderer` itself. The smoke result includes
+`titlebar.bridge`, `paddingRight`, and `appRegion`.
+
 **Theme changes touch two files.** App tokens live in `src/index.css`; the Vela
 theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will drift
 from the UI. Use semantic classes (`bg-background`, `text-muted-foreground`,
@@ -381,8 +394,14 @@ Useful browser probes:
   the picker entry survive a reload.
 - The Pine editor renders a non-empty `.cm-editor` with a gutter, highlighted
   tokens, and the resolved editor background from the active theme.
-- Toggling the theme changes `html.class` and the resolved body background; Vela's
-  chart background follows.
+- The topbar hamburger opens `File / View / Window / Help`; File and View actions
+  drive the existing React state, Window uses the preload bridge, and About opens
+  the app modal.
+- The Electron title bar has `titlebar.bridge=true`, a non-zero
+  `paddingRight`, and `appRegion=drag` in the smoke result; the native window
+  controls do not overlap the header buttons.
+- Toggling the theme updates both the app tokens and the native title-bar
+  overlay colors.
 - Reloading restores tabs, layout, active cell, theme, open side panel, and the applied Pine
   script.
 

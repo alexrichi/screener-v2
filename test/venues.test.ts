@@ -7,6 +7,7 @@ import {
   spotDisplay,
 } from '../src/venues/instrument';
 import { FakeVenueAdapter } from '../src/venues/fake';
+import { parseOkxFunding } from '../src/venues/okx';
 import { klineToBar } from '../sidecar/stream';
 import { VenueRegistry } from '../src/venues/registry';
 import {
@@ -77,6 +78,27 @@ describe('venue adapter contract', () => {
     const bars = await adapter.fetchBars(instruments[0]!, '15', 300);
     expect(bars).toHaveLength(300);
     expect(bars[0]!.openTime).toBeLessThan(bars[299]!.openTime);
+  });
+
+  it('parses OKX funding-rate frames and skips acks', () => {
+    const frame = JSON.stringify({
+      arg: { channel: 'funding-rate', instId: 'BTC-USDT-SWAP' },
+      data: [
+        {
+          instId: 'BTC-USDT-SWAP',
+          fundingRate: '0.0001000000000000',
+          nextFundingTime: '1793664000000',
+        },
+      ],
+    });
+    expect(parseOkxFunding(frame)).toEqual([
+      { instId: 'BTC-USDT-SWAP', funding: 0.0001, nextFunding: 1793664000000 },
+    ]);
+    expect(
+      parseOkxFunding(
+        JSON.stringify({ event: 'subscribe', arg: { channel: 'funding-rate' } }),
+      ),
+    ).toEqual([]);
   });
 
   it('rejects unknown venues', () => {

@@ -1,4 +1,5 @@
 import { RestClient } from 'okx-api';
+import { WebSocket } from 'ws';
 import { canonicalTimeframe, timeframeMs } from '../lib/timeframe';
 import { makeInstrument } from './instrument';
 import { RateLimiter, VenueRateLimitError } from './rateLimit';
@@ -53,6 +54,39 @@ function number(value: string | number | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export interface OkxFundingUpdate {
+  instId: string;
+  funding: number | null;
+  nextFunding: number | null;
+}
+
+/** Parse one OKX `funding-rate` WebSocket frame; ignore acks and pongs. */
+export function parseOkxFunding(raw: string): OkxFundingUpdate[] {
+  const message = JSON.parse(raw) as {
+    arg?: { channel?: string; instId?: string };
+    data?: Array<Record<string, string>>;
+  };
+  if (message.arg?.channel !== 'funding-rate' || !Array.isArray(message.data)) {
+    return [];
+  }
+  return message.data.flatMap((row) => {
+    const instId = row.instId ?? message.arg?.instId;
+    if (!instId) return [];
+    return [
+      {
+        instId,
+        funding: number(row.fundingRate),
+        nextFunding:
+          number(row.nextFundingTime) ?? number(row.fundingTime),
+      },
+    ];
+  });
+}
+
+const OKX_FUNDING_WS = 'wss://ws.okx.com:8443/ws/v5/public';
+const RECONNECT_MS = 2_000;
+const PING_MS = 25_000;
+
 function isRateLimit(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return text.includes('50011') || text.includes('429') || /rate limit/i.test(text);
@@ -87,7 +121,7 @@ export class OkxVenueAdapter implements VenueAdapter {
   readonly capabilities = {
     markets: ['perp'] as Array<'perp'>,
     stream: false,
-    funding: false,
+    funding: true,
     trading: false,
   };
   readonly rateLimit = OKX_RATE_LIMIT;
@@ -95,6 +129,11 @@ export class OkxVenueAdapter implements VenueAdapter {
   private readonly client = new RestClient();
   private readonly limiter = new RateLimiter(OKX_RATE_LIMIT);
   private instrumentsPromise: Promise<Instrument[]> | null = null;
+  private readonly funding = new Map<string, OkxFundingUpdate>();
+  private fundingSocket: WebSocket | null = null;
+  private fundingPing: NodeJS.Timeout | null = null;
+  private fundingRetry: NodeJS.Timeout | null = null;
+  private fundingStarted = false;
 
   private async request<T>(bucket: string, fn: () => Promise<T>): Promise<T> {
     try {
@@ -146,11 +185,75 @@ export class OkxVenueAdapter implements VenueAdapter {
     return this.instrumentsPromise;
   }
 
+  private clearFundingPing(): void {
+    if (this.fundingPing) {
+      clearInterval(this.fundingPing);
+      this.fundingPing = null;
+    }
+  }
+
+  private startFunding(instruments: Instrument[]): void {
+    if (this.fundingStarted) return;
+    this.fundingStarted = true;
+    this.connectFunding(instruments);
+  }
+
+  private connectFunding(instruments: Instrument[]): void {
+    if (this.fundingSocket || !this.fundingStarted) return;
+    const socket = new WebSocket(OKX_FUNDING_WS);
+    this.fundingSocket = socket;
+
+    socket.on('open', () => {
+      if (this.fundingSocket !== socket) return;
+      this.fundingPing = setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) socket.send('ping');
+      }, PING_MS);
+      socket.send(
+        JSON.stringify({
+          op: 'subscribe',
+          args: instruments.map((instrument) => ({
+            channel: 'funding-rate',
+            instId: instrument.nativeId,
+          })),
+        }),
+      );
+    });
+
+    socket.on('message', (raw) => {
+      try {
+        for (const update of parseOkxFunding(raw.toString())) {
+          this.funding.set(update.instId, update);
+        }
+      } catch {
+        /* ignore malformed frames and keep the last snapshot */
+      }
+    });
+
+    socket.on('close', () => {
+      if (this.fundingSocket !== socket) return;
+      this.fundingSocket = null;
+      this.clearFundingPing();
+      if (!this.fundingStarted || this.fundingRetry) return;
+      this.fundingRetry = setTimeout(() => {
+        this.fundingRetry = null;
+        this.connectFunding(instruments);
+      }, RECONNECT_MS);
+    });
+
+    socket.on('error', (error) => {
+      console.warn(
+        '[okx] funding socket error',
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
+
   async fetchTickers(): Promise<VenueTicker[]> {
     const [instruments, rows] = await Promise.all([
       this.listInstruments(),
       this.request('market', () => this.client.getTickers({ instType: 'SWAP' })),
     ]);
+    this.startFunding(instruments);
     const byId = new Map(instruments.map((item) => [item.nativeId, item]));
     return rows.flatMap((row) => {
       const instrument = byId.get(row.instId);
@@ -158,6 +261,7 @@ export class OkxVenueAdapter implements VenueAdapter {
       const last = number(row.last);
       const open = number(row.open24h);
       const baseVolume = number(row.volCcy24h);
+      const funding = this.funding.get(instrument.nativeId);
       return [
         {
           instrument,
@@ -165,8 +269,8 @@ export class OkxVenueAdapter implements VenueAdapter {
           change24h: last != null && open ? ((last - open) / open) * 100 : null,
           quoteVolume:
             last != null && baseVolume != null ? last * baseVolume : null,
-          funding: null,
-          nextFunding: null,
+          funding: funding?.funding ?? null,
+          nextFunding: funding?.nextFunding ?? null,
         },
       ];
     });

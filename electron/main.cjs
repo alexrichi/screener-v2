@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -6,6 +6,11 @@ const path = require('node:path');
 
 const SIDECAR_PORT = 8787;
 const SMOKE = process.argv.includes('--smoke');
+const TITLEBAR_HEIGHT = 36;
+const TITLEBAR_COLORS = {
+  dark: { color: '#030712', symbolColor: '#f3f4f6' },
+  light: { color: '#f8fafc', symbolColor: '#0f172a' },
+};
 
 let sidecar = null;
 let ownsSidecar = false;
@@ -198,8 +203,27 @@ async function runSmoke() {
     rows,
     error,
     venues: [],
+    titlebar: null,
     at: new Date().toISOString(),
   };
+  try {
+    result.titlebar = await mainWindow.webContents.executeJavaScript(`(() => {
+      const header = document.querySelector('header');
+      if (!header) return null;
+      const style = getComputedStyle(header);
+      return {
+        bridge: Boolean(window.screenerWindow),
+        header: header.className,
+        paddingRight: style.paddingRight,
+        appRegion: style.getPropertyValue('-webkit-app-region'),
+      };
+    })()`);
+    if (!result.titlebar?.bridge) result.ok = false;
+  } catch (cause) {
+    error = String(cause);
+    result.error = error;
+    result.ok = false;
+  }
   try {
     const health = await fetch(`http://127.0.0.1:${SIDECAR_PORT}/health`).then((res) =>
       res.json(),
@@ -213,7 +237,42 @@ async function runSmoke() {
   app.exit(result.ok ? 0 : 1);
 }
 
+function registerWindowIpc() {
+  ipcMain.on('screener:titlebar-theme', (event, theme) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    if (typeof mainWindow.setTitleBarOverlay !== 'function') return;
+    const palette = theme === 'light' ? TITLEBAR_COLORS.light : TITLEBAR_COLORS.dark;
+    mainWindow.setTitleBarOverlay({ ...palette, height: TITLEBAR_HEIGHT });
+  });
+
+  ipcMain.on('screener:window', (event, action) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    if (!mainWindow) return;
+    switch (action) {
+      case 'minimize':
+        mainWindow.minimize();
+        break;
+      case 'toggle-maximize':
+        if (mainWindow.isMaximized()) mainWindow.unmaximize();
+        else mainWindow.maximize();
+        break;
+      case 'close':
+        mainWindow.close();
+        break;
+      case 'quit':
+        app.quit();
+        break;
+      default:
+        break;
+    }
+  });
+}
+
 async function createWindow() {
+  const useTitleBarOverlay = process.platform === 'win32';
+  const windowIcon = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '..', 'build', 'icon.png');
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -221,11 +280,22 @@ async function createWindow() {
     minHeight: 600,
     backgroundColor: '#0b0f17',
     show: false,
+    icon: fs.existsSync(windowIcon) ? windowIcon : undefined,
+    ...(useTitleBarOverlay
+      ? {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            ...TITLEBAR_COLORS.dark,
+            height: TITLEBAR_HEIGHT,
+          },
+        }
+      : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   });
 
@@ -265,6 +335,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    registerWindowIpc();
     Menu.setApplicationMenu(null);
     if (!(await ensureSidecar())) {
       app.quit();

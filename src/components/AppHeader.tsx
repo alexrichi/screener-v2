@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Popover } from '@base-ui/react';
+import { Menu, Popover } from '@base-ui/react';
 import {
-  CandlestickChart,
+  ChevronRight,
+  Menu as MenuIcon,
   Moon,
   Plus,
   RefreshCw,
@@ -13,12 +14,19 @@ import {
 import type { MarketRow, VenueId, WorkspaceTab } from '../types';
 import { symbolLabel } from '../lib/binance';
 import { formatClock, formatPrice, layoutLabel } from '../lib/format';
+import { openVelaPanel } from '../lib/velaPanels';
 import { VENUE_CATALOG, venueLabel } from '../venues/catalog';
 import { VenueIcon } from '../venues/venueIcons';
 import { useTheme } from '../ui/theme';
 import { cn } from '../ui/cn';
 import { IconButton, Input } from '../ui/primitives';
-import { PopoverContent } from '../ui/overlays';
+import { Modal, PopoverContent } from '../ui/overlays';
+
+const menuPopupClass =
+  'z-50 min-w-48 rounded-lg border border-border bg-popover p-1 text-[12px] text-popover-foreground shadow-2xl outline-none';
+const menuItemClass =
+  'flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40';
+const submenuTriggerClass = `${menuItemClass} data-[popup-open]:bg-accent`;
 
 interface Props {
   tabs: WorkspaceTab[];
@@ -53,10 +61,16 @@ export function AppHeader({
 }: Props) {
   const { theme, toggleTheme } = useTheme();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const windowApi = typeof window === 'undefined' ? undefined : window.screenerWindow;
+
+  useEffect(() => {
+    windowApi?.setTitleBarTheme(theme);
+  }, [theme, windowApi]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -90,15 +104,199 @@ export function AppHeader({
           : `${venues.length} venues`;
 
   return (
-    <header className="flex h-9 shrink-0 items-stretch border-b border-border bg-background">
-      <div className="flex shrink-0 items-center gap-2 border-r border-border px-2.5">
-        <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]">
-          <CandlestickChart className="size-3.5" />
+    <>
+      <header className="app-titlebar flex h-9 shrink-0 items-stretch border-b border-border bg-background">
+        <div className="flex shrink-0 items-center gap-1.5 border-r border-border px-2.5">
+          <img
+            src="/icon.png"
+            alt="Screener"
+            title="Screener"
+            width={24}
+            height={24}
+            draggable={false}
+            className="size-6 shrink-0 rounded-md"
+          />
+          <Menu.Root>
+            <Menu.Trigger
+              title="Application menu"
+              aria-label="Application menu"
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
+            >
+              <MenuIcon className="size-4" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner
+                side="bottom"
+                align="start"
+                sideOffset={6}
+                className="z-50 outline-none"
+              >
+                <Menu.Popup className={menuPopupClass}>
+                  <div className="px-2 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Screener
+                  </div>
+
+                  <Menu.SubmenuRoot>
+                    <Menu.SubmenuTrigger className={submenuTriggerClass}>
+                      File
+                      <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
+                    </Menu.SubmenuTrigger>
+                    <Menu.Portal>
+                      <Menu.Positioner
+                        side="right"
+                        align="start"
+                        sideOffset={4}
+                        className="z-50 outline-none"
+                      >
+                        <Menu.Popup className={menuPopupClass}>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => setPickerOpen(true)}
+                          >
+                            New workspace
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={onRefresh}
+                            disabled={loading}
+                          >
+                            Refresh markets
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={onOpenSettings}
+                          >
+                            Settings
+                          </Menu.Item>
+                          <Menu.Separator className="my-1 h-px bg-border" />
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => windowApi?.quit()}
+                            disabled={!windowApi}
+                          >
+                            Quit
+                          </Menu.Item>
+                        </Menu.Popup>
+                      </Menu.Positioner>
+                    </Menu.Portal>
+                  </Menu.SubmenuRoot>
+
+                  <Menu.SubmenuRoot>
+                    <Menu.SubmenuTrigger className={submenuTriggerClass}>
+                      View
+                      <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
+                    </Menu.SubmenuTrigger>
+                    <Menu.Portal>
+                      <Menu.Positioner
+                        side="right"
+                        align="start"
+                        sideOffset={4}
+                        className="z-50 outline-none"
+                      >
+                        <Menu.Popup className={menuPopupClass}>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => openVelaPanel('screener')}
+                          >
+                            Screener
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => openVelaPanel('pine')}
+                          >
+                            Pine
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => openVelaPanel('library')}
+                          >
+                            Library
+                          </Menu.Item>
+                          <Menu.Separator className="my-1 h-px bg-border" />
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={toggleTheme}
+                          >
+                            {theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => window.location.reload()}
+                          >
+                            Reload
+                          </Menu.Item>
+                        </Menu.Popup>
+                      </Menu.Positioner>
+                    </Menu.Portal>
+                  </Menu.SubmenuRoot>
+
+                  <Menu.SubmenuRoot>
+                    <Menu.SubmenuTrigger className={submenuTriggerClass}>
+                      Window
+                      <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
+                    </Menu.SubmenuTrigger>
+                    <Menu.Portal>
+                      <Menu.Positioner
+                        side="right"
+                        align="start"
+                        sideOffset={4}
+                        className="z-50 outline-none"
+                      >
+                        <Menu.Popup className={menuPopupClass}>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => windowApi?.minimize()}
+                            disabled={!windowApi}
+                          >
+                            Minimize
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => windowApi?.toggleMaximize()}
+                            disabled={!windowApi}
+                          >
+                            Maximize / Restore
+                          </Menu.Item>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => windowApi?.close()}
+                            disabled={!windowApi}
+                          >
+                            Close
+                          </Menu.Item>
+                        </Menu.Popup>
+                      </Menu.Positioner>
+                    </Menu.Portal>
+                  </Menu.SubmenuRoot>
+
+                  <Menu.SubmenuRoot>
+                    <Menu.SubmenuTrigger className={submenuTriggerClass}>
+                      Help
+                      <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
+                    </Menu.SubmenuTrigger>
+                    <Menu.Portal>
+                      <Menu.Positioner
+                        side="right"
+                        align="start"
+                        sideOffset={4}
+                        className="z-50 outline-none"
+                      >
+                        <Menu.Popup className={menuPopupClass}>
+                          <Menu.Item
+                            className={menuItemClass}
+                            onClick={() => setAboutOpen(true)}
+                          >
+                            About Screener
+                          </Menu.Item>
+                        </Menu.Popup>
+                      </Menu.Positioner>
+                    </Menu.Portal>
+                  </Menu.SubmenuRoot>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
         </div>
-        <span className="hidden text-[13px] font-semibold tracking-tight text-foreground sm:inline">
-          Screener
-        </span>
-      </div>
 
       <div className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto overflow-y-hidden px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((tab) => {
@@ -256,5 +454,25 @@ export function AppHeader({
         </IconButton>
       </div>
     </header>
+
+    <Modal
+      open={aboutOpen}
+      onOpenChange={setAboutOpen}
+      title="About Screener"
+      description="Multi-venue crypto screener"
+    >
+      <div className="grid gap-2 text-[12px] leading-5 text-muted-foreground">
+        <p className="text-[13px] font-semibold text-foreground">Screener v2</p>
+        <p>
+          Public market data from Binance, OKX, Bybit, Bitget, Hyperliquid, and
+          Coinbase.
+        </p>
+        <p>Vite + React + Vela + PineTS. No account, no trading.</p>
+        <p className="font-mono text-[10px]">
+          {windowApi ? 'Electron desktop build' : 'Browser build'}
+        </p>
+      </div>
+    </Modal>
+  </>
   );
 }

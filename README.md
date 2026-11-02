@@ -15,7 +15,8 @@ TypeScript app; there is no private backend and no API key.
 - Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,
   Hyperliquid, and Coinbase through their public APIs, normalized by
   `VenueAdapter`
-- Electron shell for the desktop build; the sidecar runs as a child process
+- Electron shell for the desktop build: the bundled sidecar runs as a child
+  process, and the app uses a custom title bar with an application menu.
 
 The app resolves `@luxalgo/vela` and `@luxalgo/vela-pinets/editor` to the local
 `../Vela` and `../Vela-pinets` checkouts, so chart and editor changes run live.

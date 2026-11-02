@@ -150,8 +150,49 @@ textarea {
   font: inherit;
 }
 
+select option,
+select optgroup {
+  background-color: var(--popover);
+  color: var(--foreground);
+}
+
+select optgroup {
+  color: var(--muted-foreground);
+}
+
+select option:checked {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
 button {
   cursor: pointer;
+}
+
+.app-titlebar {
+  -webkit-app-region: drag;
+  /* Windows draws its window controls over the top-right corner. */
+  padding-right: calc(100vw - env(titlebar-area-width, 100vw));
+}
+
+.app-titlebar button,
+.app-titlebar input,
+.app-titlebar select,
+.app-titlebar [role='button'],
+.app-titlebar [draggable='true'] {
+  -webkit-app-region: no-drag;
+}
+
+/* Vela's active multi-cell ring uses fg-bright (white on dark, black on light).
+   Use the app accent at a soft alpha so the ring follows the theme. */
+html.dark .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--ring) 72%, transparent);
+}
+
+html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--primary) 66%, transparent);
 }
 
 ::selection {

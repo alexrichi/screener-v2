@@ -71,6 +71,7 @@
     "files": [
       "dist/**/*",
       "electron/main.cjs",
+      "electron/preload.cjs",
       "package.json",
       "!node_modules/**/*"
     ],
@@ -78,12 +79,17 @@
       {
         "from": "dist-electron/sidecar.cjs",
         "to": "sidecar.cjs"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
       }
     ],
     "win": {
       "target": [
         "dir"
-      ]
+      ],
+      "icon": "build/icon.ico"
     }
   }
 }
