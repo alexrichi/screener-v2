@@ -22,6 +22,23 @@ export function instrumentKey(
   return `${venue}:${kind}:${nativeId}`;
 }
 
+/**
+ * Compare chart symbols across the forms the app stores: a bare Binance ticker,
+ * a provider-prefixed ticker, and the perp `.P` suffix. Only the Binance venue
+ * is implied for bare symbols; every other stored form carries its provider.
+ */
+export function sameVelaSymbol(a: string, b: string): boolean {
+  const normalize = (raw: string): string => {
+    const at = raw.indexOf(':');
+    const provider = at >= 0 ? raw.slice(0, at).toLowerCase() : 'binance';
+    const ticker = (at >= 0 ? raw.slice(at + 1) : raw)
+      .replace(/\.P$/i, '')
+      .toUpperCase();
+    return `${provider}:${ticker}`;
+  };
+  return normalize(a) === normalize(b);
+}
+
 /** Perps always carry the `.P` suffix in the app-facing name. */
 export function perpDisplay(base: string, quote: string): string {
   return `${base}${quote}.P`;

@@ -3,6 +3,7 @@ import {
   instrumentKey,
   makeInstrument,
   perpDisplay,
+  sameVelaSymbol,
   spotDisplay,
 } from '../src/venues/instrument';
 import { FakeVenueAdapter } from '../src/venues/fake';
@@ -32,6 +33,14 @@ describe('instrument naming', () => {
     expect(perp.key).toBe(instrumentKey('binance', 'perp', 'BTCUSDT'));
     expect(perp.display).toBe('BTCUSDT.P');
     expect(perp.velaSymbol).toBe('BINANCE:BTCUSDT.P');
+  });
+
+  it('compares bare, prefixed and perp chart symbols', () => {
+    expect(sameVelaSymbol('BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(true);
+    expect(sameVelaSymbol('binance:BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(true);
+    expect(sameVelaSymbol('okx:BTC-USDT-SWAP', 'OKX:BTC-USDT-SWAP')).toBe(true);
+    expect(sameVelaSymbol('okx:BTC-USDT-SWAP', 'bybit:BTCUSDT')).toBe(false);
+    expect(sameVelaSymbol('ETHUSDT', 'BTCUSDT')).toBe(false);
   });
 });
 

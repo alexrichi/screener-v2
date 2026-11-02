@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type {
-  MarketRow,
   PlotColumn,
   ScanProgress,
   ScanResult,
   ScreenerView,
   Settings,
+  VenueId,
   WorkspaceTab,
 } from './types';
 import { AppHeader } from './components/AppHeader';
@@ -28,6 +28,7 @@ import {
   isStringArray,
   usePersistedState,
 } from './lib/usePersistedState';
+import { favoriteKey, scanTargetsFor, trimRowsPerVenue } from './lib/universe';
 import {
   EMPTY_LIBRARY,
   INDICATOR_LIBRARY_KEY,
@@ -46,6 +47,8 @@ import { useScanner } from './scan/useScanner';
 import { useTheme } from './ui/theme';
 import { Button, Input } from './ui/primitives';
 import { Modal } from './ui/overlays';
+import { sameVelaSymbol } from './venues/instrument';
+import { isVenueSelection, VENUE_IDS } from './venues/catalog';
 
 const DEFAULT_SETTINGS: Settings = {
   minVolume: 1_000_000,
@@ -150,8 +153,24 @@ export default function App() {
     DEFAULT_SETTINGS,
     isSettings,
   );
-  const { rows, loading, error, updatedAt, refresh } = useMarketRows(
+  const [marketVenues, setMarketVenues] = usePersistedState<VenueId[]>(
+    'screener.marketVenues',
+    VENUE_IDS,
+    isVenueSelection,
+  );
+  const selectedVenues = useMemo(
+    () => VENUE_IDS.filter((venue) => marketVenues.includes(venue)),
+    [marketVenues],
+  );
+  const setVenues = useCallback(
+    (next: VenueId[]) => {
+      setMarketVenues(VENUE_IDS.filter((venue) => next.includes(venue)));
+    },
+    [setMarketVenues],
+  );
+  const { rows, loading, error, venueErrors, updatedAt, refresh } = useMarketRows(
     settings.refreshSeconds,
+    selectedVenues,
   );
 
   const [tabs, setTabs] = usePersistedState<WorkspaceTab[]>(
@@ -235,42 +254,49 @@ export default function App() {
   }, [currentSaved, currentSavedId, setCurrentSavedId]);
 
   useEffect(() => {
+    // Binance-only favorites predate the multi-venue table: migrate them in place.
+    setFavorites((prev) => {
+      const next = prev.map(favoriteKey);
+      return next.some((key, index) => key !== prev[index]) ? next : prev;
+    });
+  }, [setFavorites]);
+
+  useEffect(() => {
     if (!error) {
       lastMarketError.current = null;
       return;
     }
     if (lastMarketError.current === error) return;
     lastMarketError.current = error;
-    toast.error('Binance market data unavailable', { description: error });
+    toast.error('Market data unavailable', { description: error });
   }, [error]);
 
   const filteredRows = useMemo(
-    () =>
-      rows
-        .filter((row) => (row.quoteVolume ?? 0) >= settings.minVolume)
-        .slice(0, Math.max(1, settings.topN)),
+    () => trimRowsPerVenue(rows, settings.minVolume, Math.max(1, settings.topN)),
     [rows, settings.minVolume, settings.topN],
   );
 
-  const favoriteSymbols = useMemo(() => [...new Set(favorites)], [favorites]);
+  const favoriteSymbols = useMemo(
+    () => [...new Set(favorites.map(favoriteKey))],
+    [favorites],
+  );
   const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols]);
 
   // The table keeps favorites visible even when they fall outside topN/minVolume.
   // The scanner still uses the trimmed universe above.
   const tableRows = useMemo(() => {
-    const seen = new Set(filteredRows.map((row) => row.symbol));
+    const seen = new Set(filteredRows.map((row) => row.instrument.key));
     const extra = rows.filter(
-      (row) => favoriteSet.has(row.symbol) && !seen.has(row.symbol),
+      (row) =>
+        favoriteSet.has(row.instrument.key) && !seen.has(row.instrument.key),
     );
     return [...filteredRows, ...extra];
   }, [filteredRows, favoriteSet, rows]);
 
   const toggleFavorite = useCallback(
-    (symbol: string) => {
+    (key: string) => {
       setFavorites((prev) =>
-        prev.includes(symbol)
-          ? prev.filter((item) => item !== symbol)
-          : [...prev, symbol],
+        prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
       );
     },
     [setFavorites],
@@ -280,7 +306,7 @@ export default function App() {
 
   const plotColumns = useMemo<PlotColumn[]>(() => {
     const ordered = [...scanResults.values()].sort((a, b) =>
-      a.symbol.localeCompare(b.symbol),
+      a.key.localeCompare(b.key),
     );
     const columns = new Map<string, PlotColumn>();
     for (const result of ordered) {
@@ -377,7 +403,7 @@ export default function App() {
 
   const closeTabBySymbol = useCallback(
     (symbol: string) => {
-      const tab = tabs.find((item) => item.symbol === symbol);
+      const tab = tabs.find((item) => sameVelaSymbol(item.symbol, symbol));
       if (tab) closeTab(tab.id);
     },
     [closeTab, tabs],
@@ -404,44 +430,61 @@ export default function App() {
         toast.error('Pine script is empty');
         return;
       }
-      const symbols = filteredRows.map((row) => row.symbol);
-      if (symbols.length === 0) {
+      if (selectedVenues.length === 0) {
+        toast.error('Select at least one venue');
+        return;
+      }
+      const targets = scanTargetsFor(filteredRows, selectedVenues);
+      const total = targets.reduce(
+        (sum, target) => sum + target.instruments.length,
+        0,
+      );
+      if (total === 0) {
         toast.error('No symbols match the universe filter');
         return;
       }
       setScanResults(new Map());
       setScanError(null);
-      setScanProgress({ done: 0, total: symbols.length });
+      setScanProgress({ done: 0, total });
       setLastScanMs(null);
       const started = performance.now();
       scanner.scan(
         {
           script: source,
           timeframe: settings.scanTimeframe,
-        symbols,
-        bars: settings.scanBars,
-        concurrency: 6,
-      },
-      {
-        onProgress: (progress) => setScanProgress(progress),
-        onResult: (result) => {
-          setScanResults((prev) => {
-            const next = new Map(prev);
-            next.set(result.symbol, result);
-            return next;
-          });
+          targets,
+          bars: settings.scanBars,
+          concurrency: 6,
         },
-        onDone: () => {
-          setScanProgress(null);
-          setLastScanMs(Math.round(performance.now() - started));
+        {
+          onProgress: (progress) => setScanProgress(progress),
+          onResult: (result) => {
+            setScanResults((prev) => {
+              const next = new Map(prev);
+              next.set(result.key, result);
+              return next;
+            });
+          },
+          onDone: () => {
+            setScanProgress(null);
+            setLastScanMs(Math.round(performance.now() - started));
+          },
+          onFatal: (message) => {
+            setScanProgress(null);
+            setScanError(message);
+          },
         },
-        onFatal: (message) => {
-          setScanProgress(null);
-          setScanError(message);
-        },
-      },
-    );
-  }, [filteredRows, scanner, script, settings.scanBars, settings.scanTimeframe]);
+      );
+    },
+    [
+      filteredRows,
+      scanner,
+      script,
+      selectedVenues,
+      settings.scanBars,
+      settings.scanTimeframe,
+    ],
+  );
 
   const cancelScan = useCallback(() => {
     scanner.stop();
@@ -733,6 +776,7 @@ export default function App() {
         tabs={tabs}
         activeId={activeTab?.id ?? ''}
         rows={rows}
+        venues={selectedVenues}
         loading={loading}
         error={error}
         updatedAt={updatedAt}
@@ -770,6 +814,9 @@ export default function App() {
                 rows={tableRows}
                 view={view}
                 onViewChange={setView}
+                venues={selectedVenues}
+                onVenuesChange={setVenues}
+                venueErrors={venueErrors}
                 favorites={favoriteSymbols}
                 onToggleFavorite={toggleFavorite}
                 selectedSymbol={activeTab?.symbol ?? ''}

@@ -1,12 +1,21 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { Popover } from '@base-ui/react';
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpDown,
   Columns3,
   Copy,
   ExternalLink,
+  Filter,
+  Globe,
   Search,
   Star,
   X,
@@ -19,6 +28,7 @@ import type {
   ScanResult,
   ScreenerView,
   SortState,
+  VenueId,
 } from '../types';
 import {
   formatCompact,
@@ -28,11 +38,22 @@ import {
   formatPct,
   formatPrice,
 } from '../lib/format';
+import { mergeColumnOrder, nextSort } from '../lib/view';
 import { cn } from '../ui/cn';
-import { IconButton, Input, Segmented } from '../ui/primitives';
+import { Input, Segmented } from '../ui/primitives';
 import { PopoverContent } from '../ui/overlays';
+import { sameVelaSymbol } from '../venues/instrument';
+import { VENUE_CATALOG, VENUE_IDS, venueLabel } from '../venues/catalog';
+import { VenueIcon } from '../venues/venueIcons';
 
-type ColumnKind = 'symbol' | 'price' | 'change' | 'volume' | 'funding' | 'plot';
+type ColumnKind =
+  | 'symbol'
+  | 'venue'
+  | 'price'
+  | 'change'
+  | 'volume'
+  | 'funding'
+  | 'plot';
 
 interface ColumnDef {
   key: string;
@@ -44,14 +65,14 @@ interface ColumnDef {
 }
 
 const BASE_COLUMNS: ColumnDef[] = [
-  { key: 'symbol', label: 'Symbol', align: 'left', kind: 'symbol', width: 120 },
-  { key: 'price', label: 'Last', align: 'right', kind: 'price', width: 78 },
-  { key: 'change24h', label: '24h %', align: 'right', kind: 'change', width: 66 },
+  { key: 'venue', label: 'Venue', align: 'left', kind: 'venue', width: 48 },
+  { key: 'symbol', label: 'Symbol', align: 'left', kind: 'symbol', width: 116 },
+  { key: 'price', label: 'Last', align: 'right', kind: 'price', width: 76 },
+  { key: 'change24h', label: '24h %', align: 'right', kind: 'change', width: 64 },
   { key: 'quoteVolume', label: 'Vol 24h', align: 'right', kind: 'volume', width: 68 },
-  { key: 'funding', label: 'Funding', align: 'right', kind: 'funding', width: 76 },
+  { key: 'funding', label: 'Funding', align: 'right', kind: 'funding', width: 74 },
 ];
 
-const BASE_KEYS = BASE_COLUMNS.map((column) => column.key);
 const MIN_COLUMN_WIDTH = 48;
 
 function scanValue(result: ScanResult | undefined, plotKey: string | undefined): number | null {
@@ -60,10 +81,19 @@ function scanValue(result: ScanResult | undefined, plotKey: string | undefined):
   return plot?.value ?? null;
 }
 
+function searchText(row: MarketRow): string {
+  return `${row.instrument.nativeId} ${row.instrument.base} ${venueLabel(
+    row.instrument.venue,
+  )}`.toUpperCase();
+}
+
 interface Props {
   rows: MarketRow[];
   view: ScreenerView;
   onViewChange: (view: ScreenerView) => void;
+  venues: VenueId[];
+  onVenuesChange: (venues: VenueId[]) => void;
+  venueErrors: Record<string, string>;
   selectedSymbol: string;
   openSymbols: string[];
   favorites: string[];
@@ -81,6 +111,9 @@ export function ScreenerTable({
   rows,
   view,
   onViewChange,
+  venues,
+  onVenuesChange,
+  venueErrors,
   selectedSymbol,
   openSymbols,
   favorites,
@@ -95,6 +128,7 @@ export function ScreenerTable({
 }: Props) {
   const { sort, columns, query, filter } = view;
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
+  const [venuesOpen, setVenuesOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; symbol: string } | null>(null);
   const colRefs = useRef(new Map<string, HTMLTableColElement>());
@@ -124,36 +158,43 @@ export function ScreenerTable({
   const allKeys = useMemo(() => columnDefs.map((column) => column.key), [columnDefs]);
 
   const order = useMemo(
-    () => [...columns.order, ...allKeys.filter((key) => !columns.order.includes(key))],
+    () => mergeColumnOrder(columns.order, allKeys).filter((key) => key !== 'venue'),
     [columns.order, allKeys],
   );
-  const visibleColumns = useMemo(
-    () =>
-      order
-        .filter((key) => columnByKey.has(key) && !columns.hidden.includes(key))
-        .map((key) => columnByKey.get(key)!),
-    [order, columns.hidden, columnByKey],
-  );
+  const visibleColumns = useMemo(() => {
+    const venue = columnByKey.get('venue');
+    const rest = order
+      .filter((key) => columnByKey.has(key) && !columns.hidden.includes(key))
+      .map((key) => columnByKey.get(key)!);
+    return venue ? [venue, ...rest] : rest;
+  }, [order, columns.hidden, columnByKey]);
+
+  const widthOf = (column: ColumnDef) =>
+    column.kind === 'venue'
+      ? column.width
+      : (columns.widths[column.key] ?? column.width);
 
   const filteredRows = useMemo(() => {
     const needle = query.trim().toUpperCase();
     let list = rows;
     if (filter === 'gainers') list = list.filter((row) => (row.change24h ?? 0) > 0);
     if (filter === 'losers') list = list.filter((row) => (row.change24h ?? 0) < 0);
-    if (filter === 'favorites') list = list.filter((row) => favoriteSet.has(row.symbol));
-    if (needle) {
-      list = list.filter(
-        (row) => row.symbol.includes(needle) || row.base.includes(needle),
-      );
+    if (filter === 'favorites') {
+      list = list.filter((row) => favoriteSet.has(row.instrument.key));
     }
+    if (needle) list = list.filter((row) => searchText(row).includes(needle));
     return list;
   }, [rows, query, filter, favoriteSet]);
 
   const sortedRows = useMemo(() => {
+    const activeSort = sort;
+    if (!activeSort) return filteredRows;
     const value = (row: MarketRow): string | number | null => {
-      switch (sort.key) {
+      switch (activeSort.key) {
         case 'symbol':
-          return row.symbol;
+          return row.instrument.nativeId;
+        case 'venue':
+          return venueLabel(row.instrument.venue);
         case 'price':
           return row.price;
         case 'change24h':
@@ -163,9 +204,9 @@ export function ScreenerTable({
         case 'funding':
           return row.funding;
         default: {
-          const column = columnByKey.get(sort.key);
+          const column = columnByKey.get(activeSort.key);
           if (column?.kind !== 'plot') return null;
-          return scanValue(scanResults.get(row.symbol), column.plotKey);
+          return scanValue(scanResults.get(row.instrument.key), column.plotKey);
         }
       }
     };
@@ -173,33 +214,29 @@ export function ScreenerTable({
       const left = value(a);
       const right = value(b);
       if (typeof left === 'string' || typeof right === 'string') {
-        return String(left ?? '').localeCompare(String(right ?? '')) * sort.dir;
+        return String(left ?? '').localeCompare(String(right ?? '')) * activeSort.dir;
       }
       if (left === null && right === null) return 0;
       if (left === null) return 1;
       if (right === null) return -1;
-      return (left - right) * sort.dir;
+      return (left - right) * activeSort.dir;
     });
   }, [filteredRows, sort, scanResults, columnByKey]);
 
   const setView = (patch: Partial<ScreenerView>) => onViewChange({ ...view, ...patch });
-  const setSort = (sort: SortState) => setView({ sort });
+  const setSort = (sort: SortState | null) => setView({ sort });
   const setColumns = (columns: ColumnState) => setView({ columns });
 
-  const toggleSort = (key: string) => {
-    const numeric = key !== 'symbol';
-    setSort(
-      sort.key === key
-        ? { key, dir: sort.dir === 1 ? -1 : 1 }
-        : { key, dir: numeric ? -1 : 1 },
-    );
-  };
+  const toggleSort = (key: string) => setSort(nextSort(sort, key));
 
   const toggleColumn = (key: string) => {
     const hidden = columns.hidden.includes(key)
       ? columns.hidden.filter((item) => item !== key)
       : [...columns.hidden, key];
-    if (visibleColumns.length <= 1 && !columns.hidden.includes(key)) return;
+    const visibleData = visibleColumns.filter(
+      (column) => column.kind !== 'venue',
+    ).length;
+    if (visibleData <= 1 && !columns.hidden.includes(key)) return;
     setColumns({ ...columns, hidden });
   };
 
@@ -261,45 +298,73 @@ export function ScreenerTable({
     };
   }, [menu]);
 
-  const headerCell = (column: ColumnDef) => (
-    <th
-      key={column.key}
-      onClick={() => toggleSort(column.key)}
-      className={cn(
-        'group/head relative sticky top-0 z-10 h-7 cursor-pointer select-none whitespace-nowrap border-b border-border bg-card px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground',
-        column.align === 'right' ? 'text-right' : 'text-left',
-        column.kind === 'symbol' && 'sticky left-0 z-20 border-r border-border/70',
-        sort.key === column.key && 'text-foreground',
-      )}
-    >
-      <span className="inline-flex items-center gap-1">
-        {column.label}
-        {sort.key === column.key ? (
-          sort.dir === 1 ? (
-            <ArrowUp className="size-2.5" />
-          ) : (
-            <ArrowDown className="size-2.5" />
-          )
-        ) : null}
-      </span>
-      <div
-        onPointerDown={(event) => startResize(event, column.key)}
-        onPointerMove={moveResize}
-        onPointerUp={endResize}
-        onClick={(event) => event.stopPropagation()}
-        title="Drag to resize"
-        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize touch-none select-none hover:bg-primary/40"
-      />
-    </th>
-  );
+  const toggleVenue = (id: VenueId) => {
+    const selected = new Set(venues);
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    onVenuesChange(VENUE_IDS.filter((venue) => selected.has(venue)));
+  };
+
+  const allVenues = venues.length === VENUE_IDS.length;
+  const isOpen = (symbol: string) =>
+    openSymbols.some((candidate) => sameVelaSymbol(candidate, symbol));
+
+  const headerCell = (column: ColumnDef) => {
+    const isVenue = column.kind === 'venue';
+    const sortIcon =
+      sort?.key === column.key ? (
+        sort.dir === 1 ? (
+          <ArrowUp className="size-2.5" />
+        ) : (
+          <ArrowDown className="size-2.5" />
+        )
+      ) : null;
+    return (
+      <th
+        key={column.key}
+        onClick={() => toggleSort(column.key)}
+        aria-label={isVenue ? 'Venue' : undefined}
+        title={isVenue ? 'Sort by venue' : undefined}
+        className={cn(
+          'group/head relative sticky top-0 z-10 h-7 cursor-pointer select-none whitespace-nowrap border-b border-border bg-card px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground',
+          column.align === 'right' ? 'text-right' : 'text-left',
+          column.kind === 'symbol' && 'sticky left-0 z-20 border-r border-border/70',
+          sort?.key === column.key && 'text-foreground',
+        )}
+      >
+        {isVenue ? (
+          <span className="flex items-center justify-center gap-1">
+            <Globe className="size-3 text-muted-foreground/70" />
+            {sortIcon ?? <ArrowUpDown className="size-2.5 opacity-50" />}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            {column.label}
+            {sortIcon}
+          </span>
+        )}
+        {isVenue ? null : (
+          <div
+            onPointerDown={(event) => startResize(event, column.key)}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onClick={(event) => event.stopPropagation()}
+            title="Drag to resize"
+            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize touch-none select-none hover:bg-primary/40"
+          />
+        )}
+      </th>
+    );
+  };
 
   const cell = (column: ColumnDef, row: MarketRow, selected: boolean) => {
+    const instrument = row.instrument;
     switch (column.kind) {
       case 'symbol':
         return (
           <td
             key={column.key}
-            title={row.symbol}
+            title={instrument.velaSymbol}
             className={cn(
               'sticky left-0 z-10 h-7 whitespace-nowrap border-r border-border/70 px-2',
               selected ? 'bg-primary-soft' : 'bg-card group-hover:bg-accent',
@@ -310,21 +375,21 @@ export function ScreenerTable({
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onToggleFavorite(row.symbol);
+                  onToggleFavorite(instrument.key);
                 }}
                 title={
-                  favoriteSet.has(row.symbol)
-                    ? `Remove ${row.symbol} from favorites`
-                    : `Add ${row.symbol} to favorites`
+                  favoriteSet.has(instrument.key)
+                    ? `Remove ${instrument.display} from favorites`
+                    : `Add ${instrument.display} to favorites`
                 }
                 aria-label={
-                  favoriteSet.has(row.symbol)
-                    ? `Remove ${row.symbol} from favorites`
-                    : `Add ${row.symbol} to favorites`
+                  favoriteSet.has(instrument.key)
+                    ? `Remove ${instrument.display} from favorites`
+                    : `Add ${instrument.display} to favorites`
                 }
                 className={cn(
                   'inline-flex size-4 shrink-0 items-center justify-center rounded hover:bg-accent',
-                  favoriteSet.has(row.symbol)
+                  favoriteSet.has(instrument.key)
                     ? 'text-amber-400'
                     : 'text-muted-foreground/45 hover:text-amber-300',
                 )}
@@ -332,32 +397,46 @@ export function ScreenerTable({
                 <Star
                   className={cn(
                     'size-3',
-                    favoriteSet.has(row.symbol) && 'fill-current',
+                    favoriteSet.has(instrument.key) && 'fill-current',
                   )}
                 />
               </button>
               <span className="min-w-0 truncate text-[11px] font-semibold text-foreground">
-                {row.base}
+                {instrument.base}
               </span>
               <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                perp
+                {instrument.kind}
               </span>
-              {scanResults.get(row.symbol)?.error ? (
+              {scanResults.get(instrument.key)?.error ? (
                 <span
                   className="size-1.5 rounded-full bg-negative"
-                  title={scanResults.get(row.symbol)?.error}
+                  title={scanResults.get(instrument.key)?.error}
                 />
               ) : null}
             </div>
           </td>
         );
+      case 'venue': {
+        const label = venueLabel(instrument.venue);
+        return (
+          <td
+            key={column.key}
+            title={label}
+            className="h-7 px-0 text-center"
+          >
+            <div className="flex items-center justify-center">
+              <VenueIcon venue={instrument.venue} size={14} />
+            </div>
+          </td>
+        );
+      }
       case 'price':
         return (
           <td
             key={column.key}
             className="h-7 whitespace-nowrap px-2 text-right font-mono text-[11px] tabular-nums text-foreground/90"
           >
-            {formatPrice(row.price, row.pricePrecision)}
+            {formatPrice(row.price, instrument.pricePrecision)}
           </td>
         );
       case 'change':
@@ -395,7 +474,7 @@ export function ScreenerTable({
           </td>
         );
       case 'plot': {
-        const value = scanValue(scanResults.get(row.symbol), column.plotKey);
+        const value = scanValue(scanResults.get(instrument.key), column.plotKey);
         const signal = value === 1 ? 'positive' : value === 0 ? 'muted' : 'neutral';
         return (
           <td
@@ -424,7 +503,7 @@ export function ScreenerTable({
             <Input
               value={query}
               onChange={(event) => setView({ query: event.target.value })}
-              placeholder="Search symbol…"
+              placeholder="Search symbol or venue…"
               className="pl-7 pr-7"
             />
             {query ? (
@@ -438,6 +517,60 @@ export function ScreenerTable({
               </button>
             ) : null}
           </div>
+          <Popover.Root open={venuesOpen} onOpenChange={setVenuesOpen}>
+            <Popover.Trigger
+              title={`Filter venues (${venues.length}/${VENUE_IDS.length})`}
+              aria-label="Filter venues"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Filter className="size-3" />
+              Venues
+            </Popover.Trigger>
+            <PopoverContent className="w-56 p-1" align="end">
+              <div className="flex items-center justify-between px-1.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Venues</span>
+                <span className="font-mono tabular-nums">
+                  {venues.length}/{VENUE_IDS.length}
+                </span>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12px] text-foreground hover:bg-accent">
+                <span className="flex-1">All venues</span>
+                <input
+                  type="checkbox"
+                  checked={allVenues}
+                  onChange={() => onVenuesChange(allVenues ? [] : VENUE_IDS)}
+                  className="size-3 accent-primary"
+                />
+              </label>
+              <div className="my-1 border-t border-border/70" />
+              {VENUE_CATALOG.map((venue) => {
+                const checked = venues.includes(venue.id);
+                const failure = venueErrors[venue.id];
+                return (
+                  <label
+                    key={venue.id}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12px] text-foreground hover:bg-accent"
+                  >
+                    <VenueIcon venue={venue.id} size={14} />
+                    <span className="min-w-0 flex-1 truncate">{venue.label}</span>
+                    {failure ? (
+                      <span
+                        className="size-1.5 shrink-0 rounded-full bg-negative"
+                        title={failure}
+                        aria-label={failure}
+                      />
+                    ) : null}
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleVenue(venue.id)}
+                      className="size-3 accent-primary"
+                    />
+                  </label>
+                );
+              })}
+            </PopoverContent>
+          </Popover.Root>
           <Popover.Root open={columnsOpen} onOpenChange={setColumnsOpen}>
             <Popover.Trigger
               title="Columns"
@@ -516,7 +649,7 @@ export function ScreenerTable({
           className="w-full table-fixed border-collapse text-[12px]"
           style={{
             minWidth: visibleColumns.reduce(
-              (sum, column) => sum + (columns.widths[column.key] ?? column.width),
+              (sum, column) => sum + widthOf(column),
               0,
             ),
           }}
@@ -530,7 +663,7 @@ export function ScreenerTable({
                   else colRefs.current.delete(column.key);
                 }}
                 style={{
-                  width: `${columns.widths[column.key] ?? column.width}px`,
+                  width: `${widthOf(column)}px`,
                 }}
               />
             ))}
@@ -540,14 +673,17 @@ export function ScreenerTable({
           </thead>
           <tbody>
             {sortedRows.map((row) => {
-              const selected = row.symbol === selectedSymbol;
+              const symbol = row.instrument.velaSymbol;
+              const selected = Boolean(
+                selectedSymbol && sameVelaSymbol(symbol, selectedSymbol),
+              );
               return (
                 <tr
-                  key={row.symbol}
-                  onClick={() => onSelect(row.symbol)}
+                  key={row.instrument.key}
+                  onClick={() => onSelect(symbol)}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    setMenu({ x: event.clientX, y: event.clientY, symbol: row.symbol });
+                    setMenu({ x: event.clientX, y: event.clientY, symbol });
                   }}
                   className={cn(
                     'group h-7 cursor-pointer border-b border-border/45 transition-colors',
@@ -565,21 +701,25 @@ export function ScreenerTable({
           <div className="flex h-40 flex-col items-center justify-center gap-2 text-muted-foreground">
             {filter === 'favorites' ? (
               <Star className="size-5 opacity-40" />
+            ) : venues.length === 0 ? (
+              <Filter className="size-5 opacity-40" />
             ) : (
               <Search className="size-5 opacity-40" />
             )}
             <span className="text-[12px]">
-              {loading
-                ? 'Loading Binance markets…'
-                : error
-                  ? 'Market data unavailable'
-                  : filter === 'favorites'
-                    ? favorites.length === 0
-                      ? 'No favorites yet. Click the star next to a symbol.'
-                      : 'No favorites match your search.'
-                    : 'No markets found'}
+              {venues.length === 0
+                ? 'No venues selected. Choose at least one in the Venues filter.'
+                : loading
+                  ? 'Loading markets…'
+                  : error
+                    ? 'Market data unavailable'
+                    : filter === 'favorites'
+                      ? favorites.length === 0
+                        ? 'No favorites yet. Click the star next to a symbol.'
+                        : 'No favorites match your search.'
+                      : 'No markets found'}
             </span>
-            {error ? (
+            {venues.length > 0 && error ? (
               <span className="max-w-60 text-center text-[10px] text-negative/80">{error}</span>
             ) : null}
           </div>
@@ -607,7 +747,7 @@ export function ScreenerTable({
                 <ExternalLink className="size-3.5 text-muted-foreground" />
                 Open in new workspace
               </button>
-              {openSymbols.includes(menu.symbol) ? (
+              {isOpen(menu.symbol) ? (
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"

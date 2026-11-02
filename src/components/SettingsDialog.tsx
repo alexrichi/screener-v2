@@ -79,7 +79,7 @@ export function SettingsDialog({ open, onOpenChange, settings, onSave }: Props) 
       }
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Min 24h volume" hint="USD quote volume">
+        <Field label="Min 24h volume" hint="Per venue, in quote currency">
           <Input
             type="number"
             min={0}
@@ -88,7 +88,7 @@ export function SettingsDialog({ open, onOpenChange, settings, onSave }: Props) 
             onChange={(event) => patch({ minVolume: Math.max(0, Number(event.target.value) || 0) })}
           />
         </Field>
-        <Field label="Top symbols" hint="After the volume filter">
+        <Field label="Top symbols" hint="Per venue, after the volume filter">
           <Input
             type="number"
             min={1}

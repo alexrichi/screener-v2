@@ -1,8 +1,7 @@
 import { Indicator, PineTS } from 'pinets';
 import { SidecarVenueAdapter } from '../venues/sidecar';
 import { VenueRateLimitError } from '../venues/rateLimit';
-import type { Instrument } from '../venues/types';
-import type { ScanResult, ScanWorkerIn, ScanWorkerOut } from '../types';
+import type { Instrument, ScanResult, ScanWorkerIn, ScanWorkerOut } from '../types';
 import { extractPlots, type PlotLike } from './extractPlots';
 
 interface RunContext {
@@ -36,82 +35,93 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
     return;
   }
 
-  const adapter = new SidecarVenueAdapter('binance');
-  let instruments: Instrument[];
-  try {
-    instruments = await adapter.listInstruments(signal);
-  } catch (error) {
-    if (signal.aborted) return;
-    controller?.abort();
-    workerSelf.postMessage({ type: 'fatal', id: msg.id, error: errorMessage(error) });
-    return;
-  }
-  if (signal.aborted) return;
-  const bySymbol = new Map(instruments.map((instrument) => [instrument.nativeId, instrument]));
-
-  const queue = [...msg.symbols];
-  const total = queue.length;
+  const total = msg.targets.reduce((sum, target) => sum + target.instruments.length, 0);
   let done = 0;
 
-  const runOne = async (symbol: string): Promise<void> => {
-    if (signal.aborted) return;
-    const started = performance.now();
-    try {
-      const instrument = bySymbol.get(symbol);
-      if (!instrument) throw new Error(`No ${adapter.id} instrument for ${symbol}`);
-      const bars = await adapter.fetchBars(instrument, msg.timeframe, msg.bars, signal);
-      if (bars.length < 2) throw new Error('Not enough closed bars');
-      const pine = new PineTS(bars, symbol, msg.timeframe);
-      const context = (await pine.run(indicator)) as RunContext;
-      const result: ScanResult = {
-        symbol,
-        plots: extractPlots(context.plots),
-        ms: Math.round(performance.now() - started),
-      };
-      if (signal.aborted) return;
-      workerSelf.postMessage({ type: 'result', id: msg.id, result });
-    } catch (error) {
-      if (signal.aborted) return;
-      if (error instanceof VenueRateLimitError) {
-        controller?.abort();
-        workerSelf.postMessage({
-          type: 'fatal',
-          id: msg.id,
-          error: error.message,
-        });
-        return;
-      }
-      const result: ScanResult = {
-        symbol,
-        plots: [],
-        error: errorMessage(error),
-        ms: Math.round(performance.now() - started),
-      };
-      workerSelf.postMessage({ type: 'result', id: msg.id, result });
-    } finally {
-      if (!signal.aborted) {
-        done += 1;
-        workerSelf.postMessage({
-          type: 'progress',
-          id: msg.id,
-          done,
-          total,
-          symbol,
-        });
-      }
-    }
+  const postProgress = (venue: string, symbol: string) => {
+    workerSelf.postMessage({
+      type: 'progress',
+      id: msg.id,
+      done,
+      total,
+      venue,
+      symbol,
+    });
   };
 
-  const concurrency = Math.max(1, Math.min(10, msg.concurrency || 6));
-  const runners = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
-    while (queue.length > 0 && !signal.aborted) {
-      const symbol = queue.shift();
-      if (!symbol) break;
-      await runOne(symbol);
-    }
-  });
+  const postError = (venue: string, instrument: Instrument, error: unknown) => {
+    const result: ScanResult = {
+      key: instrument.key,
+      venue,
+      symbol: instrument.nativeId,
+      plots: [],
+      error: errorMessage(error),
+      ms: 0,
+    };
+    workerSelf.postMessage({ type: 'result', id: msg.id, result });
+  };
 
-  await Promise.all(runners);
+  for (const target of msg.targets) {
+    if (signal.aborted) return;
+    const adapter = new SidecarVenueAdapter(target.venue);
+    const queue = [...target.instruments];
+    const concurrency = Math.max(1, Math.min(10, msg.concurrency || 6));
+    let skipVenue = false;
+
+    const runOne = async (instrument: Instrument): Promise<void> => {
+      if (signal.aborted) return;
+      const started = performance.now();
+      try {
+        const bars = await adapter.fetchBars(
+          instrument,
+          msg.timeframe,
+          msg.bars,
+          signal,
+        );
+        if (bars.length < 2) throw new Error('Not enough closed bars');
+        const pine = new PineTS(bars, instrument.nativeId, msg.timeframe);
+        const context = (await pine.run(indicator)) as RunContext;
+        if (signal.aborted) return;
+        const result: ScanResult = {
+          key: instrument.key,
+          venue: target.venue,
+          symbol: instrument.nativeId,
+          plots: extractPlots(context.plots),
+          ms: Math.round(performance.now() - started),
+        };
+        workerSelf.postMessage({ type: 'result', id: msg.id, result });
+      } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof VenueRateLimitError) skipVenue = true;
+        postError(target.venue, instrument, error);
+      } finally {
+        if (!signal.aborted) {
+          done += 1;
+          postProgress(target.venue, instrument.nativeId);
+        }
+      }
+    };
+
+    const runners = Array.from(
+      { length: Math.min(concurrency, queue.length) },
+      async () => {
+        while (queue.length > 0 && !signal.aborted) {
+          const instrument = queue.shift();
+          if (!instrument) break;
+          if (skipVenue) {
+            postError(target.venue, instrument, 'Venue rate limit reached');
+            done += 1;
+            postProgress(target.venue, instrument.nativeId);
+            continue;
+          }
+          await runOne(instrument);
+        }
+      },
+    );
+
+    await Promise.all(runners);
+  }
+
   if (!signal.aborted) workerSelf.postMessage({ type: 'done', id: msg.id });
 }
 

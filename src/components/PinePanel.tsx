@@ -11,6 +11,7 @@ import {
 import type { PlotColumn, ScanProgress } from '../types';
 import type { SavedIndicator } from '../lib/indicatorLibrary';
 import { PRESETS } from '../scripts/presets';
+import { venueLabel } from '../venues/catalog';
 import { Button, ProgressBar, Select } from '../ui/primitives';
 import { PineEditor } from './PineEditor';
 
@@ -234,7 +235,11 @@ export function PinePanel({
             <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <ScanSearch className="size-3 text-primary" />
-                {progress?.symbol ? `Scanning ${progress.symbol}` : 'Preparing scan…'}
+                {progress?.symbol
+                  ? `Scanning ${
+                      progress.venue ? `${venueLabel(progress.venue)} · ` : ''
+                    }${progress.symbol}`
+                  : 'Preparing scan…'}
               </span>
               <span className="font-mono tabular-nums">
                 {progress ? `${progress.done}/${progress.total}` : '—'}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ScanProgress,
   ScanResult,
+  ScanTarget,
   ScanWorkerIn,
   ScanWorkerOut,
 } from '../types';
@@ -16,7 +17,7 @@ interface ScanCallbacks {
 export interface ScanParams {
   script: string;
   timeframe: string;
-  symbols: string[];
+  targets: ScanTarget[];
   bars: number;
   concurrency?: number;
 }
@@ -54,6 +55,7 @@ export function useScanner() {
         callbacksRef.current.onProgress?.({
           done: message.done,
           total: message.total,
+          venue: message.venue,
           symbol: message.symbol,
         });
       } else if (message.type === 'result') {
@@ -84,7 +86,7 @@ export function useScanner() {
       id,
       script: params.script,
       timeframe: params.timeframe,
-      symbols: params.symbols,
+      targets: params.targets,
       bars: params.bars,
       concurrency: params.concurrency ?? 6,
     };

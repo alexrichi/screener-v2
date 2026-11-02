@@ -1,23 +1,22 @@
+import type { Instrument, MarketKind, VenueId } from './venues/types';
+
 export type ThemeMode = 'dark' | 'light';
 
 export type MarketFilter = 'all' | 'gainers' | 'losers' | 'favorites';
 
 export interface MarketRow {
-  /** Binance futures symbol, e.g. BTCUSDT. */
-  symbol: string;
-  base: string;
-  quote: string;
+  /** Full instrument identity: key, venue, native id, display and Vela symbol. */
+  instrument: Instrument;
   price: number | null;
   change24h: number | null;
   quoteVolume: number | null;
   funding: number | null;
   nextFunding: number | null;
-  pricePrecision: number;
 }
 
 export interface WorkspaceTab {
   id: string;
-  /** Binance futures symbol without the `.P` suffix. */
+  /** Vela symbol, bare Binance ticker, or provider-qualified symbol. */
   symbol: string;
   timeframe: string;
   /** Vela layout id: '1' | '2h' | '2v' | '4' | '8' | custom. */
@@ -44,7 +43,8 @@ export interface ColumnState {
 }
 
 export interface ScreenerView {
-  sort: SortState;
+  /** Null means the table keeps its incoming (merged volume) order. */
+  sort: SortState | null;
   columns: ColumnState;
   query: string;
   filter: MarketFilter;
@@ -57,6 +57,10 @@ export interface PlotValue {
 }
 
 export interface ScanResult {
+  /** Instrument identity: venue:kind:nativeId. */
+  key: string;
+  venue: VenueId;
+  /** Native venue ticker, used for display and PineTS. */
   symbol: string;
   plots: PlotValue[];
   error?: string;
@@ -74,7 +78,14 @@ export interface PlotColumn {
 export interface ScanProgress {
   done: number;
   total: number;
+  venue?: VenueId;
   symbol?: string;
+}
+
+/** One sequential scanner pass: a venue and the instruments to run. */
+export interface ScanTarget {
+  venue: VenueId;
+  instruments: Instrument[];
 }
 
 export interface Settings {
@@ -90,7 +101,7 @@ export interface ScanRequest {
   id: number;
   script: string;
   timeframe: string;
-  symbols: string[];
+  targets: ScanTarget[];
   bars: number;
   concurrency: number;
 }
@@ -100,7 +111,16 @@ export type ScanWorkerIn =
   | { type: 'abort'; id: number };
 
 export type ScanWorkerOut =
-  | { type: 'progress'; id: number; done: number; total: number; symbol: string }
+  | {
+      type: 'progress';
+      id: number;
+      done: number;
+      total: number;
+      venue: VenueId;
+      symbol: string;
+    }
   | { type: 'result'; id: number; result: ScanResult }
   | { type: 'done'; id: number }
   | { type: 'fatal'; id: number; error: string };
+
+export type { Instrument, MarketKind, VenueId };

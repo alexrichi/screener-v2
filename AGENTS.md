@@ -4,10 +4,10 @@ Working guide for an AI agent contributing to **Screener v2**: how to analyze
 requests, implement, test, verify, and avoid regressions. Throughout this file,
 **"the user"** means the human directing the work.
 
-Screener v2 is a Binance USDT-M perpetual futures screener: Vela charts,
-Pine Script indicators and scans, and a compact table in a single Vite app.
-It uses public market data only. There is no backend, auth, order execution,
-Electron shell, or Nautilus integration yet.
+Screener v2 is a multi-venue crypto screener (Binance, OKX, Bybit, Bitget,
+Hyperliquid, Coinbase): Vela charts, Pine Script indicators and scans, and a
+compact table in a single Vite app. It uses public market data only. There is no
+backend, auth, order execution, Electron shell, or Nautilus integration yet.
 
 ---
 
@@ -103,7 +103,8 @@ src/
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
-    marketData.ts                 market rows from the sidecar
+    marketData.ts                 market rows for the checked venues via the sidecar
+    universe.ts                   per-venue trim, scan target grouping, favorites key
     velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
     velaPanels.tsx                Vela side-panel registration and React portal bridge
     usePersistedState.ts          localStorage-backed state with runtime validation
@@ -119,7 +120,8 @@ src/
   venues/
     types.ts                      VenueAdapter, Instrument, trading ports
     instrument.ts                 display/key normalization (.P, spot slash rule)
-    catalog.ts                    venue ids and labels shown in the picker
+    catalog.ts                    venue ids, labels, sort and selection validation
+    venueIcons.tsx                shared exchange icons and Vela picker CSS hook
     rateLimit.ts                  venue-agnostic weight/request gate
     registry.ts                   adapter registry
     binance.ts                    Binance public-data adapter
@@ -156,11 +158,13 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   Vela host, which maps them to picker-only manifest entries (`enabled: false`,
   `category: 'My scripts'`) and refreshes them with `ws.setIndicators(...)`.
   Apply and scan always use the same source text.
-- `useMarketRows` calls `fetchMarketRows` every `settings.refreshSeconds`, caching
-  `exchangeInfo` for 10 minutes. Rows come from the sidecar only; its `VenueHub`
-  owns one adapter, ticker/bars caches and in-flight de-duplication. Rows are
-  sorted by 24h quote volume; `App` applies `minVolume` and `topN` before the
-  table and scanner see them.
+- `useMarketRows` calls `fetchMarketRows` every `settings.refreshSeconds` for
+  the checked venues, in parallel through `Promise.allSettled`. Rows come from
+  the sidecar only; its `VenueHub` owns one adapter, ticker/bars caches and
+  in-flight de-duplication. A failed venue keeps the others visible and surfaces
+  as a per-venue warning. `App` applies `minVolume` and `topN` **per venue**
+  (`lib/universe.ts`), then merges by 24h quote volume before the table and
+  scanner see the rows.
 - Vela charts use `SidecarVelaProvider(venueId)`, one provider per entry in
   `venues/catalog.ts`. History, live candles and ranged backfills all go through
   the sidecar: the provider sends the requested depth (and `to` for older
@@ -177,20 +181,26 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   on pan, so the host listens to `viewport:changed` and raises the cell's depth
   by 5000 bars (cap 100k) when the viewport reaches the oldest loaded bar;
   `history:complete` with reason `genesis` stops that cell from extending.
-- `App` keeps the global favorite symbol list at `screener.favorites`. The table
-  receives the trimmed universe plus any favorite outside it, so favorites stay
-  visible in the `Favorites` tab regardless of `topN`/`minVolume`; the scanner
-  still uses the trimmed universe only.
-- A table row click updates the **active cell** of the active tab. The Vela host
-  projects that change through `setSymbol`.
+- `App` keeps the global favorite list at `screener.favorites`, keyed by
+  `instrument.key` (`venue:kind:nativeId`). Legacy bare Binance tickers migrate
+  on read. The table receives the trimmed universe plus any favorite outside it,
+  so favorites stay visible in the `Favorites` tab regardless of
+  `topN`/`minVolume`; the scanner still uses the trimmed universe only.
+- A table row click opens `instrument.velaSymbol`, so the active cell follows the
+  row's venue. The Vela host projects that change through `setSymbol`.
+- The venue filter lives at `screener.marketVenues`; unselected venues are not
+  fetched. `Venue` is a fixed first column with icons only and an empty-but-
+  sortable header (globe plus the tri-state sort glyph). Column sort cycles
+  descending → ascending → unsorted; `ScreenerView.sort` is nullable.
 - The Vela host listens to `state:changed`, `cell:active`, and `layout:changed`,
   debounces for 120 ms, and writes the active symbol/timeframe/layout back to the
   tab. Do not update state if the values are unchanged.
-- A scan sends the current filtered symbol list to `scan.worker.ts`. The worker
-  talks to the sidecar (`SidecarVenueAdapter`) only; there is no direct exchange
-  path. It compiles one `Indicator`, fetches closed candles with bounded
-  concurrency, runs PineTS per symbol, and posts results and progress. The main
-  thread only merges results and derives plot columns.
+- A scan sends `targets: [{ venue, instruments }]` to `scan.worker.ts`. The worker
+  walks venues sequentially, compiles one `Indicator`, fetches closed candles
+  with bounded concurrency, runs PineTS per instrument, and posts results keyed
+  by `instrument.key` plus progress with the current venue. A venue failure or
+  rate limit does not stop the remaining venues. The main thread only merges
+  results and derives plot columns.
 - The applied Pine script is stored on the tab as `pineScript` / `pineAll`. Vela's
   external indicators are not persisted by the workspace document, so the host
   reapplies the stored script on mount.
@@ -281,8 +291,10 @@ merge stable. Plot keys are the column identity; titles are display only.
 
 **The table is fixed-layout and horizontally scrollable.** Column definitions feed
 both `<colgroup>` and the header/cell renderer. New columns must be added to the
-definition list and the persisted order merge. Keep numeric cells `font-mono` and
-`tabular-nums`, and keep the sticky Symbol cell opaque in all states.
+definition list and the persisted order merge. The `Venue` column is fixed first
+with icons only; its header is empty but sortable (globe plus sort glyph) and it
+is not in the column picker. Keep numeric cells `font-mono` and `tabular-nums`,
+and keep the sticky Symbol cell opaque in all states.
 
 **Theme changes touch two files.** App tokens live in `src/index.css`; the Vela
 theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will drift
@@ -335,8 +347,17 @@ Two rules that earn their keep:
 
 Useful browser probes:
 
-- 100 USDT-M perpetuals render after load; the chart canvas has a non-zero bounding
-  box.
+- 100+ rows render across the checked venues; the first column shows only the
+  exchange icons, its header shows the globe/sort glyph, and the chart canvas has
+  a non-zero bounding box.
+- Unchecking a venue removes its rows immediately and survives reload; `All
+  venues` can clear the list and the table explains the empty selection.
+- Clicking a venue column header cycles descending → ascending → unsorted; the
+  third state restores the merged 24h-volume order.
+- Clicking an OKX/Coinbase row opens that venue's chart and survives reload;
+  Binance perp tabs keep `BINANCE:...P` through the same round trip.
+- The Vela symbol picker shows the venue icon before each badge and keeps the
+  provider name as text.
 - Switching the layout select to `2h`/`4` changes the live cell count and the tab
   badge; the second cell is the alt symbol, not a duplicate.
 - In a multi-cell grid the topbar widget action left of `Alerts` expands the
@@ -347,12 +368,14 @@ Useful browser probes:
   action opens the Pine panel.
 - Creating a workspace with `+` immediately requests its klines and renders candles;
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
-- Clicking a table row changes the active cell symbol and the tab label.
+- Clicking a table row changes the active cell symbol and the tab label; the
+  selected row is matched by its venue-qualified symbol.
 - Starring a row keeps it in `Favorites` after reload and after lowering `topN`
   so it falls out of the trimmed universe; the star click does not change the
-  active workspace symbol.
-- Applying the RSI preset adds a study pane; the scan completes and adds RSI /
-  Oversold / Overbought columns.
+  active workspace symbol. Legacy bare favorites migrate to `binance:perp:...`.
+- Applying the RSI preset and scanning two venues adds RSI / Oversold /
+  Overbought columns to both venues' rows; one venue's failure leaves the other
+  values intact.
 - Saving a script adds it to the Library and to Vela's `Indicators → My scripts`;
   adding it from the picker changes the on-chart count, and both the library and
   the picker entry survive a reload.

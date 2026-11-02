@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   baseFromSymbol,
   binanceInterval,
   chartSymbol,
   spotSymbol,
+  symbolLabel,
 } from '../src/lib/binance';
 import {
   formatCompact,
@@ -13,15 +14,57 @@ import {
   layoutLabel,
 } from '../src/lib/format';
 import { extractPlots } from '../src/scan/extractPlots';
-import { DEFAULT_VIEW, isScreenerView } from '../src/lib/view';
+import {
+  DEFAULT_VIEW,
+  isScreenerView,
+  mergeColumnOrder,
+  nextSort,
+} from '../src/lib/view';
 import { isStringArray } from '../src/lib/usePersistedState';
+import {
+  favoriteKey,
+  scanTargetsFor,
+  trimRowsPerVenue,
+} from '../src/lib/universe';
+import { fetchMarketRows } from '../src/lib/marketData';
+import type { MarketRow, VenueId } from '../src/types';
+import { SidecarVenueAdapter } from '../src/venues/sidecar';
+import { makeInstrument } from '../src/venues/instrument';
+
+function row(venue: VenueId, nativeId: string, quoteVolume: number): MarketRow {
+  const kind = venue === 'coinbase' ? 'spot' : 'perp';
+  const instrument = makeInstrument({
+    venue,
+    kind,
+    nativeId,
+    base: 'BTC',
+    quote: 'USDT',
+    velaSymbol: `${venue.toUpperCase()}:${nativeId}`,
+  });
+  return {
+    instrument,
+    price: 1,
+    change24h: 1,
+    quoteVolume,
+    funding: null,
+    nextFunding: null,
+  };
+}
 
 describe('binance symbols and intervals', () => {
   it('maps Vela futures symbols both ways', () => {
     expect(chartSymbol('BTCUSDT')).toBe('BTCUSDT.P');
     expect(chartSymbol('BTCUSDT.P')).toBe('BTCUSDT.P');
+    expect(chartSymbol('binance:BTCUSDT')).toBe('binance:BTCUSDT.P');
+    expect(chartSymbol('OKX:BTC-USDT-SWAP')).toBe('OKX:BTC-USDT-SWAP');
     expect(spotSymbol('BTCUSDT.P')).toBe('BTCUSDT');
+    expect(spotSymbol('BINANCE:BTCUSDT.P')).toBe('BINANCE:BTCUSDT.P');
     expect(baseFromSymbol('1000PEPEUSDT.P')).toBe('1000PEPE');
+    expect(baseFromSymbol('binance:BTCUSDT.P')).toBe('BTC');
+    expect(symbolLabel('BTCUSDT')).toBe('BTC');
+    expect(symbolLabel('binance:BTCUSDT.P')).toBe('BTC');
+    expect(symbolLabel('OKX:BTC-USDT-SWAP')).toBe('BTC');
+    expect(symbolLabel('COINBASE:BTC-USD')).toBe('BTC');
   });
 
   it('maps timeframes to Binance intervals', () => {
@@ -85,9 +128,36 @@ describe('screener view persistence', () => {
   it('accepts the default view and rejects broken documents', () => {
     expect(isScreenerView(DEFAULT_VIEW)).toBe(true);
     expect(isScreenerView({ ...DEFAULT_VIEW, filter: 'favorites' })).toBe(true);
+    expect(isScreenerView({ ...DEFAULT_VIEW, sort: null })).toBe(true);
     expect(isScreenerView({ ...DEFAULT_VIEW, filter: 'wat' })).toBe(false);
     expect(isScreenerView({ ...DEFAULT_VIEW, sort: { key: 'price', dir: 2 } })).toBe(false);
     expect(isScreenerView(null)).toBe(false);
+  });
+
+  it('cycles a column through descending, ascending and unsorted', () => {
+    const desc = nextSort(null, 'price');
+    expect(desc).toEqual({ key: 'price', dir: -1 });
+    const asc = nextSort(desc, 'price');
+    expect(asc).toEqual({ key: 'price', dir: 1 });
+    expect(nextSort(asc, 'price')).toBeNull();
+    expect(nextSort(asc, 'volume')).toEqual({ key: 'volume', dir: -1 });
+  });
+
+  it('inserts the Venue column first in an old persisted order', () => {
+    expect(
+      mergeColumnOrder(
+        ['symbol', 'price', 'change24h', 'quoteVolume', 'funding'],
+        ['venue', 'symbol', 'price', 'change24h', 'quoteVolume', 'funding', 'plot:rsi'],
+      ),
+    ).toEqual([
+      'venue',
+      'symbol',
+      'price',
+      'change24h',
+      'quoteVolume',
+      'funding',
+      'plot:rsi',
+    ]);
   });
 
   it('validates the persisted favorites list', () => {
@@ -96,5 +166,71 @@ describe('screener view persistence', () => {
     expect(isStringArray(['BTCUSDT', 1])).toBe(false);
     expect(isStringArray('BTCUSDT')).toBe(false);
     expect(isStringArray(null)).toBe(false);
+  });
+});
+
+describe('multi-venue universe', () => {
+  it('migrates legacy favorites to the instrument key', () => {
+    expect(favoriteKey('BTCUSDT')).toBe('binance:perp:BTCUSDT');
+    expect(favoriteKey('okx:perp:BTC-USDT-SWAP')).toBe('okx:perp:BTC-USDT-SWAP');
+  });
+
+  it('applies minVolume and topN per venue before merging', () => {
+    const rows = [
+      row('binance', 'A', 500),
+      row('binance', 'B', 300),
+      row('binance', 'C', 250),
+      row('okx', 'A', 400),
+      row('okx', 'B', 200),
+    ];
+    const kept = trimRowsPerVenue(rows, 260, 2);
+    expect(
+      kept.map((item) => `${item.instrument.venue}:${item.instrument.nativeId}`),
+    ).toEqual(['binance:A', 'okx:A', 'binance:B']);
+  });
+
+  it('groups scanner targets in venue order', () => {
+    const rows = [row('binance', 'A', 500), row('okx', 'A', 400), row('okx', 'B', 300)];
+    const targets = scanTargetsFor(rows, ['okx', 'binance']);
+    expect(targets.map((target) => target.venue)).toEqual(['okx', 'binance']);
+    expect(targets[0]?.instruments.map((instrument) => instrument.nativeId)).toEqual([
+      'A',
+      'B',
+    ]);
+  });
+});
+
+describe('multi-venue market rows', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps healthy venues when one venue fails', async () => {
+    vi.spyOn(SidecarVenueAdapter.prototype, 'fetchTickers').mockImplementation(
+      async function (this: SidecarVenueAdapter) {
+        if (this.id === 'okx') throw new Error('OKX is down');
+        const instrument = makeInstrument({
+          venue: 'binance',
+          kind: 'perp',
+          nativeId: 'BTCUSDT',
+          base: 'BTC',
+          quote: 'USDT',
+          velaSymbol: 'BINANCE:BTCUSDT.P',
+        });
+        return [
+          {
+            instrument,
+            last: 1,
+            change24h: 1,
+            quoteVolume: 100,
+            funding: null,
+            nextFunding: null,
+          },
+        ];
+      },
+    );
+
+    const result = await fetchMarketRows(['binance', 'okx']);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.instrument.key).toBe('binance:perp:BTCUSDT');
+    expect(result.errors.okx).toBe('OKX is down');
   });
 });

@@ -1,32 +1,47 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MarketRow } from '../types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MarketRow, VenueId } from '../types';
+import { venueLabel } from '../venues/catalog';
 import { fetchMarketRows } from '../lib/marketData';
 
-export function useMarketRows(refreshSeconds: number) {
+export function useMarketRows(refreshSeconds: number, venues: VenueId[]) {
   const [rows, setRows] = useState<MarketRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [venueErrors, setVenueErrors] = useState<Record<string, string>>({});
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const inFlight = useRef<AbortController | null>(null);
+  const venueKey = venues.join(',');
 
   const refresh = useCallback(async () => {
     inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
+    const activeVenues = venueKey ? venueKey.split(',') : [];
+
+    if (activeVenues.length === 0) {
+      setRows([]);
+      setVenueErrors({});
+      setUpdatedAt(Date.now());
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      const next = await fetchMarketRows(controller.signal);
+      const next = await fetchMarketRows(activeVenues, controller.signal);
       if (controller.signal.aborted) return;
-      setRows(next);
+      setRows(next.rows);
+      setVenueErrors(next.errors);
       setUpdatedAt(Date.now());
-      setError(null);
     } catch (cause) {
       if (controller.signal.aborted) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setVenueErrors(
+        Object.fromEntries(activeVenues.map((venue) => [venue, message])),
+      );
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, []);
+  }, [venueKey]);
 
   useEffect(() => {
     void refresh();
@@ -44,5 +59,13 @@ export function useMarketRows(refreshSeconds: number) {
     };
   }, [refresh, refreshSeconds]);
 
-  return { rows, loading, error, updatedAt, refresh };
+  const error = useMemo(() => {
+    const entries = Object.entries(venueErrors);
+    if (entries.length === 0) return null;
+    return entries
+      .map(([venue, message]) => `${venueLabel(venue)}: ${message}`)
+      .join(' · ');
+  }, [venueErrors]);
+
+  return { rows, loading, error, venueErrors, updatedAt, refresh };
 }

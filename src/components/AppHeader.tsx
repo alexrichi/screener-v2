@@ -10,9 +10,11 @@ import {
   Sun,
   X,
 } from 'lucide-react';
-import type { MarketRow, WorkspaceTab } from '../types';
+import type { MarketRow, VenueId, WorkspaceTab } from '../types';
 import { symbolLabel } from '../lib/binance';
 import { formatClock, formatPrice, layoutLabel } from '../lib/format';
+import { VENUE_CATALOG, venueLabel } from '../venues/catalog';
+import { VenueIcon } from '../venues/venueIcons';
 import { useTheme } from '../ui/theme';
 import { cn } from '../ui/cn';
 import { IconButton, Input } from '../ui/primitives';
@@ -22,6 +24,7 @@ interface Props {
   tabs: WorkspaceTab[];
   activeId: string;
   rows: MarketRow[];
+  venues: VenueId[];
   loading: boolean;
   error: string | null;
   updatedAt: number | null;
@@ -37,6 +40,7 @@ export function AppHeader({
   tabs,
   activeId,
   rows,
+  venues,
   loading,
   error,
   updatedAt,
@@ -63,14 +67,27 @@ export function AppHeader({
   const matches = useMemo(() => {
     const needle = query.trim().toUpperCase();
     const source = needle
-      ? rows.filter(
-          (row) => row.symbol.includes(needle) || row.base.includes(needle),
-        )
+      ? rows.filter((row) => {
+          const instrument = row.instrument;
+          return (
+            instrument.nativeId.includes(needle) ||
+            instrument.base.includes(needle) ||
+            venueLabel(instrument.venue).toUpperCase().includes(needle)
+          );
+        })
       : rows;
     return source.slice(0, 80);
   }, [query, rows]);
 
   const statusTone = error ? 'bg-negative' : loading ? 'bg-amber-400' : 'bg-positive';
+  const venueSummary =
+    venues.length === 0
+      ? 'No venues'
+      : venues.length === VENUE_CATALOG.length
+        ? 'All venues'
+        : venues.length === 1
+          ? venueLabel(venues[0]!)
+          : `${venues.length} venues`;
 
   return (
     <header className="flex h-9 shrink-0 items-stretch border-b border-border bg-background">
@@ -174,7 +191,7 @@ export function AppHeader({
                 ref={searchRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search Binance futures…"
+                placeholder="Search symbol or venue…"
                 className="h-8 pl-7"
               />
             </div>
@@ -186,22 +203,26 @@ export function AppHeader({
               ) : (
                 matches.map((row) => (
                   <button
-                    key={row.symbol}
+                    key={row.instrument.key}
                     type="button"
+                    title={`${row.instrument.velaSymbol} · ${venueLabel(
+                      row.instrument.venue,
+                    )}`}
                     onClick={() => {
-                      onAdd(row.symbol);
+                      onAdd(row.instrument.velaSymbol);
                       setPickerOpen(false);
                     }}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent"
                   >
+                    <VenueIcon venue={row.instrument.venue} size={14} />
                     <span className="w-16 shrink-0 truncate text-[12px] font-semibold text-foreground">
-                      {row.base}
+                      {row.instrument.base}
                     </span>
                     <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground">
-                      {row.symbol}
+                      {row.instrument.display}
                     </span>
                     <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-                      {formatPrice(row.price, row.pricePrecision)}
+                      {formatPrice(row.price, row.instrument.pricePrecision)}
                     </span>
                   </button>
                 ))
@@ -217,7 +238,7 @@ export function AppHeader({
           title={error ?? (loading ? 'Refreshing' : 'Connected')}
         />
         <span className="hidden items-center gap-1 text-[11px] text-muted-foreground xl:flex">
-          <span className="font-medium text-foreground/80">Binance</span>
+          <span className="font-medium text-foreground/80">{venueSummary}</span>
           <span className="text-muted-foreground/60">·</span>
           <span className="font-mono tabular-nums">{formatClock(updatedAt)}</span>
         </span>

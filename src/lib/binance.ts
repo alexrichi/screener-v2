@@ -1,4 +1,3 @@
-import type { MarketRow } from '../types';
 import { canonicalTimeframe } from './timeframe';
 
 const FUTURES = 'https://fapi.binance.com/fapi/v1';
@@ -97,26 +96,40 @@ function numberOrNull(value: unknown): number | null {
 }
 
 export function chartSymbol(symbol: string): string {
-  // Already a venue-qualified Vela symbol (`OKX:BTC-USDT-SWAP`).
-  if (symbol.includes(':')) return symbol;
+  const at = symbol.indexOf(':');
+  if (at >= 0) {
+    const provider = symbol.slice(0, at);
+    const ticker = symbol.slice(at + 1);
+    // Provider-prefixed Binance perps keep `.P`. Older persisted tabs may have
+    // lost it; the provider only serves USDT-M perpetuals in this app.
+    if (provider.toLowerCase() === 'binance' && !ticker.toUpperCase().endsWith('.P')) {
+      return `${provider}:${ticker}.P`;
+    }
+    return symbol;
+  }
   return symbol.endsWith('.P') ? symbol : `${symbol}.P`;
 }
 
 export function spotSymbol(symbol: string): string {
+  // A provider prefix owns its ticker; only bare Binance tickers lose `.P`.
+  if (symbol.includes(':')) return symbol;
   return symbol.endsWith('.P') ? symbol.slice(0, -2) : symbol;
 }
 
 export function baseFromSymbol(symbol: string): string {
-  return spotSymbol(symbol).replace(/(USDT|USDC|BUSD|FDUSD)$/i, '');
+  const at = symbol.indexOf(':');
+  const ticker = at >= 0 ? symbol.slice(at + 1) : symbol;
+  return spotSymbol(ticker).replace(/(USDT|USDC|BUSD|FDUSD)$/i, '');
 }
 
-/** Short tab label: `BTC` for both `BTCUSDT` and `okx:BTC-USDT-SWAP`. */
+/** Short tab label: `BTC` for `BTCUSDT`, `binance:BTCUSDT.P`, and `okx:BTC-USDT-SWAP`. */
 export function symbolLabel(symbol: string): string {
   const at = symbol.indexOf(':');
   if (at >= 0) {
     const native = symbol.slice(at + 1);
     const dash = native.indexOf('-');
-    return dash > 0 ? native.slice(0, dash) : native;
+    if (dash > 0) return native.slice(0, dash);
+    return baseFromSymbol(native);
   }
   return baseFromSymbol(symbol);
 }
@@ -166,7 +179,20 @@ export async function fetchSymbolMeta(signal?: AbortSignal): Promise<SymbolMeta[
   return rows;
 }
 
-export async function fetchUniverse(signal?: AbortSignal): Promise<MarketRow[]> {
+/** Raw Binance ticker row used by the adapter; the browser table never sees it. */
+export interface BinanceMarketRow {
+  symbol: string;
+  base: string;
+  quote: string;
+  price: number | null;
+  change24h: number | null;
+  quoteVolume: number | null;
+  funding: number | null;
+  nextFunding: number | null;
+  pricePrecision: number;
+}
+
+export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarketRow[]> {
   const [meta, tickers, premium] = await Promise.all([
     fetchSymbolMeta(signal),
     fetchJson<BinanceTicker24h[]>(`${FUTURES}/ticker/24hr`, signal),
@@ -175,7 +201,7 @@ export async function fetchUniverse(signal?: AbortSignal): Promise<MarketRow[]> 
   const tickerBySymbol = new Map(tickers.map((t) => [t.symbol, t]));
   const fundingBySymbol = new Map(premium.map((p) => [p.symbol, p]));
 
-  const rows: MarketRow[] = meta.map((m) => {
+  const rows: BinanceMarketRow[] = meta.map((m) => {
     const ticker = tickerBySymbol.get(m.symbol);
     const funding = fundingBySymbol.get(m.symbol);
     const price = numberOrNull(ticker?.lastPrice);

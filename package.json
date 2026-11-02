@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Binance and OKX screener with Vela charts and Pine scans",
+  "description": "Multi-venue crypto screener with Vela charts and Pine scans",
   "author": "Screener",
   "main": "electron/main.cjs",
   "scripts": {

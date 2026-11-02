@@ -1,9 +1,8 @@
 # Screener v2
 
-A multi-venue USDT perpetual futures screener (Binance, OKX, Bybit, Bitget,
-Hyperliquid) with Coinbase spot charts, Vela charts and a Pine Script scanner.
-The UI is a Vite + React + TypeScript app; there is no private backend and no
-API key.
+A multi-venue crypto screener (Binance, OKX, Bybit, Bitget, Hyperliquid,
+Coinbase) with Vela charts and a Pine Script scanner. The UI is a Vite + React +
+TypeScript app; there is no private backend and no API key.
 
 ## Stack
 
@@ -58,8 +57,12 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
 
 - Binance, OKX, Bybit, Bitget, Hyperliquid, and Coinbase instruments. The
   picker lists all venues, sorted by ticker across exchanges; a chart opens the
-  venue of the selected ticker. Coinbase is spot; the rest are perpetuals. The
-  screener table and the scanner still run on Binance only.
+  venue of the selected ticker. Coinbase is spot; the rest are perpetuals.
+- One multi-venue screener table with a venue checkbox filter, a leading
+  `Venue` icon column, and a `perp` / `spot` badge per row. A row click opens the
+  matching venue's chart. `topN` and the volume floor apply per venue before the
+  lists merge. Clicking a column header cycles descending, ascending, and
+  unsorted.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
   own symbol and timeframe. Dragging a chart into the past keeps loading older
   history. The header button left of `Alerts` maximizes the
@@ -68,7 +71,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   reorderable columns, and per-row actions. Screener, Pine, and Library open as
   Vela side panels from the chart header; the open panel and width persist.
 - Favorites: star a symbol and open the `Favorites` tab. Saved to localStorage
-  and kept visible even when a symbol falls outside `topN` or the volume filter.
+  per instrument (`venue:kind:nativeId`) and kept visible even when a symbol
+  falls outside `topN` or the volume filter.
 - Pine editor with presets and CodeMirror highlighting, completions, folding,
   search, and lint. Apply a script to the active chart or all charts in the
   workspace.
@@ -79,7 +83,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
 - Source button on every Pine indicator legend row: opens the exact script Vela
   is running in the editor, and selects the matching saved indicator.
 - Scanner runs the same script over closed candles in a Web Worker and adds the
-  last plot values as table columns.
+  last plot values as table columns. It walks the checked venues sequentially;
+  one venue's failure does not stop the rest.
 
 ## Notes
 

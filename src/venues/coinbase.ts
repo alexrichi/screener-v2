@@ -56,9 +56,11 @@ interface CoinbaseProduct {
 }
 
 interface CoinbaseStats {
-  open?: string;
-  last?: string;
-  volume?: string;
+  stats_24hour?: {
+    open?: string;
+    last?: string;
+    volume?: string;
+  };
 }
 
 type CoinbaseCandle = [number, number, number, number, number, number];
@@ -145,41 +147,29 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
   }
 
   async fetchTickers(signal?: AbortSignal): Promise<VenueTicker[]> {
-    const instruments = await this.listInstruments(signal);
-    // The exchange has no bulk ticker endpoint; fetch each product's 24h stats
-    // through the shared limiter. Not used by the Binance table.
-    return Promise.all(
-      instruments.map(async (instrument) => {
-        try {
-          const stats = await this.request<CoinbaseStats>(
-            'market',
-            `/products/${encodeURIComponent(instrument.nativeId)}/stats`,
-            signal,
-          );
-          const last = number(stats.last);
-          const open = number(stats.open);
-          const baseVolume = number(stats.volume);
-          return {
-            instrument,
-            last,
-            change24h: last != null && open ? ((last - open) / open) * 100 : null,
-            quoteVolume:
-              last != null && baseVolume != null ? last * baseVolume : null,
-            funding: null,
-            nextFunding: null,
-          };
-        } catch {
-          return {
-            instrument,
-            last: null,
-            change24h: null,
-            quoteVolume: null,
-            funding: null,
-            nextFunding: null,
-          };
-        }
-      }),
-    );
+    const [instruments, stats] = await Promise.all([
+      this.listInstruments(signal),
+      this.request<Record<string, CoinbaseStats>>(
+        'market',
+        '/products/stats',
+        signal,
+      ),
+    ]);
+    return instruments.map((instrument) => {
+      const day = stats[instrument.nativeId]?.stats_24hour;
+      const last = number(day?.last);
+      const open = number(day?.open);
+      const baseVolume = number(day?.volume);
+      return {
+        instrument,
+        last,
+        change24h: last != null && open ? ((last - open) / open) * 100 : null,
+        quoteVolume:
+          last != null && baseVolume != null ? last * baseVolume : null,
+        funding: null,
+        nextFunding: null,
+      };
+    });
   }
 
   async fetchBars(
