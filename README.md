@@ -1,8 +1,9 @@
 # Screener v2
 
-A multi-venue USDT perpetual futures screener (Binance, OKX, Bybit, Bitget)
-with Vela charts and a Pine Script scanner. The UI is a Vite + React +
-TypeScript app; there is no private backend and no API key.
+A multi-venue USDT perpetual futures screener (Binance, OKX, Bybit, Bitget,
+Hyperliquid) with Coinbase spot charts, Vela charts and a Pine Script scanner.
+The UI is a Vite + React + TypeScript app; there is no private backend and no
+API key.
 
 ## Stack
 
@@ -12,8 +13,9 @@ TypeScript app; there is no private backend and no API key.
 - `@luxalgo/vela-pinets` + `pinets` for Pine Script indicators and the scanner
 - CodeMirror 6 (`@uiw/react-codemirror`) with a Pine language mode from the
   local Vela-pinets `editor` entry
-- Public REST/WS market data from Binance and OKX, plus Bybit and Bitget through
-  their siebly SDKs, normalized by `VenueAdapter`
+- Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,
+  Hyperliquid, and Coinbase through their public APIs, normalized by
+  `VenueAdapter`
 - Electron shell for the desktop build; the sidecar runs as a child process
 
 The app resolves `@luxalgo/vela` and `@luxalgo/vela-pinets/editor` to the local
@@ -54,10 +56,10 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
 
 ## What it does
 
-- Binance, OKX, Bybit, and Bitget USDT perpetuals. The instrument picker lists
-  all four venues, sorted by ticker across exchanges; a chart opens the venue of
-  the selected ticker. The screener table and the scanner still run on Binance
-  only.
+- Binance, OKX, Bybit, Bitget, Hyperliquid, and Coinbase instruments. The
+  picker lists all venues, sorted by ticker across exchanges; a chart opens the
+  venue of the selected ticker. Coinbase is spot; the rest are perpetuals. The
+  screener table and the scanner still run on Binance only.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
   own symbol and timeframe. Dragging a chart into the past keeps loading older
   history. The header button left of `Alerts` maximizes the
@@ -86,8 +88,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   distributing or hosting it triggers AGPL obligations or requires a commercial
   license.
 - The app reads public market data only. It does not trade.
-- The sidecar exposes public Binance, OKX, Bybit, and Bitget data through one
-  `VenueAdapter` per venue and a shared cache. The table, scanner, and Vela
+- The sidecar exposes public Binance, OKX, Bybit, Bitget, Hyperliquid, and
+  Coinbase data through one `VenueAdapter` per venue and a shared cache. The table, scanner, and Vela
   charts use the sidecar only; there is no direct exchange path in the browser.
   Charts stream live candles over `ws://127.0.0.1:8787/stream`; the sidecar keeps
   one stream per symbol/timeframe and fans it out to every chart. If the venue

@@ -4,6 +4,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { BinanceVenueAdapter } from '../src/venues/binance';
 import { BitgetVenueAdapter } from '../src/venues/bitget';
 import { BybitVenueAdapter } from '../src/venues/bybit';
+import { CoinbaseVenueAdapter } from '../src/venues/coinbase';
+import { HyperliquidVenueAdapter } from '../src/venues/hyperliquid';
 import { OkxVenueAdapter } from '../src/venues/okx';
 import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
@@ -16,6 +18,8 @@ const hubs = new Map<string, VenueHub>([
   ['okx', new VenueHub(new OkxVenueAdapter())],
   ['bybit', new VenueHub(new BybitVenueAdapter())],
   ['bitget', new VenueHub(new BitgetVenueAdapter())],
+  ['hyperliquid', new VenueHub(new HyperliquidVenueAdapter())],
+  ['coinbase', new VenueHub(new CoinbaseVenueAdapter())],
 ]);
 
 const streams = new Map<string, BarsStream>([
@@ -41,6 +45,18 @@ const streams = new Map<string, BarsStream>([
     'bitget',
     new PollingBarsStream((instrument, timeframe) =>
       hubs.get('bitget')!.getBars(instrument, timeframe, 2, { includeForming: true }),
+    ),
+  ],
+  [
+    'hyperliquid',
+    new PollingBarsStream((instrument, timeframe) =>
+      hubs.get('hyperliquid')!.getBars(instrument, timeframe, 2, { includeForming: true }),
+    ),
+  ],
+  [
+    'coinbase',
+    new PollingBarsStream((instrument, timeframe) =>
+      hubs.get('coinbase')!.getBars(instrument, timeframe, 2, { includeForming: true }),
     ),
   ],
 ]);

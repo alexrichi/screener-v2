@@ -126,6 +126,8 @@ src/
     okx.ts                        OKX public-data adapter (siebly okx-api)
     bybit.ts                      Bybit public-data adapter (siebly bybit-api)
     bitget.ts                     Bitget public-data adapter (siebly bitget-api)
+    hyperliquid.ts                Hyperliquid public info adapter
+    coinbase.ts                   Coinbase Exchange spot adapter
     sidecar.ts                    HTTP client for the venue sidecar
     sidecarStream.ts              browser WebSocket client for live venue bars
     vela.ts                       Vela DataProvider for one venue, backed by the sidecar
@@ -163,8 +165,8 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   windows), the adapter paginates past the venue's page size inside the shared
   limiter, and `VenueHub` caches the result. A venue socket that stays silent for
   1.5 s falls back to **one** REST poll per second per stream, fanned out to every
-  chart; venues without a WS feed (OKX, Bybit, Bitget) use the same polling path
-  from the start.
+  chart; venues without a WS feed (OKX, Bybit, Bitget, Hyperliquid, Coinbase) use
+  the same polling path from the start.
   The browser polls only while its sidecar socket is down. The picker pool is
   sorted by ticker across venues (`registerSymbolRanking`), not grouped by
   exchange; registering a ranking also retires the built-in majors pin.

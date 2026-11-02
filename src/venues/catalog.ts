@@ -12,4 +12,6 @@ export const VENUE_CATALOG: VenueCatalogEntry[] = [
   { id: 'okx', label: 'OKX' },
   { id: 'bybit', label: 'Bybit' },
   { id: 'bitget', label: 'Bitget' },
+  { id: 'hyperliquid', label: 'Hyperliquid' },
+  { id: 'coinbase', label: 'Coinbase' },
 ];
