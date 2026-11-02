@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sidecar": "tsx sidecar/server.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -27,19 +28,23 @@
     "@uiw/react-codemirror": "^4.25.12",
     "clsx": "^2.1.1",
     "lucide-react": "^1.66.0",
+    "okx-api": "^3.2.8",
     "pinets": "^0.13.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "sonner": "^2.0.8",
-    "tailwind-merge": "^3.3.1"
+    "tailwind-merge": "^3.3.1",
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.6",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.1.2",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vite": "^8.3.5",
     "vitest": "^4.1.0"

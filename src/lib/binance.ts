@@ -1,4 +1,5 @@
 import type { MarketRow } from '../types';
+import { canonicalTimeframe } from './timeframe';
 
 const FUTURES = 'https://fapi.binance.com/fapi/v1';
 
@@ -14,6 +15,17 @@ interface BinanceExchangeSymbol {
 
 interface BinanceExchangeInfo {
   symbols: BinanceExchangeSymbol[];
+}
+
+export class BinanceHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'BinanceHttpError';
+  }
 }
 
 interface BinanceTicker24h {
@@ -58,7 +70,14 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
     } catch {
       /* ignore */
     }
-    throw new Error(`Binance ${response.status}${detail ? `: ${detail}` : ''}`);
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const retryAfterMs =
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 0;
+    throw new BinanceHttpError(
+      response.status,
+      retryAfterMs,
+      `Binance ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
   }
   return (await response.json()) as T;
 }
@@ -78,6 +97,8 @@ function numberOrNull(value: unknown): number | null {
 }
 
 export function chartSymbol(symbol: string): string {
+  // Already a venue-qualified Vela symbol (`OKX:BTC-USDT-SWAP`).
+  if (symbol.includes(':')) return symbol;
   return symbol.endsWith('.P') ? symbol : `${symbol}.P`;
 }
 
@@ -87,6 +108,17 @@ export function spotSymbol(symbol: string): string {
 
 export function baseFromSymbol(symbol: string): string {
   return spotSymbol(symbol).replace(/(USDT|USDC|BUSD|FDUSD)$/i, '');
+}
+
+/** Short tab label: `BTC` for both `BTCUSDT` and `okx:BTC-USDT-SWAP`. */
+export function symbolLabel(symbol: string): string {
+  const at = symbol.indexOf(':');
+  if (at >= 0) {
+    const native = symbol.slice(at + 1);
+    const dash = native.indexOf('-');
+    return dash > 0 ? native.slice(0, dash) : native;
+  }
+  return baseFromSymbol(symbol);
 }
 
 export function binanceInterval(timeframe: string): string {
@@ -106,7 +138,7 @@ export function binanceInterval(timeframe: string): string {
     W: '1w',
     M: '1M',
   };
-  const interval = map[timeframe];
+  const interval = map[canonicalTimeframe(timeframe)];
   if (!interval) throw new Error(`Unsupported timeframe: ${timeframe}`);
   return interval;
 }
@@ -166,20 +198,36 @@ export async function fetchUniverse(signal?: AbortSignal): Promise<MarketRow[]> 
   return rows;
 }
 
+export interface KlineOptions {
+  /** Keep the in-progress candle (charts); the scanner never does. */
+  includeForming?: boolean;
+  /** End of the window (epoch ms). Binance `endTime`. */
+  to?: number;
+}
+
 /**
- * Returns up to `bars` CLOSED candles. Binance includes the forming candle as the
- * last row, so one extra row is requested and any row whose close time is still in
- * the future is dropped.
+ * Returns up to `bars` candles ending at `opts.to` (default: now). Binance
+ * includes the forming candle as the last row, so by default one extra row is
+ * requested and any row whose close time is still in the future is dropped.
+ * Charts pass `includeForming` to keep it; the scanner never does. Requests are
+ * capped at Binance's 1500-row page; callers paginate for deeper history.
  */
 export async function fetchKlines(
   symbol: string,
   timeframe: string,
   bars: number,
   signal?: AbortSignal,
+  opts: KlineOptions = {},
 ): Promise<PineBar[]> {
   const interval = binanceInterval(timeframe);
-  const limit = Math.min(1500, Math.max(2, bars + 1));
-  const url = `${FUTURES}/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`;
+  const limit = Math.min(1500, Math.max(2, bars + (opts.includeForming ? 0 : 1)));
+  const query = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(limit),
+  });
+  if (opts.to != null) query.set('endTime', String(Math.floor(opts.to)));
+  const url = `${FUTURES}/klines?${query.toString()}`;
   const raw = await fetchJson<Array<Array<string | number>>>(url, signal);
   const now = Date.now();
   const parsed = raw
@@ -197,7 +245,7 @@ export async function fetchKlines(
         Number.isFinite(bar.openTime) &&
         Number.isFinite(bar.close) &&
         Number.isFinite(bar.closeTime) &&
-        bar.closeTime <= now,
+        (opts.includeForming || bar.closeTime <= now),
     )
     .sort((a, b) => a.openTime - b.openTime);
   return parsed.slice(-bars);

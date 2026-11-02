@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MarketRow } from '../types';
-import { fetchUniverse } from '../lib/binance';
+import { fetchMarketRows } from '../lib/marketData';
 
 export function useMarketRows(refreshSeconds: number) {
   const [rows, setRows] = useState<MarketRow[]>([]);
@@ -15,7 +15,7 @@ export function useMarketRows(refreshSeconds: number) {
     inFlight.current = controller;
     setLoading(true);
     try {
-      const next = await fetchUniverse(controller.signal);
+      const next = await fetchMarketRows(controller.signal);
       if (controller.signal.aborted) return;
       setRows(next);
       setUpdatedAt(Date.now());

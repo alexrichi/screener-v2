@@ -92,18 +92,20 @@ src/
     AppHeader.tsx                 brand, workspace tabs, "+" picker, status
     VelaWorkspaceHost.tsx         Vela workspace per tab; cells, active-cell sync, Pine apply,
                                   source-code legend action
-    RightDock.tsx                 resizable dock with Screener / Pine / Library tabs
     ScreenerTable.tsx             market table, filters, favorites, column actions
     PinePanel.tsx                 script editor, saved scripts, apply and scan controls
     PineEditor.tsx                CodeMirror 6 wrapper, Pine mode, keymaps
     LibraryPanel.tsx              saved indicator list, import/export and actions
     SettingsDialog.tsx            universe and scan defaults
   hooks/
-    useMarketRows.ts              Binance poll loop and refresh state
+    useMarketRows.ts              market-row poll loop via the venue layer
   lib/
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
+    marketData.ts                 market rows from the sidecar
+    velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
+    velaPanels.tsx                Vela side-panel registration and React portal bridge
     usePersistedState.ts          localStorage-backed state with runtime validation
     view.ts                       default screener view and its validator
     velaTheme.ts                  dark/light Vela theme matching the app tokens
@@ -114,12 +116,30 @@ src/
   scripts/presets.ts              built-in Pine presets
   ui/                             tokens, primitives, overlays, theme provider
   types.ts                        shared app/data/worker types
+  venues/
+    types.ts                      VenueAdapter, Instrument, trading ports
+    instrument.ts                 display/key normalization (.P, spot slash rule)
+    catalog.ts                    venue ids and labels shown in the picker
+    rateLimit.ts                  venue-agnostic weight/request gate
+    registry.ts                   adapter registry
+    binance.ts                    Binance public-data adapter
+    okx.ts                        OKX public-data adapter (siebly okx-api)
+    sidecar.ts                    HTTP client for the venue sidecar
+    sidecarStream.ts              browser WebSocket client for live venue bars
+    vela.ts                       Vela DataProvider for one venue, backed by the sidecar
+    fake.ts                       deterministic conformance adapter
+sidecar/
+  server.ts                       public-data HTTP + WebSocket server; one hub per venue
+  hub.ts                          one adapter per venue; shared caches/fan-out
+  stream.ts                       Binance kline WS plus a REST-polling stream for
+                                  venues without a WS feed
 test/market.test.ts               pure logic tests
+test/venues.test.ts               instrument, adapter and rate-limit tests
 ```
 
 ### State and data flow
 
-- `App.tsx` owns tabs, active tab, dock state, view, settings, theme, saved
+- `App.tsx` owns tabs, active tab, view, settings, theme, saved
   indicator library, and scan results. Persisted keys are `screener.*`; the
   library lives at `screener.indicators.v1`; workspace state is keyed per tab as
   `screener-v2:ws:<tabId>`.
@@ -127,9 +147,26 @@ test/market.test.ts               pure logic tests
   Vela host, which maps them to picker-only manifest entries (`enabled: false`,
   `category: 'My scripts'`) and refreshes them with `ws.setIndicators(...)`.
   Apply and scan always use the same source text.
-- `useMarketRows` calls `fetchUniverse` every `settings.refreshSeconds`, caching
-  `exchangeInfo` for 10 minutes. Rows are sorted by 24h quote volume; `App` applies
-  `minVolume` and `topN` before the table and scanner see them.
+- `useMarketRows` calls `fetchMarketRows` every `settings.refreshSeconds`, caching
+  `exchangeInfo` for 10 minutes. Rows come from the sidecar only; its `VenueHub`
+  owns one adapter, ticker/bars caches and in-flight de-duplication. Rows are
+  sorted by 24h quote volume; `App` applies `minVolume` and `topN` before the
+  table and scanner see them.
+- Vela charts use `SidecarVelaProvider(venueId)`, one provider per entry in
+  `venues/catalog.ts`. History, live candles and ranged backfills all go through
+  the sidecar: the provider sends the requested depth (and `to` for older
+  windows), the adapter paginates past the venue's page size inside the shared
+  limiter, and `VenueHub` caches the result. A venue socket that stays silent for
+  1.5 s falls back to **one** REST poll per second per stream, fanned out to every
+  chart; venues without a WS feed (OKX) use the same polling path from the start.
+  The browser polls only while its sidecar socket is down. The picker pool is
+  sorted by ticker across venues (`registerSymbolRanking`), not grouped by
+  exchange; registering a ranking also retires the built-in majors pin.
+  There is no direct exchange path in the browser: if the sidecar is down, the
+  chart keeps what it has and the table shows the error. Vela never fetches older bars
+  on pan, so the host listens to `viewport:changed` and raises the cell's depth
+  by 5000 bars (cap 100k) when the viewport reaches the oldest loaded bar;
+  `history:complete` with reason `genesis` stops that cell from extending.
 - `App` keeps the global favorite symbol list at `screener.favorites`. The table
   receives the trimmed universe plus any favorite outside it, so favorites stay
   visible in the `Favorites` tab regardless of `topN`/`minVolume`; the scanner
@@ -140,14 +177,15 @@ test/market.test.ts               pure logic tests
   debounces for 120 ms, and writes the active symbol/timeframe/layout back to the
   tab. Do not update state if the values are unchanged.
 - A scan sends the current filtered symbol list to `scan.worker.ts`. The worker
-  compiles one `Indicator`, fetches closed candles with bounded concurrency, runs
-  PineTS per symbol, and posts results and progress. The main thread only merges
-  results and derives plot columns.
+  talks to the sidecar (`SidecarVenueAdapter`) only; there is no direct exchange
+  path. It compiles one `Indicator`, fetches closed candles with bounded
+  concurrency, runs PineTS per symbol, and posts results and progress. The main
+  thread only merges results and derives plot columns.
 - The applied Pine script is stored on the tab as `pineScript` / `pineAll`. Vela's
   external indicators are not persisted by the workspace document, so the host
   reapplies the stored script on mount.
-- Scan results are session-only. Tabs, table view, settings, theme, dock state, and
-  the applied Pine script persist; scan rows and plot columns do not.
+- Scan results are session-only. Tabs, table view, settings, theme, the open Vela
+  side panel, and the applied Pine script persist; scan rows and plot columns do not.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
 
@@ -161,12 +199,21 @@ chart. Keep the picker enabled: the default is `'1'`. Layout changes come from
 Vela's own chart control; the host listens to `layout:changed` and writes the
 active layout back to the tab. Do not add a second selector to the app header.
 
-**Seed cells, then collapse.** The host creates the workspace with a `2h` seed even
-when the tab opens on `'1'`, then collapses to `'1'`. This pools the alt cell so
-expanding the layout reveals `altSymbol` instead of a duplicate. Extra seeds cover
-`2×2` and `4×2` slots. A persisted workspace document wins over seeds; if you change
-the seed policy, version or clear the workspace keys rather than assuming old
-documents migrate.
+**Cell maximize is transient.** The app registers `screener-maximize` /
+`screener-restore` topbar widget actions (`lib/velaMaximize.ts`) in the `actions`
+slot, before `Alerts`, bridged to `ws.maximizeCell(active.id)` or `null`. They
+are hidden on a single-cell grid and refreshed on `cell:maximized` and
+`layout:changed`. Siblings stay alive underneath; the state is never persisted,
+and a layout switch or state restore clears it.
+
+**Seed cells, never pre-collapse.** Create the workspace directly with the tab's
+layout and pass seeds for `main`, `alt`, and extra slots. Expanding later hydrates
+`altSymbol` from those seeds. Do not seed a wider grid and collapse it: destroying
+the extra cell calls the shared feed's `destroy()`, which cancels the surviving
+cell's parked symbol wait while the provider index is still settling, and the tab
+opens blank until the symbol or layout changes. A persisted workspace document
+wins over seeds; if you change the seed policy, version or clear the workspace
+keys rather than assuming old documents migrate.
 
 **Restore the active cell explicitly.** After creating a workspace, match the tab's
 symbol to a live cell and call `ws.setActiveCell(...)`. Otherwise a fresh tab can
@@ -191,9 +238,32 @@ registers one `registerLegendAction` for Pine indicators and forwards
 saved item only when its source matches exactly. Do not add a parallel chart
 button or reach into renderer internals.
 
-**Only closed candles feed the scanner.** `fetchKlines` drops the forming candle
-using `closeTime <= Date.now()` and returns at most the requested count. The chart
-may show the forming candle; the scan must not.
+**The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
+registers `Screener`, `Pine`, and `Library` with `registerSidePanel` at import
+time and portals the React content into the bodies Vela hands `mount`. Open them
+with `openVelaPanel(...)`; the dock's open panel and width live in the Vela
+workspace document, not in `screener.dock.*`. Do not reach into panel internals.
+`screener.panels.welcomed` only controls the one-time Screener default.
+
+**Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
+`Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,
+scanner and Vela consume those shapes, never native ticker formats. Instrument
+identity is `venue:kind:nativeId`; display is `BTCUSDT.P` for perps and
+`BTCUSDT` / `BTC/USD` for spot. API requests use `nativeId`, Vela uses
+`velaSymbol`. Rate limits are declared per adapter and enforced by
+`RateLimiter`. Trading credentials and SDKs belong in the future sidecar, not
+the browser. Use the fake adapter for contract tests; do not add
+`if (venue === ...)` branches to UI code.
+
+**Charts may show the forming candle; the scanner never does.** `fetchKlines`
+drops the forming candle using `closeTime <= Date.now()` unless the caller passes
+`includeForming` (sidecar `?live=1`). Vela history and live polls pass it; the
+scanner and the default `fetchBars` path do not.
+
+**Timeframes arrive in several spellings.** Vela and Pine send canonical keys
+(`15`, `60`, `D`) or aliases (`1D`, `4H`, `1h`); `binanceInterval` normalizes
+them, with `1M` = month and `1m` = minute. Aggregated frames the venue does not
+serve natively (`45`, `180`) are unsupported until the sidecar builds them.
 
 **PineTS output is the contract.** `extractPlots` skips internal `__*` plots and takes
 the last finite numeric value. Keep the cap (12) and the table's dynamic column
@@ -255,6 +325,14 @@ Useful browser probes:
   box.
 - Switching the layout select to `2h`/`4` changes the live cell count and the tab
   badge; the second cell is the alt symbol, not a duplicate.
+- In a multi-cell grid the topbar widget action left of `Alerts` expands the
+  active cell over the widget (`data-maximized=1`, siblings hidden), flips to
+  Restore, and returns the grid on a second click; a single-cell grid hides it.
+- The topbar panel buttons open `Screener`, `Pine`, and `Library` as one Vela
+  side panel at a time; the open panel and width survive reload. The legend source
+  action opens the Pine panel.
+- Creating a workspace with `+` immediately requests its klines and renders candles;
+  expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label.
 - Starring a row keeps it in `Favorites` after reload and after lowering `topN`
   so it falls out of the trimmed universe; the star click does not change the
@@ -268,7 +346,7 @@ Useful browser probes:
   tokens, and the resolved editor background from the active theme.
 - Toggling the theme changes `html.class` and the resolved body background; Vela's
   chart background follows.
-- Reloading restores tabs, layout, active cell, theme, dock, and the applied Pine
+- Reloading restores tabs, layout, active cell, theme, open side panel, and the applied Pine
   script.
 
 When Binance is unavailable, report the environmental failure and verify against

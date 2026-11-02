@@ -1,5 +1,7 @@
 import { Indicator, PineTS } from 'pinets';
-import { fetchKlines } from '../lib/binance';
+import { SidecarVenueAdapter } from '../venues/sidecar';
+import { VenueRateLimitError } from '../venues/rateLimit';
+import type { Instrument } from '../venues/types';
 import type { ScanResult, ScanWorkerIn, ScanWorkerOut } from '../types';
 import { extractPlots, type PlotLike } from './extractPlots';
 
@@ -34,6 +36,19 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
     return;
   }
 
+  const adapter = new SidecarVenueAdapter('binance');
+  let instruments: Instrument[];
+  try {
+    instruments = await adapter.listInstruments(signal);
+  } catch (error) {
+    if (signal.aborted) return;
+    controller?.abort();
+    workerSelf.postMessage({ type: 'fatal', id: msg.id, error: errorMessage(error) });
+    return;
+  }
+  if (signal.aborted) return;
+  const bySymbol = new Map(instruments.map((instrument) => [instrument.nativeId, instrument]));
+
   const queue = [...msg.symbols];
   const total = queue.length;
   let done = 0;
@@ -42,7 +57,9 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
     if (signal.aborted) return;
     const started = performance.now();
     try {
-      const bars = await fetchKlines(symbol, msg.timeframe, msg.bars, signal);
+      const instrument = bySymbol.get(symbol);
+      if (!instrument) throw new Error(`No ${adapter.id} instrument for ${symbol}`);
+      const bars = await adapter.fetchBars(instrument, msg.timeframe, msg.bars, signal);
       if (bars.length < 2) throw new Error('Not enough closed bars');
       const pine = new PineTS(bars, symbol, msg.timeframe);
       const context = (await pine.run(indicator)) as RunContext;
@@ -55,6 +72,15 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
       workerSelf.postMessage({ type: 'result', id: msg.id, result });
     } catch (error) {
       if (signal.aborted) return;
+      if (error instanceof VenueRateLimitError) {
+        controller?.abort();
+        workerSelf.postMessage({
+          type: 'fatal',
+          id: msg.id,
+          error: error.message,
+        });
+        return;
+      }
       const result: ScanResult = {
         symbol,
         plots: [],

@@ -28,6 +28,12 @@ describe('binance symbols and intervals', () => {
     expect(binanceInterval('15')).toBe('15m');
     expect(binanceInterval('60')).toBe('1h');
     expect(binanceInterval('D')).toBe('1d');
+    expect(binanceInterval('1D')).toBe('1d');
+    expect(binanceInterval('4H')).toBe('4h');
+    expect(binanceInterval('1h')).toBe('1h');
+    // 1M is a month; 1m is a minute.
+    expect(binanceInterval('1M')).toBe('1M');
+    expect(binanceInterval('1m')).toBe('1m');
     expect(() => binanceInterval('7')).toThrow('Unsupported timeframe');
   });
 });

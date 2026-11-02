@@ -5,13 +5,15 @@ import {
   useRef,
 } from 'react';
 import { VelaWorkspace } from '@luxalgo/vela/workspace';
-import { BinanceProvider } from '@luxalgo/vela/providers/binance';
-import { registerIcon, registerLegendAction } from '@luxalgo/vela/plugin';
+import type { ChartCell } from '@luxalgo/vela/workspace';
+import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
 import { PineWorkerEngine } from '@luxalgo/vela-pinets';
 import type { ThemeMode, WorkspaceTab } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
+import { VENUE_CATALOG } from '../venues/catalog';
+import { SidecarVelaProvider } from '../venues/vela';
 
 export interface SavedScript {
   id: string;
@@ -48,6 +50,20 @@ let showSourceHandler: ((source: string) => void) | null = null;
 registerIcon(
   'screener-source',
   '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/></svg>',
+);
+
+// The picker's pool is built venue by venue; sort it by ticker so exchanges are
+// interleaved rather than grouped. A registered ranking also retires the pinned
+// majors head, so the opening screen is the alphabetical list.
+registerSymbolRanking((symbols) =>
+  [...symbols].sort((a, b) => {
+    const byTicker = a.ticker.localeCompare(b.ticker, undefined, {
+      sensitivity: 'base',
+      numeric: true,
+    });
+    if (byTicker !== 0) return byTicker;
+    return (a.provider ?? '').localeCompare(b.provider ?? '');
+  }),
 );
 
 registerLegendAction({
@@ -98,6 +114,68 @@ function manifestOf(scripts: SavedScript[]) {
   }));
 }
 
+const HISTORY_STEP = 5_000;
+const HISTORY_MAX = 100_000;
+
+/**
+ * Vela loads the depth it was asked for and never fetches more on pan. Charts are
+ * expected to keep loading history while the user drags into the past, so when the
+ * viewport reaches the oldest loaded bar we raise the cell's depth one step.
+ */
+function attachHistoryScroll(ws: VelaWorkspace): () => void {
+  const cells = new Map<string, { oldest: number; exhausted: boolean; busy: boolean }>();
+  const subscriptions: Array<() => void> = [];
+
+  const attach = (cell: ChartCell): void => {
+    const chart = cell.chart;
+    cells.set(cell.id, { oldest: 0, exhausted: false, busy: false });
+    subscriptions.push(
+      chart.on('history:complete', ({ reason, oldestTime }) => {
+        const state = cells.get(cell.id);
+        if (!state) return;
+        state.oldest = oldestTime;
+        state.exhausted = reason === 'genesis';
+      }),
+      chart.on('market:changed', () => {
+        const state = cells.get(cell.id);
+        if (!state) return;
+        state.oldest = 0;
+        state.exhausted = false;
+      }),
+      chart.on('viewport:changed', ({ from }) => {
+        const state = cells.get(cell.id);
+        if (!state || state.exhausted || state.busy || state.oldest === 0) return;
+        if (from > state.oldest) return;
+        const current = chart.market.bars ?? 500;
+        const target = Math.min(current + HISTORY_STEP, HISTORY_MAX);
+        if (target <= current) return;
+        state.busy = true;
+        void chart
+          .setMarket({ bars: target })
+          .then(() => chart.historyComplete())
+          .finally(() => {
+            state.busy = false;
+          });
+      }),
+    );
+  };
+
+  for (const cell of ws.cells()) attach(cell);
+  subscriptions.push(
+    ws.on('cell:created', ({ id }) => {
+      const cell = ws.cells().find((item) => item.id === id);
+      if (cell) attach(cell);
+    }),
+    ws.on('cell:destroyed', ({ id }) => {
+      cells.delete(id);
+    }),
+  );
+
+  return () => {
+    for (const off of subscriptions) off();
+  };
+}
+
 export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
   function VelaWorkspaceHost(
     { tab, theme, savedScripts, onShowSource, onMarketChange },
@@ -125,9 +203,11 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       if (!host) return;
       lastAppliedRef.current = null;
       const wantedLayout = tab.layout || '1';
-      // Seed every layout slot so 2×2 and 4×2 reveal useful majors rather than
-      // duplicate copies of the active symbol.
-      const seedLayout = wantedLayout === '1' ? '2h' : wantedLayout;
+      // Do not seed a wider grid and collapse it: destroying the extra cell calls
+      // feed.destroy(), which cancels the surviving cell's parked symbol wait while
+      // the provider index is still settling. The tab would open blank until its
+      // symbol or layout changed. `cells` still carries the alt/extra seeds Vela
+      // hydrates from when the user expands later.
       const cellSeeds: Record<string, { symbol: string; timeframe: string }> = {
         main: { symbol: chartSymbol(tab.symbol), timeframe: tab.timeframe },
         alt: {
@@ -145,11 +225,16 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         };
       });
       const ws = new VelaWorkspace(host, {
-        layout: seedLayout,
+        layout: wantedLayout,
         symbol: chartSymbol(tab.symbol),
         timeframe: tab.timeframe,
         cells: cellSeeds,
-        providers: { binance: () => new BinanceProvider() },
+        providers: Object.fromEntries(
+          VENUE_CATALOG.map((venue) => [
+            venue.id,
+            () => new SidecarVelaProvider(venue.id, venue.label),
+          ]),
+        ),
         engines: { pine: () => new PineWorkerEngine() },
         indicators: manifestOf(savedScriptsRef.current),
         live: true,
@@ -160,7 +245,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         maxWebglCells: 8,
       });
       wsRef.current = ws;
-      if (seedLayout !== wantedLayout) ws.setLayout(wantedLayout);
+      const detachHistory = attachHistoryScroll(ws);
       const wantedSymbol = chartSymbol(tab.symbol);
       const matchingCell = ws.cells().find((cell) => cell.symbol === wantedSymbol);
       if (matchingCell) ws.setActiveCell(matchingCell.id);
@@ -228,6 +313,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         offLayout();
         offMaximized();
         clearMaximizeBridge();
+        detachHistory();
         ws.destroy();
         if (wsRef.current === ws) wsRef.current = null;
       };

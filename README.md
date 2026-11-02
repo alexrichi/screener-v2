@@ -30,13 +30,25 @@ npm test
 npm run build
 ```
 
+The public-data sidecar skeleton runs separately:
+
+```bash
+npm run sidecar
+# http://127.0.0.1:8787/health
+```
+
 ## What it does
 
-- Binance USDT-M futures universe, sorted by 24h quote volume.
+- Binance USDT-M and OKX USDT perpetuals. The instrument picker lists both
+  venues, sorted by ticker across exchanges; a chart opens the venue of the
+  selected ticker. The screener table and the scanner still run on Binance only.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
-  own symbol and timeframe.
+  own symbol and timeframe. Dragging a chart into the past keeps loading older
+  history. The header button left of `Alerts` maximizes the
+  selected chart over the widget and restores the grid on a second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
-  reorderable columns, and per-row actions.
+  reorderable columns, and per-row actions. Screener, Pine, and Library open as
+  Vela side panels from the chart header; the open panel and width persist.
 - Favorites: star a symbol and open the `Favorites` tab. Saved to localStorage
   and kept visible even when a symbol falls outside `topN` or the volume filter.
 - Pine editor with presets and CodeMirror highlighting, completions, folding,
@@ -58,3 +70,11 @@ npm run build
   distributing or hosting it triggers AGPL obligations or requires a commercial
   license.
 - The app reads public market data only. It does not trade.
+- The sidecar exposes public Binance and OKX data through one `VenueAdapter`
+  per venue and a shared cache. The table, scanner, and Vela charts use the
+  sidecar only; there is no direct exchange path in the browser. Charts stream
+  live candles over `ws://127.0.0.1:8787/stream`; the sidecar keeps one stream
+  per symbol/timeframe and fans it out to every chart. If the venue socket stays
+  silent (or the venue has no WS feed yet), the sidecar falls back to one REST
+  poll per second for that stream. The instrument picker lists both venues and
+  opens the selected exchange's chart.

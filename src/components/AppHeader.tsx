@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import type { MarketRow, WorkspaceTab } from '../types';
-import { baseFromSymbol } from '../lib/binance';
+import { symbolLabel } from '../lib/binance';
 import { formatClock, formatPrice, layoutLabel } from '../lib/format';
 import { useTheme } from '../ui/theme';
 import { cn } from '../ui/cn';
@@ -130,7 +130,7 @@ export function AppHeader({
                 title={`${tab.symbol} · ${tab.timeframe} · ${layoutLabel(tab.layout)}`}
                 className="flex h-7 min-w-0 items-center gap-1.5 px-2 text-[12px] font-medium"
               >
-                <span className="max-w-24 truncate">{baseFromSymbol(tab.symbol)}</span>
+                <span className="max-w-24 truncate">{symbolLabel(tab.symbol)}</span>
                 <span
                   className={cn(
                     'rounded border px-1 font-mono text-[9px] leading-4',
