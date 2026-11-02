@@ -247,3 +247,60 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   --error-border: color-mix(in srgb, var(--negative) 40%, var(--border));
   --error-text: var(--negative);
 }
+
+.screener-history-status {
+  position: absolute;
+  bottom: 28px;
+  left: 10px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--popover) 88%, transparent);
+  color: var(--muted-foreground);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.22);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.screener-history-status[hidden] {
+  display: none;
+}
+
+.screener-history-status[data-kind='error'] {
+  color: var(--negative);
+}
+
+.screener-history-status[data-kind='loading']::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: screener-history-spin 0.7s linear infinite;
+}
+
+@keyframes screener-history-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screener-history-status[data-kind='loading']::before {
+    animation: none;
+    border-right-color: currentColor;
+  }
+}

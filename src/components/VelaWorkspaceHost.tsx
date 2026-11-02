@@ -10,6 +10,7 @@ import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxa
 import { PineWorkerEngine } from '@luxalgo/vela-pinets';
 import type { ThemeMode, WorkspaceTab } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
+import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 import { VENUE_CATALOG } from '../venues/catalog';
@@ -114,50 +115,238 @@ function manifestOf(scripts: SavedScript[]) {
   }));
 }
 
-const HISTORY_STEP = 5_000;
+const HISTORY_STEP = 500;
 const HISTORY_MAX = 100_000;
+const INITIAL_DEPTH = 500;
+const HISTORY_EDGE_BARS = 8;
+const HISTORY_WAIT_MS = 30_000;
+
+type CellChart = ChartCell['chart'];
+
+interface CellHistory {
+  exhausted: boolean;
+  busy: boolean;
+  pendingDepth: number;
+  status: HTMLElement;
+  cancelWait: (() => void) | null;
+  errorTimer: ReturnType<typeof setTimeout> | null;
+}
+
+function barMsOf(chart: CellChart): number {
+  try {
+    return timeframeMs(chart.market.timeframe ?? '15');
+  } catch {
+    return 0;
+  }
+}
+
+function setHistoryStatus(
+  state: CellHistory,
+  text: string | null,
+  kind: 'loading' | 'error' = 'loading',
+): void {
+  if (state.errorTimer) {
+    clearTimeout(state.errorTimer);
+    state.errorTimer = null;
+  }
+  state.status.textContent = text ?? '';
+  state.status.dataset.kind = kind;
+  state.status.hidden = !text;
+}
+
+function flashHistoryError(state: CellHistory, text: string): void {
+  setHistoryStatus(state, text, 'error');
+  state.errorTimer = setTimeout(() => {
+    state.errorTimer = null;
+    if (!state.busy) setHistoryStatus(state, null);
+  }, 3_000);
+}
+
+/** Depth-only reloads reuse Vela's resolved history promise; wait for the event. */
+function nextHistoryComplete(chart: CellChart): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  let finish: (() => void) | null = null;
+  let off: (() => void) | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const promise = new Promise<void>((resolve) => {
+    finish = () => {
+      if (!finish) return;
+      finish = null;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      off?.();
+      off = null;
+      resolve();
+    };
+    off = chart.on('history:complete', () => finish?.());
+    timer = setTimeout(() => finish?.(), HISTORY_WAIT_MS);
+  });
+  return {
+    promise,
+    cancel: () => finish?.(),
+  };
+}
+
+function atLoadedEdge(chart: CellChart): boolean {
+  const range = chart.getVisibleRange();
+  const first = chart.replay.bounds?.first;
+  const barMs = barMsOf(chart);
+  if (!range || first == null || barMs <= 0) return false;
+  return range.from <= first + barMs * HISTORY_EDGE_BARS;
+}
+
+function extendHistory(chart: CellChart, state: CellHistory, requested?: number): void {
+  if (state.exhausted) return;
+  const current = chart.market.bars ?? INITIAL_DEPTH;
+  const target = Math.min(requested ?? current + HISTORY_STEP, HISTORY_MAX);
+  if (target <= current) return;
+  if (state.busy) {
+    state.pendingDepth = Math.max(state.pendingDepth, target);
+    return;
+  }
+  state.busy = true;
+  setHistoryStatus(state, 'Loading older data…');
+  const wait = nextHistoryComplete(chart);
+  state.cancelWait = wait.cancel;
+  void chart
+    .setMarket({ bars: target })
+    .then(() => wait.promise)
+    .catch(() => {
+      if (state.cancelWait === wait.cancel) state.cancelWait = null;
+      flashHistoryError(state, 'Could not load older data');
+    })
+    .finally(() => {
+      if (state.cancelWait === wait.cancel) state.cancelWait = null;
+      state.busy = false;
+      const pending = state.pendingDepth;
+      state.pendingDepth = 0;
+      if (!state.errorTimer) setHistoryStatus(state, null);
+      if (!state.errorTimer && pending > (chart.market.bars ?? INITIAL_DEPTH)) {
+        extendHistory(chart, state, pending);
+      }
+    });
+}
 
 /**
- * Vela loads the depth it was asked for and never fetches more on pan. Charts are
- * expected to keep loading history while the user drags into the past, so when the
- * viewport reaches the oldest loaded bar we raise the cell's depth one step.
+ * Vela loads the depth it was asked for and never fetches more on pan, zoom or
+ * resize. Extend the cell's depth when the viewport reaches the oldest loaded
+ * bar, or when a wider cell leaves its loaded series short of the window (Vela
+ * keeps the bar spacing across a resize, so a 0.5 px/bar view leaves the extra
+ * width empty until the missing history arrives).
  */
 function attachHistoryScroll(ws: VelaWorkspace): () => void {
-  const cells = new Map<string, { oldest: number; exhausted: boolean; busy: boolean }>();
+  const cells = new Map<string, CellHistory>();
+  const cleanups = new Map<string, () => void>();
   const subscriptions: Array<() => void> = [];
 
   const attach = (cell: ChartCell): void => {
     const chart = cell.chart;
-    cells.set(cell.id, { oldest: 0, exhausted: false, busy: false });
-    subscriptions.push(
-      chart.on('history:complete', ({ reason, oldestTime }) => {
-        const state = cells.get(cell.id);
-        if (!state) return;
-        state.oldest = oldestTime;
+    const status = document.createElement('div');
+    status.className = 'screener-history-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.hidden = true;
+    cell.host.appendChild(status);
+
+    const state: CellHistory = {
+      exhausted: false,
+      busy: false,
+      pendingDepth: 0,
+      status,
+      cancelWait: null,
+      errorTimer: null,
+    };
+    cells.set(cell.id, state);
+    if (!chart.getVisibleRange()) setHistoryStatus(state, 'Loading chart…');
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY <= 0 || !atLoadedEdge(chart)) return;
+      extendHistory(chart, state);
+    };
+    cell.host.addEventListener('wheel', onWheel, { passive: true, capture: true });
+
+    // Vela keeps the bar spacing when the cell grows, so the extra width stays
+    // empty until enough history exists to fill it. Load that history at the
+    // same scale - never resize or re-frame the viewport.
+    let lastWidth = cell.host.getBoundingClientRect().width;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (resizeTimer) clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+              resizeTimer = null;
+              const width = cell.host.getBoundingClientRect().width;
+              if (lastWidth > 0 && width > lastWidth * 1.05 && cell.host.style.visibility !== 'hidden') {
+                const depth = chart.market.bars ?? INITIAL_DEPTH;
+                if (atLoadedEdge(chart)) {
+                  const target = Math.ceil((depth * width * 1.15) / lastWidth) + 50;
+                  extendHistory(chart, state, Math.min(target, HISTORY_MAX));
+                }
+              }
+              lastWidth = width;
+            }, 150);
+          });
+    observer?.observe(cell.host);
+
+    const offs: Array<() => void> = [
+      () => cell.host.removeEventListener('wheel', onWheel, true),
+      chart.on('load:start', () => setHistoryStatus(state, 'Loading chart…')),
+      chart.on('load:end', ({ bars }) => {
+        if (state.busy) return;
+        if (bars === 0) {
+          flashHistoryError(state, 'Could not load chart');
+          return;
+        }
+        setHistoryStatus(state, null);
+      }),
+      chart.on('history:progress', ({ loaded, target }) => {
+        if (!state.busy) return;
+        setHistoryStatus(
+          state,
+          `Loading older data… ${loaded.toLocaleString('en-US')} / ${target.toLocaleString('en-US')}`,
+        );
+      }),
+      chart.on('history:complete', ({ reason }) => {
         state.exhausted = reason === 'genesis';
+        if (!state.busy) {
+          setHistoryStatus(state, null);
+        } else if (reason === 'aborted') {
+          flashHistoryError(state, 'Could not load older data');
+        }
       }),
       chart.on('market:changed', () => {
-        const state = cells.get(cell.id);
-        if (!state) return;
-        state.oldest = 0;
+        state.cancelWait?.();
+        state.cancelWait = null;
+        state.pendingDepth = 0;
         state.exhausted = false;
+        state.busy = false;
+        // Keep the cell's depth across a symbol/timeframe switch: Vela keeps the
+        // bar spacing, so resetting the depth to the default would leave the new
+        // series too short to fill the zoomed-out window.
       }),
       chart.on('viewport:changed', ({ from }) => {
-        const state = cells.get(cell.id);
-        if (!state || state.exhausted || state.busy || state.oldest === 0) return;
-        if (from > state.oldest) return;
-        const current = chart.market.bars ?? 500;
-        const target = Math.min(current + HISTORY_STEP, HISTORY_MAX);
-        if (target <= current) return;
-        state.busy = true;
-        void chart
-          .setMarket({ bars: target })
-          .then(() => chart.historyComplete())
-          .finally(() => {
-            state.busy = false;
-          });
+        if (state.exhausted || state.busy) return;
+        const barMs = barMsOf(chart);
+        const first = chart.replay.bounds?.first;
+        if (first == null || from > first + barMs * HISTORY_EDGE_BARS) return;
+        extendHistory(chart, state);
       }),
-    );
+    ];
+
+    cleanups.set(cell.id, () => {
+      state.cancelWait?.();
+      if (state.errorTimer) clearTimeout(state.errorTimer);
+      if (resizeTimer) clearTimeout(resizeTimer);
+      observer?.disconnect();
+      for (const off of offs) off();
+      status.remove();
+    });
   };
 
   for (const cell of ws.cells()) attach(cell);
@@ -168,11 +357,15 @@ function attachHistoryScroll(ws: VelaWorkspace): () => void {
     }),
     ws.on('cell:destroyed', ({ id }) => {
       cells.delete(id);
+      cleanups.get(id)?.();
+      cleanups.delete(id);
     }),
   );
 
   return () => {
     for (const off of subscriptions) off();
+    for (const cleanup of cleanups.values()) cleanup();
+    cleanups.clear();
   };
 }
 
@@ -400,7 +593,12 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           lastAppliedRef.current = null;
         },
         setActiveSymbol(symbol: string) {
-          wsRef.current?.active.setSymbol(chartSymbol(symbol));
+          const cell = wsRef.current?.active;
+          if (!cell) return;
+          const next = chartSymbol(symbol);
+          // Keep the current depth: the cell keeps its zoom across a symbol
+          // switch, so the new series must load the same number of bars.
+          cell.setSymbol(next);
         },
         setActiveTimeframe(timeframe: string) {
           wsRef.current?.active.setTimeframe(timeframe);

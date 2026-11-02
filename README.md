@@ -65,9 +65,10 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   lists merge. Clicking a column header cycles descending, ascending, and
   unsorted.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
-  own symbol and timeframe. Dragging a chart into the past keeps loading older
-  history. The header button left of `Alerts` maximizes the
-  selected chart over the widget and restores the grid on a second click.
+  own symbol and timeframe. Dragging a chart into the past or zooming out loads
+  older history in 500-bar steps, with a loading badge in the cell. The header
+  button left of `Alerts` maximizes the selected chart over the widget and
+  restores the grid on a second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
   reorderable columns, and per-row actions. Screener, Pine, and Library open as
   Vela side panels from the chart header; the open panel and width persist.
