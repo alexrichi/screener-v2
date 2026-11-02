@@ -29,7 +29,6 @@ const BITGET_BARS: Record<string, string> = {
   '120': '2H',
   '240': '4H',
   '360': '6H',
-  '480': '8H',
   '720': '12H',
   D: '1D',
   W: '1W',

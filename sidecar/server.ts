@@ -12,6 +12,13 @@ import type { Instrument, Unsubscribe } from '../src/venues/types';
 import { VenueHub } from './hub';
 import { BinanceKlineStream, PollingBarsStream } from './stream';
 import type { BarsStream } from './stream';
+import { VenueKlineStream } from './ws';
+import {
+  BITGET_STREAM,
+  BYBIT_STREAM,
+  HYPERLIQUID_STREAM,
+  OKX_STREAM,
+} from './venueStreams';
 
 const hubs = new Map<string, VenueHub>([
   ['binance', new VenueHub(new BinanceVenueAdapter())],
@@ -31,25 +38,25 @@ const streams = new Map<string, BarsStream>([
   ],
   [
     'okx',
-    new PollingBarsStream((instrument, timeframe) =>
+    new VenueKlineStream(OKX_STREAM, (instrument, timeframe) =>
       hubs.get('okx')!.getBars(instrument, timeframe, 2, { includeForming: true }),
     ),
   ],
   [
     'bybit',
-    new PollingBarsStream((instrument, timeframe) =>
+    new VenueKlineStream(BYBIT_STREAM, (instrument, timeframe) =>
       hubs.get('bybit')!.getBars(instrument, timeframe, 2, { includeForming: true }),
     ),
   ],
   [
     'bitget',
-    new PollingBarsStream((instrument, timeframe) =>
+    new VenueKlineStream(BITGET_STREAM, (instrument, timeframe) =>
       hubs.get('bitget')!.getBars(instrument, timeframe, 2, { includeForming: true }),
     ),
   ],
   [
     'hyperliquid',
-    new PollingBarsStream((instrument, timeframe) =>
+    new VenueKlineStream(HYPERLIQUID_STREAM, (instrument, timeframe) =>
       hubs.get('hyperliquid')!.getBars(instrument, timeframe, 2, { includeForming: true }),
     ),
   ],

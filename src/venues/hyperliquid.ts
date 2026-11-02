@@ -29,7 +29,6 @@ const HL_INTERVALS: Record<string, string> = {
   '60': '1h',
   '120': '2h',
   '240': '4h',
-  '360': '6h',
   '480': '8h',
   '720': '12h',
   D: '1d',

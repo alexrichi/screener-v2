@@ -92,7 +92,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   Coinbase data through one `VenueAdapter` per venue and a shared cache. The table, scanner, and Vela
   charts use the sidecar only; there is no direct exchange path in the browser.
   Charts stream live candles over `ws://127.0.0.1:8787/stream`; the sidecar keeps
-  one stream per symbol/timeframe and fans it out to every chart. If the venue
-  socket stays silent (or the venue has no WS feed yet), the sidecar falls back
-  to one REST poll per second for that stream. The instrument picker lists every
-  venue and opens the selected exchange's chart.
+  one stream per symbol/timeframe and fans it out to every chart. Binance, OKX,
+  Bybit, Bitget, and Hyperliquid stream over WebSockets; Coinbase uses one REST
+  poll per second per stream. If a venue socket stays silent, the sidecar falls
+  back to the same REST polling until a bar arrives. The instrument picker lists
+  every venue and opens the selected exchange's chart.

@@ -137,6 +137,8 @@ sidecar/
   hub.ts                          one adapter per venue; shared caches/fan-out
   stream.ts                       Binance kline WS plus a REST-polling stream for
                                   venues without a WS feed
+  ws.ts                           generic ref-counted venue WebSocket stream
+  venueStreams.ts                 OKX / Bybit / Bitget / Hyperliquid subscription specs
 electron/
   main.cjs                        desktop shell: sidecar child, static server, window
   build-sidecar.mjs               esbuild bundle of sidecar/server.ts for packaging
@@ -165,8 +167,8 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   windows), the adapter paginates past the venue's page size inside the shared
   limiter, and `VenueHub` caches the result. A venue socket that stays silent for
   1.5 s falls back to **one** REST poll per second per stream, fanned out to every
-  chart; venues without a WS feed (OKX, Bybit, Bitget, Hyperliquid, Coinbase) use
-  the same polling path from the start.
+  chart; Coinbase has no candle WS yet, so it uses the REST-polling path from the
+  start.
   The browser polls only while its sidecar socket is down. The picker pool is
   sorted by ticker across venues (`registerSymbolRanking`), not grouped by
   exchange; registering a ranking also retires the built-in majors pin.
