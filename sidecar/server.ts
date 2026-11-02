@@ -76,6 +76,7 @@ function errorMessage(error: unknown): string {
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  if (res.writableEnded || res.destroyed) return;
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': '*',
@@ -173,10 +174,23 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       const bars = Math.max(1, Math.min(100_000, Number(url.searchParams.get('bars') ?? 300) || 300));
       const live = url.searchParams.get('live') === '1';
       const to = Number(url.searchParams.get('to'));
-      json(res, 200, await hub.getBars(instrument, timeframe, bars, {
-        includeForming: live,
-        to: Number.isFinite(to) && to > 0 ? to : undefined,
-      }));
+      const priority = url.searchParams.get('priority') === 'background' ? 'background' : 'interactive';
+      const controller = new AbortController();
+      const onClose = () => {
+        if (!res.writableEnded) controller.abort();
+      };
+      res.once('close', onClose);
+      try {
+        const rows = await hub.getBars(instrument, timeframe, bars, {
+          includeForming: live,
+          to: Number.isFinite(to) && to > 0 ? to : undefined,
+          priority,
+          signal: controller.signal,
+        });
+        json(res, 200, rows);
+      } finally {
+        res.off('close', onClose);
+      }
       return;
     }
   }
@@ -186,6 +200,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
 
 const server = http.createServer((req, res) => {
   void route(req, res).catch((error) => {
+    if (error instanceof Error && error.name === 'AbortError') return;
     if (error instanceof VenueRateLimitError) {
       fail(res, error.options.banned ? 418 : 429, error, {
         ...(error.options.retryAfterMs > 0

@@ -5,6 +5,7 @@ import type {
   RateLimitPolicy,
   VenueAdapter,
   VenueBar,
+  VenueFetchOptions,
   VenueTicker,
 } from './types';
 
@@ -15,21 +16,37 @@ function defaultBaseUrl(): string {
   return (configured || DEFAULT_BASE).replace(/\/+$/, '');
 }
 
+function errorDetail(body: string): string {
+  const text = body.trim();
+  if (!text) return '';
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (parsed && typeof parsed === 'object' && typeof parsed.error === 'string') {
+      return parsed.error;
+    }
+  } catch {
+    /* plain text body */
+  }
+  return text;
+}
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
+    const detail = errorDetail(await response.text().catch(() => '')).slice(0, 300);
+    const suffix = detail ? `: ${detail}` : '';
     const retryAfter = Number(response.headers.get('retry-after'));
     const retryAfterMs =
       Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 0;
     if (response.status === 429 || response.status === 418) {
-      throw new VenueRateLimitError(`Sidecar ${response.status}`, {
+      throw new VenueRateLimitError(`Sidecar ${response.status}${suffix}`, {
         banned: response.status === 418,
         retryAfterMs,
       });
     }
-    throw new Error(`Sidecar ${response.status} for ${url}`);
+    throw new Error(`Sidecar ${response.status} for ${url}${suffix}`);
   }
-  return (await response.json()) as T;
+  return JSON.parse(await response.text()) as T;
 }
 
 /**
@@ -84,7 +101,7 @@ export class SidecarVenueAdapter implements VenueAdapter {
     timeframe: string,
     bars: number,
     signal?: AbortSignal,
-    opts: { includeForming?: boolean; to?: number } = {},
+    opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const query = new URLSearchParams({
       instrument: instrument.key,
@@ -93,6 +110,7 @@ export class SidecarVenueAdapter implements VenueAdapter {
     });
     if (opts.includeForming) query.set('live', '1');
     if (opts.to != null) query.set('to', String(Math.floor(opts.to)));
+    if (opts.priority === 'background') query.set('priority', 'background');
     return getJson<VenueBar[]>(
       `${this.baseUrl}/venues/${encodeURIComponent(this.id)}/bars?${query.toString()}`,
       signal,

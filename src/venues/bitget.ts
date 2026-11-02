@@ -5,8 +5,10 @@ import { RateLimiter, VenueRateLimitError } from './rateLimit';
 import type {
   Instrument,
   RateLimitPolicy,
+  RequestPriority,
   VenueAdapter,
   VenueBar,
+  VenueFetchOptions,
   VenueTicker,
 } from './types';
 
@@ -82,9 +84,14 @@ export class BitgetVenueAdapter implements VenueAdapter {
   private readonly limiter = new RateLimiter(BITGET_RATE_LIMIT);
   private instrumentsPromise: Promise<Instrument[]> | null = null;
 
-  private async request<T>(bucket: string, fn: () => Promise<T>): Promise<T> {
+  private async request<T>(
+    bucket: string,
+    fn: () => Promise<T>,
+    signal?: AbortSignal,
+    priority?: RequestPriority,
+  ): Promise<T> {
     try {
-      return await this.limiter.run({ bucket, cost: 1 }, fn);
+      return await this.limiter.run({ bucket, cost: 1, signal, priority }, fn);
     } catch (error) {
       if (isRateLimit(error)) {
         const retryAfterMs = 1_000;
@@ -98,10 +105,12 @@ export class BitgetVenueAdapter implements VenueAdapter {
     }
   }
 
-  async listInstruments(): Promise<Instrument[]> {
+  async listInstruments(signal?: AbortSignal): Promise<Instrument[]> {
     if (!this.instrumentsPromise) {
-      this.instrumentsPromise = this.request('market', () =>
-        this.client.getFuturesContractConfig({ productType: 'USDT-FUTURES' }),
+      this.instrumentsPromise = this.request(
+        'market',
+        () => this.client.getFuturesContractConfig({ productType: 'USDT-FUTURES' }),
+        signal,
       )
         .then((response) =>
           response.data
@@ -131,11 +140,13 @@ export class BitgetVenueAdapter implements VenueAdapter {
     return this.instrumentsPromise;
   }
 
-  async fetchTickers(): Promise<VenueTicker[]> {
+  async fetchTickers(signal?: AbortSignal): Promise<VenueTicker[]> {
     const [instruments, response] = await Promise.all([
-      this.listInstruments(),
-      this.request('market', () =>
-        this.client.getFuturesAllTickers({ productType: 'USDT-FUTURES' }),
+      this.listInstruments(signal),
+      this.request(
+        'market',
+        () => this.client.getFuturesAllTickers({ productType: 'USDT-FUTURES' }),
+        signal,
       ),
     ]);
     const bySymbol = new Map(instruments.map((item) => [item.nativeId, item]));
@@ -161,8 +172,8 @@ export class BitgetVenueAdapter implements VenueAdapter {
     instrument: Instrument,
     timeframe: string,
     bars: number,
-    _signal?: AbortSignal,
-    opts: { includeForming?: boolean; to?: number } = {},
+    signal?: AbortSignal,
+    opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const granularity = bitgetBar(timeframe);
     const wanted = Math.max(1, Math.min(100_000, Math.floor(bars)));
@@ -181,6 +192,8 @@ export class BitgetVenueAdapter implements VenueAdapter {
         limit,
         undefined,
         confirmedOnly,
+        signal,
+        opts.priority,
       );
       if (chunk.length > 0) {
         pages.push(chunk);
@@ -199,6 +212,8 @@ export class BitgetVenueAdapter implements VenueAdapter {
         limit,
         end,
         confirmedOnly,
+        signal,
+        opts.priority,
       );
       if (chunk.length === 0) break;
       const filtered = chunk.filter((bar) => opts.to == null || bar.openTime <= opts.to);
@@ -220,15 +235,21 @@ export class BitgetVenueAdapter implements VenueAdapter {
     limit: number,
     end: number | undefined,
     confirmedOnly: boolean,
+    signal?: AbortSignal,
+    priority?: RequestPriority,
   ): Promise<VenueBar[]> {
-    const response = await this.request('candles', () =>
-      this.client.getFuturesCandles({
-        symbol: instrument.nativeId,
-        productType: 'USDT-FUTURES',
-        granularity: granularity as never,
-        limit: String(limit),
-        ...(end != null ? { endTime: String(end) } : {}),
-      }),
+    const response = await this.request(
+      'candles',
+      () =>
+        this.client.getFuturesCandles({
+          symbol: instrument.nativeId,
+          productType: 'USDT-FUTURES',
+          granularity: granularity as never,
+          limit: String(limit),
+          ...(end != null ? { endTime: String(end) } : {}),
+        }),
+      signal,
+      priority,
     );
     return this.map(response.data as BitgetCandle[], timeframe, confirmedOnly);
   }
@@ -240,15 +261,21 @@ export class BitgetVenueAdapter implements VenueAdapter {
     limit: number,
     end: number | undefined,
     confirmedOnly: boolean,
+    signal?: AbortSignal,
+    priority?: RequestPriority,
   ): Promise<VenueBar[]> {
-    const response = await this.request('candles', () =>
-      this.client.getFuturesHistoricCandles({
-        symbol: instrument.nativeId,
-        productType: 'USDT-FUTURES',
-        granularity: granularity as never,
-        limit: String(limit),
-        ...(end != null ? { endTime: String(end) } : {}),
-      }),
+    const response = await this.request(
+      'candles',
+      () =>
+        this.client.getFuturesHistoricCandles({
+          symbol: instrument.nativeId,
+          productType: 'USDT-FUTURES',
+          granularity: granularity as never,
+          limit: String(limit),
+          ...(end != null ? { endTime: String(end) } : {}),
+        }),
+      signal,
+      priority,
     );
     return this.map(response.data as BitgetCandle[], timeframe, confirmedOnly);
   }

@@ -4,8 +4,10 @@ import { RateLimiter, VenueRateLimitError } from './rateLimit';
 import type {
   Instrument,
   RateLimitPolicy,
+  RequestPriority,
   VenueAdapter,
   VenueBar,
+  VenueFetchOptions,
   VenueTicker,
 } from './types';
 
@@ -84,9 +86,10 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
     bucket: string,
     path: string,
     signal?: AbortSignal,
+    priority?: RequestPriority,
   ): Promise<T> {
     try {
-      return await this.limiter.run({ bucket, cost: 1 }, async () => {
+      return await this.limiter.run({ bucket, cost: 1, signal, priority }, async () => {
         const response = await fetch(`${BASE}${path}`, {
           headers: { accept: 'application/json' },
           signal,
@@ -177,7 +180,7 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
     timeframe: string,
     bars: number,
     signal?: AbortSignal,
-    opts: { includeForming?: boolean; to?: number } = {},
+    opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const granularity = coinbaseGranularity(timeframe);
     const tfMs = timeframeMs(timeframe);
@@ -200,6 +203,7 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
         'candles',
         `/products/${encodeURIComponent(instrument.nativeId)}/candles?${query.toString()}`,
         signal,
+        opts.priority,
       );
       if (!Array.isArray(rows) || rows.length === 0) break;
       const mapped = rows

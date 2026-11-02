@@ -6,8 +6,10 @@ import { RateLimiter, VenueRateLimitError } from './rateLimit';
 import type {
   Instrument,
   RateLimitPolicy,
+  RequestPriority,
   VenueAdapter,
   VenueBar,
+  VenueFetchOptions,
   VenueTicker,
 } from './types';
 
@@ -87,9 +89,43 @@ const OKX_FUNDING_WS = 'wss://ws.okx.com:8443/ws/v5/public';
 const RECONNECT_MS = 2_000;
 const PING_MS = 25_000;
 
-function isRateLimit(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.includes('50011') || text.includes('429') || /rate limit/i.test(text);
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const record = error as { code?: unknown; msg?: unknown; message?: unknown };
+    const code = record.code == null ? '' : String(record.code);
+    const message =
+      typeof record.msg === 'string'
+        ? record.msg
+        : typeof record.message === 'string'
+          ? record.message
+          : '';
+    if (code || message) return `${code} ${message}`.trim();
+  }
+  return String(error);
+}
+
+/** OKX throws plain `{ code, msg }` objects for API errors, not `Error` instances. */
+export function okxErrorInfo(error: unknown): {
+  code: string;
+  message: string;
+  rateLimited: boolean;
+  transient: boolean;
+} {
+  const message = errorText(error);
+  const code = message.match(/\b(5\d{4})\b/)?.[1] ?? '';
+  return {
+    code,
+    message,
+    rateLimited:
+      code === '50011' || message.includes('429') || /rate limit/i.test(message),
+    transient:
+      code === '50001' ||
+      code === '50004' ||
+      code === '50013' ||
+      /service temporarily unavailable|system.*busy|timeout/i.test(message),
+  };
 }
 
 type OkxCandle = [string, string, string, string, string, string, string, string, string];
@@ -135,26 +171,40 @@ export class OkxVenueAdapter implements VenueAdapter {
   private fundingRetry: NodeJS.Timeout | null = null;
   private fundingStarted = false;
 
-  private async request<T>(bucket: string, fn: () => Promise<T>): Promise<T> {
+  private async request<T>(
+    bucket: string,
+    fn: () => Promise<T>,
+    signal?: AbortSignal,
+    priority?: RequestPriority,
+    attempt = 0,
+  ): Promise<T> {
     try {
-      return await this.limiter.run({ bucket, cost: 1 }, fn);
+      return await this.limiter.run({ bucket, cost: 1, signal, priority }, fn);
     } catch (error) {
-      if (isRateLimit(error)) {
-        const retryAfterMs = 2_000;
+      const info = okxErrorInfo(error);
+      const retryAfterMs = 2_000;
+      if (info.rateLimited) {
         this.limiter.pauseFor(retryAfterMs);
-        throw new VenueRateLimitError(
-          error instanceof Error ? error.message : String(error),
-          { banned: false, retryAfterMs },
-        );
+        if (attempt < 2) return this.request(bucket, fn, signal, priority, attempt + 1);
+        throw new VenueRateLimitError(info.message, {
+          banned: false,
+          retryAfterMs,
+        });
+      }
+      if (info.transient && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        return this.request(bucket, fn, signal, priority, attempt + 1);
       }
       throw error;
     }
   }
 
-  async listInstruments(): Promise<Instrument[]> {
+  async listInstruments(signal?: AbortSignal): Promise<Instrument[]> {
     if (!this.instrumentsPromise) {
-      this.instrumentsPromise = this.request('market', () =>
-        this.client.getInstruments({ instType: 'SWAP' }),
+      this.instrumentsPromise = this.request(
+        'market',
+        () => this.client.getInstruments({ instType: 'SWAP' }),
+        signal,
       )
         .then((rows) =>
           rows
@@ -248,10 +298,14 @@ export class OkxVenueAdapter implements VenueAdapter {
     });
   }
 
-  async fetchTickers(): Promise<VenueTicker[]> {
+  async fetchTickers(signal?: AbortSignal): Promise<VenueTicker[]> {
     const [instruments, rows] = await Promise.all([
-      this.listInstruments(),
-      this.request('market', () => this.client.getTickers({ instType: 'SWAP' })),
+      this.listInstruments(signal),
+      this.request(
+        'market',
+        () => this.client.getTickers({ instType: 'SWAP' }),
+        signal,
+      ),
     ]);
     this.startFunding(instruments);
     const byId = new Map(instruments.map((item) => [item.nativeId, item]));
@@ -280,8 +334,8 @@ export class OkxVenueAdapter implements VenueAdapter {
     instrument: Instrument,
     timeframe: string,
     bars: number,
-    _signal?: AbortSignal,
-    opts: { includeForming?: boolean; to?: number } = {},
+    signal?: AbortSignal,
+    opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const bar = okxBar(timeframe);
     const wanted = Math.max(1, Math.min(100_000, Math.floor(bars)));
@@ -290,12 +344,16 @@ export class OkxVenueAdapter implements VenueAdapter {
     // Newest window: the capped `/candles` endpoint is enough and returns the
     // forming candle.
     if (opts.to == null && wanted <= 300) {
-      const rows = (await this.request('candles', () =>
-        this.client.getCandles({
-          instId: instrument.nativeId,
-          bar,
-          limit: String(wanted),
-        }),
+      const rows = (await this.request(
+        'candles',
+        () =>
+          this.client.getCandles({
+            instId: instrument.nativeId,
+            bar,
+            limit: String(wanted),
+          }),
+        signal,
+        opts.priority,
       )) as OkxCandle[];
       return rows
         .filter((row) => !confirmedOnly || isConfirmed(row))
@@ -309,14 +367,18 @@ export class OkxVenueAdapter implements VenueAdapter {
     let after: string | undefined =
       opts.to != null ? String(Math.floor(opts.to) + 1) : undefined;
     while (remaining > 0) {
-      const limit = Math.min(remaining, 100);
-      const rows = (await this.request('candles', () =>
-        this.client.getHistoricCandles({
-          instId: instrument.nativeId,
-          bar,
-          limit: String(limit),
-          after,
-        }),
+      const limit = Math.min(remaining, 300);
+      const rows = (await this.request(
+        'candles',
+        () =>
+          this.client.getHistoricCandles({
+            instId: instrument.nativeId,
+            bar,
+            limit: String(limit),
+            after,
+          }),
+        signal,
+        opts.priority,
       )) as OkxCandle[];
       if (rows.length === 0) break;
       const mapped = rows

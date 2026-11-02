@@ -183,9 +183,16 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   exchange; registering a ranking also retires the built-in majors pin.
   There is no direct exchange path in the browser: if the sidecar is down, the
   chart keeps what it has and the table shows the error. Vela never fetches older bars
-  on pan, so the host listens to `viewport:changed` and raises the cell's depth
-  by 5000 bars (cap 100k) when the viewport reaches the oldest loaded bar;
-  `history:complete` with reason `genesis` stops that cell from extending.
+  on pan, zoom or resize, so the host watches `viewport:changed` and wheel-zoom-out,
+  then raises the cell's depth by 500 bars (cap 100k) when the viewport reaches the
+  oldest loaded bar (8-bar tolerance) or the zoom hits the loaded-depth limit. A
+  `ResizeObserver` also fills a cell whose width grew while its loaded series ends at
+  the left edge: it asks for `depth * newWidth / oldWidth` (cap 100k) instead of
+  re-framing. Vela keeps the bar spacing, so the older bars fill the extra width with
+  no resize, refit or stretch. It waits for the next `history:complete` and shows a
+  per-cell loading badge. The depth is preserved across symbol and timeframe switches,
+  so the new series loads at the same bar spacing. `history:complete` with reason
+  `genesis` stops that cell from extending.
 - `App` keeps named favorite lists at `screener.favorites.v2`
   (`{ version: 2, lists, activeListId }`), keyed by `instrument.key`
   (`venue:kind:nativeId`). The `default` list (named `Default`) starts empty,
@@ -283,9 +290,16 @@ scanner and Vela consume those shapes, never native ticker formats. Instrument
 identity is `venue:kind:nativeId`; display is `BTCUSDT.P` for perps and
 `BTCUSDT` / `BTC/USD` for spot. API requests use `nativeId`, Vela uses
 `velaSymbol`. Rate limits are declared per adapter and enforced by
-`RateLimiter`. Trading credentials and SDKs belong in the future sidecar, not
-the browser. Use the fake adapter for contract tests; do not add
-`if (venue === ...)` branches to UI code.
+`RateLimiter`: a weighted token bucket (`burst = limit`, continuous refill)
+with one scheduler. Under budget requests go immediately; over budget they are
+paced evenly. Waiting for a bucket never holds a concurrency slot, and
+`interactive` requests (charts, table, instruments) are granted before
+`background` scans. Hyperliquid uses a single `weight` bucket (`1200/min`):
+`meta` / `metaAndAssetCtxs` cost 20, `candleSnapshot` costs 20 plus one per 60
+returned candles, debited after the response. Binance keeps its per-request
+klines weight and ticker weight 50. Trading credentials and SDKs belong in the
+future sidecar, not the browser. Use the fake adapter for contract tests; do
+not add `if (venue === ...)` branches to UI code.
 
 **Charts may show the forming candle; the scanner never does.** `fetchKlines`
 drops the forming candle using `closeTime <= Date.now()` unless the caller passes
@@ -384,6 +398,9 @@ Useful browser probes:
 - In a multi-cell grid the topbar widget action left of `Alerts` expands the
   active cell over the widget (`data-maximized=1`, siblings hidden), flips to
   Restore, and returns the grid on a second click; a single-cell grid hides it.
+- Zoom a cell to its scale floor, maximize it: the host loads enough history to
+  fill the wider window at the same `barSpacing` (no click, resize or refit), and
+  the left edge shows candles instead of empty space.
 - The topbar panel buttons open `Screener`, `Pine`, and `Library` as one Vela
   side panel at a time; the open panel and width survive reload. The legend source
   action opens the Pine panel.

@@ -60,6 +60,15 @@ export interface RateLimitPolicy {
   maxConcurrent: number;
 }
 
+/** Interactive work (charts, the table) wins over background scans. */
+export type RequestPriority = 'interactive' | 'background';
+
+export interface VenueFetchOptions {
+  includeForming?: boolean;
+  to?: number;
+  priority?: RequestPriority;
+}
+
 export interface VenueAdapter {
   id: VenueId;
   label: string;
@@ -73,7 +82,7 @@ export interface VenueAdapter {
     timeframe: string,
     bars: number,
     signal?: AbortSignal,
-    opts?: { includeForming?: boolean; to?: number },
+    opts?: VenueFetchOptions,
   ): Promise<VenueBar[]>;
 
   subscribeBars?(

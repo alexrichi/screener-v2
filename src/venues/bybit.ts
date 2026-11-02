@@ -5,8 +5,10 @@ import { RateLimiter, VenueRateLimitError } from './rateLimit';
 import type {
   Instrument,
   RateLimitPolicy,
+  RequestPriority,
   VenueAdapter,
   VenueBar,
+  VenueFetchOptions,
   VenueTicker,
 } from './types';
 
@@ -68,9 +70,14 @@ export class BybitVenueAdapter implements VenueAdapter {
   private readonly limiter = new RateLimiter(BYBIT_RATE_LIMIT);
   private instrumentsPromise: Promise<Instrument[]> | null = null;
 
-  private async request<T>(bucket: string, fn: () => Promise<T>): Promise<T> {
+  private async request<T>(
+    bucket: string,
+    fn: () => Promise<T>,
+    signal?: AbortSignal,
+    priority?: RequestPriority,
+  ): Promise<T> {
     try {
-      return await this.limiter.run({ bucket, cost: 1 }, fn);
+      return await this.limiter.run({ bucket, cost: 1, signal, priority }, fn);
     } catch (error) {
       if (isRateLimit(error)) {
         const retryAfterMs = 5_000;
@@ -84,10 +91,12 @@ export class BybitVenueAdapter implements VenueAdapter {
     }
   }
 
-  async listInstruments(): Promise<Instrument[]> {
+  async listInstruments(signal?: AbortSignal): Promise<Instrument[]> {
     if (!this.instrumentsPromise) {
-      this.instrumentsPromise = this.request('market', () =>
-        this.client.getInstrumentsInfo({ category: 'linear' }),
+      this.instrumentsPromise = this.request(
+        'market',
+        () => this.client.getInstrumentsInfo({ category: 'linear' }),
+        signal,
       )
         .then((response) =>
           response.result.list
@@ -118,10 +127,14 @@ export class BybitVenueAdapter implements VenueAdapter {
     return this.instrumentsPromise;
   }
 
-  async fetchTickers(): Promise<VenueTicker[]> {
+  async fetchTickers(signal?: AbortSignal): Promise<VenueTicker[]> {
     const [instruments, response] = await Promise.all([
-      this.listInstruments(),
-      this.request('market', () => this.client.getTickers({ category: 'linear' })),
+      this.listInstruments(signal),
+      this.request(
+        'market',
+        () => this.client.getTickers({ category: 'linear' }),
+        signal,
+      ),
     ]);
     const bySymbol = new Map(instruments.map((item) => [item.nativeId, item]));
     return response.result.list.flatMap((row) => {
@@ -145,15 +158,24 @@ export class BybitVenueAdapter implements VenueAdapter {
     instrument: Instrument,
     timeframe: string,
     bars: number,
-    _signal?: AbortSignal,
-    opts: { includeForming?: boolean; to?: number } = {},
+    signal?: AbortSignal,
+    opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const interval = bybitInterval(timeframe);
     const wanted = Math.max(1, Math.min(100_000, Math.floor(bars)));
     const confirmedOnly = opts.includeForming !== true;
 
     if (opts.to == null && wanted <= 1000) {
-      return this.page(instrument, interval, timeframe, wanted, undefined, confirmedOnly);
+      return this.page(
+        instrument,
+        interval,
+        timeframe,
+        wanted,
+        undefined,
+        confirmedOnly,
+        signal,
+        opts.priority,
+      );
     }
 
     const pages: VenueBar[][] = [];
@@ -168,6 +190,8 @@ export class BybitVenueAdapter implements VenueAdapter {
         limit,
         end,
         confirmedOnly,
+        signal,
+        opts.priority,
       );
       if (chunk.length === 0) break;
       const filtered = chunk.filter((bar) => opts.to == null || bar.openTime <= opts.to);
@@ -189,15 +213,21 @@ export class BybitVenueAdapter implements VenueAdapter {
     limit: number,
     end: number | undefined,
     confirmedOnly: boolean,
+    signal?: AbortSignal,
+    priority?: RequestPriority,
   ): Promise<VenueBar[]> {
-    const response = await this.request('candles', () =>
-      this.client.getKline({
-        category: 'linear',
-        symbol: instrument.nativeId,
-        interval: interval as never,
-        limit,
-        ...(end != null ? { end } : {}),
-      }),
+    const response = await this.request(
+      'candles',
+      () =>
+        this.client.getKline({
+          category: 'linear',
+          symbol: instrument.nativeId,
+          interval: interval as never,
+          limit,
+          ...(end != null ? { end } : {}),
+        }),
+      signal,
+      priority,
     );
     const now = Date.now();
     return (response.result.list as BybitKline[])

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   instrumentKey,
   makeInstrument,
@@ -7,9 +7,12 @@ import {
   spotDisplay,
 } from '../src/venues/instrument';
 import { FakeVenueAdapter } from '../src/venues/fake';
-import { parseOkxFunding } from '../src/venues/okx';
+import { parseOkxFunding, okxErrorInfo } from '../src/venues/okx';
 import { klineToBar } from '../sidecar/stream';
 import { VenueRegistry } from '../src/venues/registry';
+import { hyperliquidWeight } from '../src/venues/hyperliquid';
+import type { VenueAdapter, VenueBar } from '../src/venues/types';
+import { VenueHub } from '../sidecar/hub';
 import {
   RateLimiter,
   VenueRateLimitError,
@@ -106,6 +109,26 @@ describe('venue adapter contract', () => {
   });
 });
 
+describe('OKX API errors', () => {
+  it('recognizes plain-object rate-limit and transient codes', () => {
+    const rate = okxErrorInfo({ code: '50011', msg: 'Too many requests' });
+    expect(rate.code).toBe('50011');
+    expect(rate.rateLimited).toBe(true);
+    expect(rate.transient).toBe(false);
+
+    const busy = okxErrorInfo({ code: '50013', msg: 'Systems are busy' });
+    expect(busy.rateLimited).toBe(false);
+    expect(busy.transient).toBe(true);
+  });
+
+  it('recognizes string errors and leaves business errors alone', () => {
+    expect(okxErrorInfo(new Error('50011 rate limit')).rateLimited).toBe(true);
+    expect(
+      okxErrorInfo({ code: '51001', msg: 'Instrument ID does not exist' }),
+    ).toMatchObject({ code: '51001', rateLimited: false, transient: false });
+  });
+});
+
 class FakeClock implements RateLimitClock {
   time = 0;
 
@@ -115,6 +138,32 @@ class FakeClock implements RateLimitClock {
 
   async sleep(ms: number): Promise<void> {
     this.time += ms;
+  }
+}
+
+/** Time only moves when the test advances it, so concurrent grants can be ordered. */
+class ManualClock implements RateLimitClock {
+  time = 0;
+  private waiters: Array<{ at: number; resolve: () => void }> = [];
+
+  now(): number {
+    return this.time;
+  }
+
+  sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.waiters.push({ at: this.time + ms, resolve });
+    });
+  }
+
+  advance(ms: number): void {
+    this.time += ms;
+    for (const waiter of [...this.waiters]) {
+      if (waiter.at <= this.time) {
+        this.waiters = this.waiters.filter((item) => item !== waiter);
+        waiter.resolve();
+      }
+    }
   }
 }
 
@@ -131,7 +180,7 @@ describe('rate limiter', () => {
 
     await limiter.run({ bucket: 'requests' }, async () => undefined);
     await limiter.run({ bucket: 'requests' }, async () => undefined);
-    expect(clock.time).toBe(1001);
+    expect(clock.time).toBe(1000);
   });
 
   it('accounts for request weight', async () => {
@@ -146,7 +195,133 @@ describe('rate limiter', () => {
 
     await limiter.run({ bucket: 'weight', cost: 3 }, async () => undefined);
     await limiter.run({ bucket: 'weight', cost: 3 }, async () => undefined);
-    expect(clock.time).toBe(60_001);
+    expect(clock.time).toBe(12_000);
+  });
+
+  it('bursts up to the limit and then paces evenly', async () => {
+    const clock = new FakeClock();
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 4,
+        buckets: [{ id: 'requests', type: 'requests', limit: 20, windowMs: 2_000 }],
+      },
+      clock,
+    );
+
+    const starts: number[] = [];
+    await Promise.all(
+      Array.from({ length: 21 }, () =>
+        limiter.run({ bucket: 'requests' }, async () => {
+          starts.push(clock.time);
+        }),
+      ),
+    );
+    expect(starts.filter((time) => time === 0)).toHaveLength(20);
+    expect(Math.max(...starts)).toBe(100);
+  });
+
+  it('does not hold a slot while waiting for a bucket', async () => {
+    const clock = new ManualClock();
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [
+          { id: 'market', type: 'requests', limit: 1, windowMs: 1_000 },
+          { id: 'candles', type: 'requests', limit: 1, windowMs: 1_000 },
+        ],
+      },
+      clock,
+    );
+
+    const order: string[] = [];
+    await limiter.run({ bucket: 'candles' }, async () => {
+      order.push('candles-1');
+    });
+    const slow = limiter.run({ bucket: 'candles' }, async () => {
+      order.push('candles-2');
+    });
+    await limiter.run({ bucket: 'market' }, async () => {
+      order.push('market');
+    });
+    expect(order).toEqual(['candles-1', 'market']);
+    clock.advance(1_000);
+    await slow;
+    expect(order).toEqual(['candles-1', 'market', 'candles-2']);
+    expect(clock.time).toBe(1_000);
+  });
+
+  it('grants interactive work before background work', async () => {
+    const clock = new FakeClock();
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'requests', type: 'requests', limit: 1, windowMs: 1_000 }],
+      },
+      clock,
+    );
+
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = limiter.run({ bucket: 'requests' }, async () => {
+      started();
+      await gate;
+    });
+    await firstStarted;
+    const background = limiter.run(
+      { bucket: 'requests', priority: 'background' },
+      async () => {
+        order.push('background');
+      },
+    );
+    const interactive = limiter.run(
+      { bucket: 'requests', priority: 'interactive' },
+      async () => {
+        order.push('interactive');
+      },
+    );
+    releaseFirst();
+    await first;
+    await Promise.all([background, interactive]);
+    expect(order).toEqual(['interactive', 'background']);
+  });
+
+  it('does not run an aborted queued request', async () => {
+    const clock = new FakeClock();
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'requests', type: 'requests', limit: 1, windowMs: 1_000 }],
+      },
+      clock,
+    );
+    await limiter.run({ bucket: 'requests' }, async () => undefined);
+
+    const controller = new AbortController();
+    let ran = false;
+    const pending = limiter.run(
+      { bucket: 'requests', signal: controller.signal },
+      async () => {
+        ran = true;
+      },
+    );
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(ran).toBe(false);
+  });
+
+  it('uses the Hyperliquid info weights', () => {
+    expect(hyperliquidWeight('meta')).toBe(20);
+    expect(hyperliquidWeight('metaAndAssetCtxs')).toBe(20);
+    expect(hyperliquidWeight('candleSnapshot')).toBe(20);
+    expect(hyperliquidWeight('candleSnapshot', 500)).toBe(28);
+    expect(hyperliquidWeight('candleSnapshot', 5000)).toBe(103);
   });
 
   it('honors pauses and bans', async () => {
@@ -189,5 +364,79 @@ describe('rate limiter', () => {
           buckets: [{ id: 'requests', type: 'requests', limit: 1, windowMs: 1000 }],
         }),
     ).toThrow('maxConcurrent');
+  });
+});
+
+describe('venue hub', () => {
+  const instrument = makeInstrument({
+    venue: 'binance',
+    nativeId: 'BTCUSDT',
+    base: 'BTC',
+    quote: 'USDT',
+    kind: 'perp',
+    velaSymbol: 'BINANCE:BTCUSDT.P',
+  });
+
+  function stubAdapter(): {
+    adapter: VenueAdapter;
+    calls: () => number;
+    signal: () => AbortSignal | undefined;
+    resolve: (bars: VenueBar[]) => void;
+  } {
+    let calls = 0;
+    let upstreamSignal: AbortSignal | undefined;
+    let resolveBars: ((bars: VenueBar[]) => void) | null = null;
+    const adapter = {
+      fetchBars: (
+        _instrument: unknown,
+        _timeframe: unknown,
+        _bars: unknown,
+        signal?: AbortSignal,
+      ): Promise<VenueBar[]> => {
+        calls += 1;
+        upstreamSignal = signal;
+        return new Promise<VenueBar[]>((resolve) => {
+          resolveBars = resolve;
+        });
+      },
+    } as unknown as VenueAdapter;
+    return {
+      adapter,
+      calls: () => calls,
+      signal: () => upstreamSignal,
+      resolve: (bars) => resolveBars?.(bars),
+    };
+  }
+
+  it('reuses an in-flight bars request beyond the cache TTL', async () => {
+    let now = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const stub = stubAdapter();
+      const hub = new VenueHub(stub.adapter);
+      const first = hub.getBars(instrument, '15', 500);
+      now = 3_000;
+      const second = hub.getBars(instrument, '15', 500);
+      expect(stub.calls()).toBe(1);
+      stub.resolve([]);
+      await expect(first).resolves.toEqual([]);
+      await expect(second).resolves.toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('aborts the upstream request only after every subscriber leaves', () => {
+    const stub = stubAdapter();
+    const hub = new VenueHub(stub.adapter);
+    const first = new AbortController();
+    const second = new AbortController();
+    hub.getBars(instrument, '15', 500, { signal: first.signal });
+    hub.getBars(instrument, '15', 500, { signal: second.signal });
+    expect(stub.signal()?.aborted).toBe(false);
+    first.abort();
+    expect(stub.signal()?.aborted).toBe(false);
+    second.abort();
+    expect(stub.signal()?.aborted).toBe(true);
   });
 });

@@ -77,6 +77,7 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
           msg.timeframe,
           msg.bars,
           signal,
+          { priority: 'background' },
         );
         if (bars.length < 2) throw new Error('Not enough closed bars');
         const pine = new PineTS(bars, instrument.nativeId, msg.timeframe);

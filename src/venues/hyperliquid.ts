@@ -4,21 +4,30 @@ import { RateLimiter, VenueRateLimitError } from './rateLimit';
 import type {
   Instrument,
   RateLimitPolicy,
+  RequestPriority,
   VenueAdapter,
   VenueBar,
+  VenueFetchOptions,
   VenueTicker,
 } from './types';
 
 const INFO_URL = 'https://api.hyperliquid.xyz/info';
 
-/** Hyperliquid info endpoint: 1200 weighted requests / minute per IP. */
+/** Hyperliquid info endpoint: 1200 request weight / minute per IP. */
 export const HYPERLIQUID_RATE_LIMIT: RateLimitPolicy = {
   maxConcurrent: 4,
-  buckets: [
-    { id: 'market', type: 'requests', limit: 60, windowMs: 60_000 },
-    { id: 'candles', type: 'requests', limit: 120, windowMs: 60_000 },
-  ],
+  buckets: [{ id: 'weight', type: 'weight', limit: 1_200, windowMs: 60_000 }],
 };
+
+type HlInfoType = 'meta' | 'metaAndAssetCtxs' | 'candleSnapshot';
+
+/**
+ * Official Hyperliquid info weights: base 20 for the endpoints this adapter
+ * uses, plus one extra unit per 60 candles returned by candleSnapshot.
+ */
+export function hyperliquidWeight(type: HlInfoType, returnedItems = 0): number {
+  return 20 + (type === 'candleSnapshot' ? Math.floor(returnedItems / 60) : 0);
+}
 
 const HL_INTERVALS: Record<string, string> = {
   '1': '1m',
@@ -97,30 +106,34 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
   private instrumentsPromise: Promise<Instrument[]> | null = null;
 
   private async request<T>(
-    bucket: string,
+    type: HlInfoType,
     body: unknown,
     signal?: AbortSignal,
+    priority?: RequestPriority,
   ): Promise<T> {
     try {
-      return await this.limiter.run({ bucket, cost: 1 }, async () => {
-        const response = await fetch(INFO_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          signal,
-        });
-        const text = await response.text();
-        if (!response.ok) {
-          if (isRateLimit(response.status, text)) {
-            throw new VenueRateLimitError(`Hyperliquid ${response.status}`, {
-              banned: false,
-              retryAfterMs: 60_000,
-            });
+      return await this.limiter.run(
+        { bucket: 'weight', cost: hyperliquidWeight(type), signal, priority },
+        async () => {
+          const response = await fetch(INFO_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+            signal,
+          });
+          const text = await response.text();
+          if (!response.ok) {
+            if (isRateLimit(response.status, text)) {
+              throw new VenueRateLimitError(`Hyperliquid ${response.status}`, {
+                banned: false,
+                retryAfterMs: 60_000,
+              });
+            }
+            throw new Error(`Hyperliquid ${response.status}: ${text.slice(0, 200)}`);
           }
-          throw new Error(`Hyperliquid ${response.status}: ${text.slice(0, 200)}`);
-        }
-        return JSON.parse(text) as T;
-      });
+          return JSON.parse(text) as T;
+        },
+      );
     } catch (error) {
       if (error instanceof VenueRateLimitError) {
         this.limiter.pauseFor(error.options.retryAfterMs);
@@ -132,7 +145,7 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
   async listInstruments(signal?: AbortSignal): Promise<Instrument[]> {
     if (!this.instrumentsPromise) {
       this.instrumentsPromise = this.request<{ universe: HlUniverseEntry[] }>(
-        'market',
+        'meta',
         { type: 'meta' },
         signal,
       )
@@ -163,7 +176,7 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
     const [instruments, data] = await Promise.all([
       this.listInstruments(signal),
       this.request<[{ universe?: HlUniverseEntry[] }, HlAssetCtx[]]>(
-        'market',
+        'metaAndAssetCtxs',
         { type: 'metaAndAssetCtxs' },
         signal,
       ),
@@ -195,14 +208,14 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
     timeframe: string,
     bars: number,
     signal?: AbortSignal,
-    opts: { includeForming?: boolean; to?: number } = {},
+    opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const interval = hlInterval(timeframe);
     const wanted = Math.max(1, Math.min(5000, Math.floor(bars)));
     const end = opts.to ?? Date.now();
     const start = end - (wanted + 2) * timeframeMs(timeframe);
     const candles = await this.request<HlCandle[]>(
-      'candles',
+      'candleSnapshot',
       {
         type: 'candleSnapshot',
         req: {
@@ -213,6 +226,11 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
         },
       },
       signal,
+      opts.priority,
+    );
+    this.limiter.debit(
+      'weight',
+      hyperliquidWeight('candleSnapshot', candles.length) - hyperliquidWeight('candleSnapshot'),
     );
     const now = Date.now();
     const confirmedOnly = opts.includeForming !== true;
