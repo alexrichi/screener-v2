@@ -197,8 +197,17 @@ async function runSmoke() {
     ok: rows > 0 && !error,
     rows,
     error,
+    venues: [],
     at: new Date().toISOString(),
   };
+  try {
+    const health = await fetch(`http://127.0.0.1:${SIDECAR_PORT}/health`).then((res) =>
+      res.json(),
+    );
+    result.venues = Array.isArray(health.venues) ? health.venues : [];
+  } catch {
+    /* the table check already covers a dead sidecar */
+  }
   await writeSmokeResult(result);
   stopSidecar();
   app.exit(result.ok ? 0 : 1);

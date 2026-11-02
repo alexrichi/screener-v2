@@ -10,4 +10,6 @@ export interface VenueCatalogEntry {
 export const VENUE_CATALOG: VenueCatalogEntry[] = [
   { id: 'binance', label: 'Binance' },
   { id: 'okx', label: 'OKX' },
+  { id: 'bybit', label: 'Bybit' },
+  { id: 'bitget', label: 'Bitget' },
 ];

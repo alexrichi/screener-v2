@@ -2,6 +2,8 @@ import http from 'node:http';
 import { URL } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { BinanceVenueAdapter } from '../src/venues/binance';
+import { BitgetVenueAdapter } from '../src/venues/bitget';
+import { BybitVenueAdapter } from '../src/venues/bybit';
 import { OkxVenueAdapter } from '../src/venues/okx';
 import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
@@ -12,6 +14,8 @@ import type { BarsStream } from './stream';
 const hubs = new Map<string, VenueHub>([
   ['binance', new VenueHub(new BinanceVenueAdapter())],
   ['okx', new VenueHub(new OkxVenueAdapter())],
+  ['bybit', new VenueHub(new BybitVenueAdapter())],
+  ['bitget', new VenueHub(new BitgetVenueAdapter())],
 ]);
 
 const streams = new Map<string, BarsStream>([
@@ -25,6 +29,18 @@ const streams = new Map<string, BarsStream>([
     'okx',
     new PollingBarsStream((instrument, timeframe) =>
       hubs.get('okx')!.getBars(instrument, timeframe, 2, { includeForming: true }),
+    ),
+  ],
+  [
+    'bybit',
+    new PollingBarsStream((instrument, timeframe) =>
+      hubs.get('bybit')!.getBars(instrument, timeframe, 2, { includeForming: true }),
+    ),
+  ],
+  [
+    'bitget',
+    new PollingBarsStream((instrument, timeframe) =>
+      hubs.get('bitget')!.getBars(instrument, timeframe, 2, { includeForming: true }),
     ),
   ],
 ]);
