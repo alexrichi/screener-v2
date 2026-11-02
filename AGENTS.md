@@ -502,6 +502,44 @@ This file is the agent guide. Update it when architecture, invariants, the gate,
 the intended scope changes. There is no `docs/` tree or `CHANGELOG.md` yet; do not
 invent one unless the user asks.
 
+### Vela documentation
+
+The public Vela docs are at <https://docs.luxalgo.com/vela>. Read them before
+reaching into `node_modules` or the peer `../Vela` checkout:
+
+- Workspace and layouts: <https://docs.luxalgo.com/vela/user/workspace>
+- API reference (chart, events, controls): <https://docs.luxalgo.com/vela/user/api-reference>
+- Data providers: <https://docs.luxalgo.com/vela/user/data-providers>
+- Plugin SDK and widget actions: <https://docs.luxalgo.com/vela/contributing/plugin-sdk>
+- Architecture and data flow: <https://docs.luxalgo.com/vela/architecture/overview>
+
+The docs page exposes "View as Markdown"; the LLM index is
+<https://docs.luxalgo.com/llms.mdx/vela/content.md>. The app pins
+`@luxalgo/vela@0.9.3`, and the installed package is the source of truth for the
+exact API. The local `../Vela` checkout is a reference only; do not patch or fork
+Vela from this repo.
+
+### PineTS documentation
+
+PineTS is the TypeScript Pine Script runtime behind the scanner and Vela's Pine
+indicators. Its docs are at <https://docs.luxalgo.com/developers/pinets>:
+
+- Getting started: <https://docs.luxalgo.com/developers/pinets/getting-started>
+- Initialization and usage: <https://docs.luxalgo.com/developers/pinets/initialization-and-usage>
+- `Indicator` and runtime inputs: <https://docs.luxalgo.com/developers/pinets/indicator>
+- Syntax guide: <https://docs.luxalgo.com/developers/pinets/syntax-guide>
+- Pagination and live streaming: <https://docs.luxalgo.com/developers/pinets/pagination>
+- Language coverage: <https://docs.luxalgo.com/developers/pinets/lang-coverage>
+- API coverage: <https://docs.luxalgo.com/developers/pinets/api-coverage>
+- Using PineTS with Vela charts: <https://docs.luxalgo.com/developers/pinets/using-within-charts>
+
+The LLM index is <https://docs.luxalgo.com/llms.mdx/pinets/content.md>. The app
+uses `@luxalgo/vela-pinets` (0.3.2) and `pinets`; the installed packages are the
+source of truth for the exact API. PineTS runs scripts over closed bars in
+`scan.worker.ts`; do not reimplement Pine semantics in app code. PineTS and
+Vela-PineTS are AGPL-3.0: keep the attribution and do not copy their code into
+this repo without checking the license.
+
 ---
 
 ## Commit discipline
