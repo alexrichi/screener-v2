@@ -195,6 +195,13 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   border-color: color-mix(in srgb, var(--primary) 66%, transparent);
 }
 
+/* Vela paints the workspace splitter strips at an inline z-index 30, above its
+   floating (25) and maximized (26) side panels. Keep the strips above the chart
+   but below every panel, or the editor loses the pointer to the seam. */
+.vela-ws-splitter {
+  z-index: 20 !important;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--primary) 35%, transparent);
 }
