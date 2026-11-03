@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   Code2,
   Copy,
@@ -18,6 +18,10 @@ import { cn } from '../ui/cn';
 interface Props {
   items: SavedIndicator[];
   currentId: string | null;
+  query: string;
+  onQueryChange: (query: string) => void;
+  revealId: string | null;
+  revealNonce: number;
   onNew: () => void;
   onEdit: (item: SavedIndicator) => void;
   onAdd: (item: SavedIndicator, allCells: boolean) => void;
@@ -42,6 +46,10 @@ function updatedLabel(ms: number): string {
 export function LibraryPanel({
   items,
   currentId,
+  query,
+  onQueryChange,
+  revealId,
+  revealNonce,
   onNew,
   onEdit,
   onAdd,
@@ -53,8 +61,8 @@ export function LibraryPanel({
   onExportAll,
   onImportFile,
 }: Props) {
-  const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const itemRefs = useRef(new Map<string, HTMLLIElement>());
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -67,6 +75,11 @@ export function LibraryPanel({
     );
   }, [items, query]);
 
+  useEffect(() => {
+    if (!revealId) return;
+    itemRefs.current.get(revealId)?.scrollIntoView({ block: 'nearest' });
+  }, [revealId, revealNonce, visible]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-2">
@@ -74,7 +87,7 @@ export function LibraryPanel({
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
             placeholder="Search saved indicators…"
             className="pl-7"
           />
@@ -147,6 +160,10 @@ export function LibraryPanel({
               return (
                 <li
                   key={item.id}
+                  ref={(element) => {
+                    if (element) itemRefs.current.set(item.id, element);
+                    else itemRefs.current.delete(item.id);
+                  }}
                   className={cn(
                     'group px-2 py-2 transition-colors',
                     active ? 'bg-primary-soft' : 'hover:bg-accent/50',

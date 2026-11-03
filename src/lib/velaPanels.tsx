@@ -9,15 +9,21 @@ import {
 export type VelaPanelId = 'screener' | 'pine' | 'library';
 
 interface PanelMount {
+  tabId: string;
   body: HTMLElement;
   toggle: (id: string, open?: boolean) => void;
 }
 
-const mounts = new Map<VelaPanelId, PanelMount>();
+const mounts = new Map<string, PanelMount>();
 const listeners = new Set<() => void>();
 let version = 0;
-let currentToggle: ((id: string, open?: boolean) => void) | null = null;
-let pendingOpen: VelaPanelId | null = null;
+let activeTabId: string | null = null;
+let mountingTabId: string | null = null;
+let pendingOpen: { id: VelaPanelId; tabId: string } | null = null;
+
+function mountKey(tabId: string, id: VelaPanelId): string {
+  return `${tabId}:${id}`;
+}
 
 function emit(): void {
   version += 1;
@@ -33,10 +39,23 @@ function snapshot(): number {
   return version;
 }
 
-/** Open one of the workspace panels from app code. No-op until the workspace mounts. */
+/** Tell the panel layer which workspace tab is on screen. */
+export function setActiveVelaTab(tabId: string): void {
+  activeTabId = tabId || null;
+}
+
+/** Mark the tab whose Vela workspace is being constructed (its panel mounts run then). */
+export function setMountingVelaTab(tabId: string | null): void {
+  mountingTabId = tabId;
+}
+
+/** Open one of the workspace panels on the active tab. No-op until it mounts. */
 export function openVelaPanel(id: VelaPanelId): void {
-  if (currentToggle) currentToggle(id, true);
-  else pendingOpen = id;
+  const tabId = activeTabId;
+  if (!tabId) return;
+  const mount = mounts.get(mountKey(tabId, id));
+  if (mount) mount.toggle(id, true);
+  else pendingOpen = { id, tabId };
 }
 
 function mountPanel(
@@ -44,10 +63,14 @@ function mountPanel(
   ctx: WidgetContext,
   body: HTMLElement,
 ): () => void {
+  const tabId =
+    mountingTabId ??
+    ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ??
+    '';
+  const key = mountKey(tabId, id);
   const toggle = (panelId: string, open?: boolean) => ctx.togglePanel(panelId, open);
-  const mount: PanelMount = { body, toggle };
-  mounts.set(id, mount);
-  currentToggle = toggle;
+  const mount: PanelMount = { tabId, body, toggle };
+  mounts.set(key, mount);
   // The dock body starts with the kit's panel padding; the app panels own their
   // internal scrolling and expect the full body height.
   body.style.padding = '0';
@@ -58,16 +81,15 @@ function mountPanel(
   body.classList.add('screener-panel-body');
   emit();
 
-  if (pendingOpen === id) {
+  if (pendingOpen?.id === id && pendingOpen.tabId === tabId) {
     pendingOpen = null;
     queueMicrotask(() => {
-      if (mounts.get(id) === mount) toggle(id, true);
+      if (mounts.get(key) === mount) toggle(id, true);
     });
   }
 
   return () => {
-    if (mounts.get(id) === mount) mounts.delete(id);
-    if (currentToggle === toggle) currentToggle = null;
+    if (mounts.get(key) === mount) mounts.delete(key);
     emit();
   };
 }
@@ -97,12 +119,18 @@ registerSidePanel({
   maximizable: true,
   mount: (ctx, body) => {
     const destroy = mountPanel('screener', ctx, body);
+    const tabId =
+      mountingTabId ??
+      ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ??
+      '';
     // First run after the dock migration: keep the table visible by default.
     try {
       if (!localStorage.getItem('screener.panels.welcomed')) {
         localStorage.setItem('screener.panels.welcomed', '1');
         queueMicrotask(() => {
-          if (mounts.get('screener')?.body === body) ctx.togglePanel('screener', true);
+          if (mounts.get(mountKey(tabId, 'screener'))?.body === body) {
+            ctx.togglePanel('screener', true);
+          }
         });
       }
     } catch {
@@ -139,16 +167,18 @@ registerSidePanel({
 });
 
 interface Props {
+  /** Workspace tab whose panel bodies receive the app content. */
+  tabId: string;
   panels: Partial<Record<VelaPanelId, ReactNode>>;
 }
 
-/** Renders the app panels into the Vela side-panel bodies. */
-export function VelaPanelPortals({ panels }: Props) {
+/** Renders the app panels into the active workspace's Vela side-panel bodies. */
+export function VelaPanelPortals({ tabId, panels }: Props) {
   useSyncExternalStore(subscribe, snapshot, () => 0);
   return (
     <>
       {(Object.entries(panels) as Array<[VelaPanelId, ReactNode]>).map(([id, node]) => {
-        const mount = mounts.get(id);
+        const mount = tabId ? mounts.get(mountKey(tabId, id)) : undefined;
         return mount ? createPortal(node, mount.body, id) : null;
       })}
     </>

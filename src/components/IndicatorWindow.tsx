@@ -19,8 +19,8 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   rows: IndicatorRow[];
-  onChartNames: string[];
   onAdd: (index: number) => void;
+  onAddSaved: (id: string) => void;
   onAddLibrary: (item: LibraryItem) => Promise<void>;
 }
 
@@ -32,8 +32,8 @@ export function IndicatorWindow({
   open,
   onOpenChange,
   rows,
-  onChartNames,
   onAdd,
+  onAddSaved,
   onAddLibrary,
 }: Props) {
   const [tab, setTab] = useState<Tab>('chart');
@@ -85,7 +85,10 @@ export function IndicatorWindow({
 
   const libraryMatches = useMemo(() => filterLibrary(LIBRARY_ITEMS, query), [query]);
   const libraryList = libraryMatches.slice(0, limit);
-  const onChart = useMemo(() => new Set(onChartNames), [onChartNames]);
+  const presentNames = useMemo(
+    () => new Set(rows.filter((row) => row.present && !row.native).map((row) => row.name)),
+    [rows],
+  );
 
   const addLibrary = async (item: LibraryItem) => {
     setBusy(item.codeId);
@@ -113,7 +116,7 @@ export function IndicatorWindow({
       key={`${item.native ? 'native' : 'script'}:${item.name}:${item.index}`}
       type="button"
       title={`Add ${item.name} to the active chart`}
-      onClick={() => onAdd(item.index)}
+      onClick={() => (item.savedId ? onAddSaved(item.savedId) : onAdd(item.index))}
       className={cn(
         'group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left',
         'border border-transparent transition-colors hover:border-border hover:bg-accent/50',
@@ -137,7 +140,7 @@ export function IndicatorWindow({
   );
 
   const libraryCard = (item: LibraryItem) => {
-    const present = added[item.codeId] === true || onChart.has(item.name);
+    const present = added[item.codeId] === true || presentNames.has(item.name);
     const loading = busy === item.codeId;
     const error = errors[item.codeId];
     const image = libraryImageUrl(item.imageUrl);

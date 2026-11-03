@@ -16,8 +16,10 @@ export interface MarketRow {
 
 /** One row of the active chart's indicator picker. */
 export interface IndicatorRow {
-  /** Index in `ChartCell.libraryRows()`; pass it back to `addFromLibrary`. */
+  /** Index in `ChartCell.libraryRows()`; `-1` for an app-saved script. */
   index: number;
+  /** Saved-library id for app scripts; null for a Vela built-in. */
+  savedId: string | null;
   name: string;
   native: boolean;
   category: string | null;

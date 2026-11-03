@@ -12,6 +12,8 @@ import type { IndicatorRow, ThemeMode, WorkspaceTab } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
+import { setMountingVelaTab } from '../lib/velaPanels';
+import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 import { VENUE_CATALOG } from '../venues/catalog';
 import { SidecarVelaProvider } from '../venues/vela';
@@ -24,13 +26,10 @@ export interface SavedScript {
 
 export interface VelaWorkspaceHandle {
   applyScript: (script: string, name: string, allCells: boolean) => number;
-  addSavedIndicator: (name: string, allCells: boolean) => number;
+  addSavedIndicator: (script: SavedScript, allCells: boolean) => number;
   removeScript: () => void;
   indicatorRows: () => IndicatorRow[];
   addIndicatorRow: (index: number) => void;
-  onChartNames: () => string[];
-  /** Adds a Library script as its own external indicator; false when it is already shown. */
-  addLibraryIndicator: (codeId: string, name: string, script: string) => boolean;
   setActiveSymbol: (symbol: string) => void;
   setActiveTimeframe: (timeframe: string) => void;
   setLayout: (layout: string) => void;
@@ -39,7 +38,10 @@ export interface VelaWorkspaceHandle {
 
 interface Props {
   tab: WorkspaceTab;
+  active: boolean;
   theme: ThemeMode;
+  /** WebGL cap for this workspace; lower when several tabs stay mounted. */
+  maxWebglCells: number;
   savedScripts: SavedScript[];
   onShowSource: (source: string) => void;
   onIndicatorsChange?: () => void;
@@ -49,7 +51,6 @@ interface Props {
   ) => void;
 }
 
-const PINE_ID = 'screener-pine';
 const SOURCE_ACTION_ID = 'screener-show-source';
 
 let showSourceHandler: ((source: string) => void) | null = null;
@@ -109,16 +110,6 @@ function applyToCells(
     count += 1;
   }
   return count;
-}
-
-function manifestOf(scripts: SavedScript[]) {
-  return scripts.map((script) => ({
-    name: script.name,
-    script: script.source,
-    language: 'pine',
-    enabled: false,
-    category: 'My scripts',
-  }));
 }
 
 const HISTORY_STEP = 500;
@@ -244,7 +235,7 @@ function extendHistory(chart: CellChart, state: CellHistory, requested?: number)
  * keeps the bar spacing across a resize, so a 0.5 px/bar view leaves the extra
  * width empty until the missing history arrives).
  */
-function attachHistoryScroll(ws: VelaWorkspace): () => void {
+function attachHistoryScroll(ws: VelaWorkspace, onIndicatorsChange: () => void): () => void {
   const cells = new Map<string, CellHistory>();
   const cleanups = new Map<string, () => void>();
   const subscriptions: Array<() => void> = [];
@@ -343,6 +334,8 @@ function attachHistoryScroll(ws: VelaWorkspace): () => void {
         if (first == null || from > first + barMs * HISTORY_EDGE_BARS) return;
         extendHistory(chart, state);
       }),
+      chart.on('indicator:added', onIndicatorsChange),
+      chart.on('indicator:removed', onIndicatorsChange),
     ];
 
     cleanups.set(cell.id, () => {
@@ -377,7 +370,16 @@ function attachHistoryScroll(ws: VelaWorkspace): () => void {
 
 export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
   function VelaWorkspaceHost(
-    { tab, theme, savedScripts, onShowSource, onIndicatorsChange, onMarketChange },
+    {
+      tab,
+      active,
+      theme,
+      maxWebglCells,
+      savedScripts,
+      onShowSource,
+      onIndicatorsChange,
+      onMarketChange,
+    },
     ref,
   ) {
     const hostRef = useRef<HTMLDivElement | null>(null);
@@ -391,6 +393,9 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     onIndicatorsChangeRef.current = onIndicatorsChange;
     const savedScriptsRef = useRef(savedScripts);
     savedScriptsRef.current = savedScripts;
+    const activeRef = useRef(active);
+    activeRef.current = active;
+    const syncMaximizeRef = useRef<() => void>(() => {});
 
     useEffect(() => {
       showSourceHandler = (source) => onShowSourceRef.current(source);
@@ -425,7 +430,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           timeframe: tab.timeframe,
         };
       });
-      const ws = new VelaWorkspace(host, {
+      const ws = (() => {
+        setMountingVelaTab(tab.id);
+        try {
+          return new VelaWorkspace(host, {
         layout: wantedLayout,
         symbol: chartSymbol(tab.symbol),
         timeframe: tab.timeframe,
@@ -437,16 +445,19 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           ]),
         ),
         engines: { pine: () => new PineWorkerEngine() },
-        indicators: manifestOf(savedScriptsRef.current),
         live: true,
         theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
         timezone: 'UTC',
         persist: `screener-v2:ws:${tab.id}`,
         drawingToolbar: true,
-        maxWebglCells: 8,
-      });
+        maxWebglCells,
+          });
+        } finally {
+          setMountingVelaTab(null);
+        }
+      })();
       wsRef.current = ws;
-      const detachHistory = attachHistoryScroll(ws);
+      const detachHistory = attachHistoryScroll(ws, () => onIndicatorsChangeRef.current?.());
       const wantedSymbol = chartSymbol(tab.symbol);
       const matchingCell = ws.cells().find((cell) => cell.symbol === wantedSymbol);
       if (matchingCell) ws.setActiveCell(matchingCell.id);
@@ -486,7 +497,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       };
 
       const syncMaximize = () => {
-        if (wsRef.current !== ws) return;
+        if (wsRef.current !== ws || !activeRef.current) return;
         setMaximizeBridge({
           maximized: ws.maximizedCell !== null,
           multi: ws.cells().length > 1,
@@ -497,6 +508,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         });
         ws.refreshActions();
       };
+      syncMaximizeRef.current = syncMaximize;
       syncMaximize();
 
       const offState = ws.on('state:changed', scheduleSync);
@@ -513,12 +525,13 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         offActive();
         offLayout();
         offMaximized();
-        clearMaximizeBridge();
+        if (activeRef.current) clearMaximizeBridge();
         detachHistory();
         ws.destroy();
         if (wsRef.current === ws) wsRef.current = null;
       };
-      // The host is recreated per workspace tab. Theme and prop sync are separate.
+      // One host per visited tab; this effect owns that workspace until the tab
+      // closes. Theme and prop sync are separate.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab.id]);
 
@@ -529,15 +542,8 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     }, [theme]);
 
     useEffect(() => {
-      const ws = wsRef.current;
-      if (!ws) return;
-      void ws
-        .setIndicators(manifestOf(savedScripts))
-        .then(() => onIndicatorsChangeRef.current?.())
-        .catch((cause) => {
-          console.warn('[screener] could not update saved indicators', cause);
-        });
-    }, [savedScripts]);
+      if (active) syncMaximizeRef.current();
+    }, [active]);
 
     useEffect(() => {
       const ws = wsRef.current;
@@ -579,17 +585,21 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           lastAppliedRef.current = script;
           return count;
         },
-        addSavedIndicator(name: string, allCells: boolean) {
+        addSavedIndicator(script: SavedScript, allCells: boolean) {
           const ws = wsRef.current;
           if (!ws) return 0;
           const cells = allCells ? ws.cells() : [ws.active];
+          const id = `saved-${script.id}`;
           let count = 0;
+          rememberScriptName(id, script.name);
           for (const cell of cells) {
-            const index = cell
-              .libraryRows()
-              .findIndex((row) => row.category === 'My scripts' && row.name === name);
-            if (index < 0) continue;
-            cell.addFromLibrary(index);
+            if (cell.instances.some((instance) => instance.id === id)) continue;
+            cell.addExternalIndicator({
+              id,
+              name: script.name,
+              script: script.source,
+              language: 'pine',
+            });
             count += 1;
           }
           return count;
@@ -607,30 +617,43 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           const cell = wsRef.current?.active;
           if (!cell) return [];
           const onChart = new Set(cell.onChartRows().map((row) => row.name));
-          return cell.libraryRows().map((row, index) => ({
-            index,
-            name: row.name,
-            native: row.native === true,
-            category: row.category ?? null,
-            language: row.language ?? null,
-            nativeType: row.nativeType ?? null,
-            beta: row.beta === true,
-            present: onChart.has(row.name),
+          const scripts = savedScriptsRef.current.map((script) => ({
+            index: -1,
+            savedId: script.id,
+            name: script.name,
+            native: false,
+            category: 'My scripts',
+            language: 'pine',
+            nativeType: null,
+            beta: false,
+            present:
+              cell.instances.some((instance) => instance.id === `saved-${script.id}`) ||
+              onChart.has(script.name),
           }));
+          const natives = cell.libraryRows().flatMap((row, index) =>
+            row.native === true
+              ? [
+                  {
+                    index,
+                    savedId: null,
+                    name: row.name,
+                    native: true,
+                    category: row.category ?? null,
+                    language: row.language ?? null,
+                    nativeType: row.nativeType ?? null,
+                    beta: row.beta === true,
+                    present: onChart.has(row.name),
+                  },
+                ]
+              : [],
+          );
+          return [...scripts, ...natives];
         },
         addIndicatorRow(index: number) {
-          wsRef.current?.active.addFromLibrary(index);
-        },
-        onChartNames() {
-          return wsRef.current?.active.onChartRows().map((row) => row.name) ?? [];
-        },
-        addLibraryIndicator(codeId: string, name: string, script: string) {
           const cell = wsRef.current?.active;
-          if (!cell) return false;
-          const id = `library-${codeId}`;
-          if (cell.instances.some((instance) => instance.id === id)) return false;
-          cell.addExternalIndicator({ id, name, script, language: 'pine' });
-          return true;
+          if (!cell) return;
+          const row = cell.libraryRows()[index];
+          if (row?.native) cell.addFromLibrary(index);
         },
         setActiveSymbol(symbol: string) {
           const cell = wsRef.current?.active;
@@ -653,6 +676,6 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       [],
     );
 
-    return <div ref={hostRef} className="h-full w-full" />;
+    return <div ref={hostRef} data-tab-id={tab.id} className="h-full w-full" />;
   },
 );

@@ -21,7 +21,7 @@ import {
   VelaWorkspaceHost,
   type VelaWorkspaceHandle,
 } from './components/VelaWorkspaceHost';
-import { openVelaPanel, VelaPanelPortals } from './lib/velaPanels';
+import { openVelaPanel, setActiveVelaTab, VelaPanelPortals } from './lib/velaPanels';
 import { setIndicatorWindowBridge } from './lib/velaIndicators';
 import {
   fetchLibrarySource,
@@ -251,20 +251,43 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [indicatorOpen, setIndicatorOpen] = useState(false);
   const [indicatorRows, setIndicatorRows] = useState<IndicatorRow[]>([]);
-  const [indicatorOnChart, setIndicatorOnChart] = useState<string[]>([]);
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [libraryReveal, setLibraryReveal] = useState<{ id: string; nonce: number } | null>(
+    null,
+  );
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
+    () => new Set(activeTabId ? [activeTabId] : []),
+  );
   const [scanResults, setScanResults] = useState<Map<string, ScanResult>>(new Map());
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastScanMs, setLastScanMs] = useState<number | null>(null);
   const lastMarketError = useRef<string | null>(null);
-  const workspaceRef = useRef<VelaWorkspaceHandle | null>(null);
+  const handlesRef = useRef(new Map<string, VelaWorkspaceHandle>());
+  const refSetters = useRef(new Map<string, (handle: VelaWorkspaceHandle | null) => void>());
   const newTabRef = useRef<string | null>(null);
   const scanner = useScanner();
 
-  const refreshIndicatorRows = useCallback(() => {
-    setIndicatorRows(workspaceRef.current?.indicatorRows() ?? []);
-    setIndicatorOnChart(workspaceRef.current?.onChartNames() ?? []);
+  const workspaceRefFor = useCallback((id: string) => {
+    let setter = refSetters.current.get(id);
+    if (!setter) {
+      setter = (handle) => {
+        if (handle) handlesRef.current.set(id, handle);
+        else handlesRef.current.delete(id);
+      };
+      refSetters.current.set(id, setter);
+    }
+    return setter;
   }, []);
+
+  const activeWorkspace = useCallback(
+    () => handlesRef.current.get(activeTabId) ?? null,
+    [activeTabId],
+  );
+
+  const refreshIndicatorRows = useCallback(() => {
+    setIndicatorRows(activeWorkspace()?.indicatorRows() ?? []);
+  }, [activeWorkspace]);
 
   const openIndicators = useCallback(() => {
     refreshIndicatorRows();
@@ -273,10 +296,19 @@ export default function App() {
 
   const addIndicator = useCallback(
     (index: number) => {
-      workspaceRef.current?.addIndicatorRow(index);
+      activeWorkspace()?.addIndicatorRow(index);
       refreshIndicatorRows();
     },
-    [refreshIndicatorRows],
+    [activeWorkspace, refreshIndicatorRows],
+  );
+
+  const revealSavedIndicator = useCallback(
+    (id: string) => {
+      setCurrentSavedId(id);
+      setLibraryQuery('');
+      setLibraryReveal({ id, nonce: Date.now() });
+    },
+    [setCurrentSavedId],
   );
 
   const addLibraryIndicator = useCallback(
@@ -288,10 +320,12 @@ export default function App() {
       if (!existing) {
         setLibrary((prev) => ({ version: 1, items: [...prev.items, saved] }));
       }
-      workspaceRef.current?.addLibraryIndicator(item.codeId, saved.name, code);
+      activeWorkspace()?.addSavedIndicator(saved, false);
+      setCurrentSavedId(saved.id);
+      revealSavedIndicator(saved.id);
       refreshIndicatorRows();
     },
-    [library.items, refreshIndicatorRows, setLibrary],
+    [activeWorkspace, library.items, refreshIndicatorRows, setLibrary],
   );
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
@@ -303,6 +337,32 @@ export default function App() {
     if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) return;
     setActiveTabId(tabs[0]?.id ?? '');
   }, [activeTabId, tabs, setActiveTabId]);
+
+  useEffect(() => {
+    setActiveVelaTab(activeTabId);
+  }, [activeTabId]);
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    setVisitedTabs((prev) => {
+      if (prev.has(activeTabId)) return prev;
+      const next = new Set(prev);
+      next.add(activeTabId);
+      return next;
+    });
+  }, [activeTabId]);
+
+  useEffect(() => {
+    const live = new Set(tabs.map((tab) => tab.id));
+    setVisitedTabs((prev) => {
+      const next = new Set([...prev].filter((id) => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [tabs]);
+
+  useEffect(() => {
+    refreshIndicatorRows();
+  }, [library.items, refreshIndicatorRows]);
 
   useEffect(() => {
     if (!activeTabId || newTabRef.current !== activeTabId) return;
@@ -508,9 +568,9 @@ export default function App() {
             : tab,
         ),
       );
-      workspaceRef.current?.setActiveSymbol(symbol);
+      activeWorkspace()?.setActiveSymbol(symbol);
     },
-    [activeTab, setTabs],
+    [activeTab, activeWorkspace, setTabs],
   );
 
   const addTab = useCallback(
@@ -644,7 +704,7 @@ export default function App() {
           currentSaved && currentSaved.source === source
             ? currentSaved.name
             : 'Screener Pine';
-        const count = workspaceRef.current?.applyScript(source, name, allCells) ?? 0;
+        const count = activeWorkspace()?.applyScript(source, name, allCells) ?? 0;
         if (count > 0) {
           setTabs((prev) =>
             prev.map((tab) =>
@@ -667,7 +727,7 @@ export default function App() {
         });
       }
     },
-    [activeTab?.id, currentSaved, setTabs],
+    [activeTab?.id, activeWorkspace, currentSaved, setTabs],
   );
 
   const openSaveAs = useCallback(
@@ -736,11 +796,11 @@ export default function App() {
     } else {
       const item = createIndicator(name, script, saveDialog.notes);
       setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
-      setCurrentSavedId(item.id);
+      revealSavedIndicator(item.id);
       toast.success(`Saved ${item.name}`);
     }
     setSaveDialog(null);
-  }, [library.items, saveDialog, script, setCurrentSavedId, setLibrary]);
+  }, [library.items, revealSavedIndicator, saveDialog, script, setLibrary]);
 
   const selectSaved = useCallback(
     (id: string) => {
@@ -748,10 +808,10 @@ export default function App() {
       if (!item) return;
       if (dirty && !window.confirm('Discard unsaved changes?')) return;
       setScript(item.source);
-      setCurrentSavedId(id);
+      revealSavedIndicator(id);
       openVelaPanel('pine');
     },
-    [dirty, library.items, setCurrentSavedId, setScript],
+    [dirty, library.items, revealSavedIndicator, setScript],
   );
 
   const showSource = useCallback(
@@ -760,10 +820,11 @@ export default function App() {
       if (dirty && !window.confirm('Discard unsaved changes?')) return;
       const saved = library.items.find((item) => item.source === source);
       setScript(source);
-      setCurrentSavedId(saved?.id ?? '');
+      if (saved) revealSavedIndicator(saved.id);
+      else setCurrentSavedId('');
       openVelaPanel('pine');
     },
-    [dirty, library.items, setCurrentSavedId, setScript],
+    [dirty, library.items, revealSavedIndicator, setCurrentSavedId, setScript],
   );
 
   const usePreset = useCallback(
@@ -847,7 +908,7 @@ export default function App() {
           const item = createIndicator(name, text);
           setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
           setScript(item.source);
-          setCurrentSavedId(item.id);
+          revealSavedIndicator(item.id);
           openVelaPanel('pine');
           toast.success(`Imported ${item.name}`);
           return;
@@ -879,8 +940,10 @@ export default function App() {
 
   const addSavedToChart = useCallback(
     (item: SavedIndicator, allCells: boolean) => {
-      const count = workspaceRef.current?.addSavedIndicator(item.name, allCells) ?? 0;
+      const count = activeWorkspace()?.addSavedIndicator(item, allCells) ?? 0;
       if (count > 0) {
+        revealSavedIndicator(item.id);
+        refreshIndicatorRows();
         toast.success(
           allCells
             ? `Added ${item.name} to ${count} chart${count === 1 ? '' : 's'}`
@@ -891,17 +954,17 @@ export default function App() {
         toast.error('The chart is not ready yet');
       }
     },
-    [],
+    [activeWorkspace, refreshIndicatorRows, revealSavedIndicator],
   );
 
   const scanSaved = useCallback(
     (item: SavedIndicator) => {
       setScript(item.source);
-      setCurrentSavedId(item.id);
+      revealSavedIndicator(item.id);
       openVelaPanel('pine');
       runScan(item.source);
     },
-    [runScan, setCurrentSavedId, setScript],
+    [revealSavedIndicator, runScan, setScript],
   );
 
   const saveSettings = useCallback(
@@ -932,25 +995,40 @@ export default function App() {
 
       <main className="flex min-h-0 flex-1 overflow-hidden">
         <section className="relative min-w-0 flex-1 overflow-hidden bg-background">
-          {activeTab ? (
-            <VelaWorkspaceHost
-              key={activeTab.id}
-              ref={workspaceRef}
-              tab={activeTab}
-              theme={theme}
-              savedScripts={library.items}
-              onShowSource={showSource}
-              onIndicatorsChange={refreshIndicatorRows}
-              onMarketChange={handleMarketChange}
-            />
-          ) : (
+          {tabs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-[12px] text-muted-foreground">
               Create a workspace to start.
             </div>
-          )}
+          ) : null}
+          {tabs
+            .filter((tab) => visitedTabs.has(tab.id) || tab.id === activeTabId)
+            .map((tab) => (
+              <div
+                key={tab.id}
+                className={`absolute inset-0 ${
+                  tab.id === activeTabId ? 'z-10' : 'invisible pointer-events-none z-0'
+                }`}
+              >
+                <VelaWorkspaceHost
+                  ref={workspaceRefFor(tab.id)}
+                  tab={tab}
+                  active={tab.id === activeTabId}
+                  theme={theme}
+                  maxWebglCells={Math.max(
+                    1,
+                    Math.floor(8 / Math.max(1, visitedTabs.size)),
+                  )}
+                  savedScripts={library.items}
+                  onShowSource={showSource}
+                  onIndicatorsChange={refreshIndicatorRows}
+                  onMarketChange={handleMarketChange}
+                />
+              </div>
+            ))}
         </section>
 
         <VelaPanelPortals
+          tabId={activeTabId}
           panels={{
             screener: (
               <ScreenerTable
@@ -1017,6 +1095,10 @@ export default function App() {
               <LibraryPanel
                 items={library.items}
                 currentId={currentSavedId}
+                query={libraryQuery}
+                onQueryChange={setLibraryQuery}
+                revealId={libraryReveal?.id ?? null}
+                revealNonce={libraryReveal?.nonce ?? 0}
                 onNew={newDraft}
                 onEdit={(item) => selectSaved(item.id)}
                 onAdd={addSavedToChart}
@@ -1100,8 +1182,11 @@ export default function App() {
         open={indicatorOpen}
         onOpenChange={setIndicatorOpen}
         rows={indicatorRows}
-        onChartNames={indicatorOnChart}
         onAdd={addIndicator}
+        onAddSaved={(id) => {
+          const item = library.items.find((candidate) => candidate.id === id);
+          if (item) addSavedToChart(item, false);
+        }}
         onAddLibrary={addLibraryIndicator}
       />
 

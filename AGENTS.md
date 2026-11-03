@@ -109,6 +109,7 @@ src/
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
     velaPanels.tsx                Vela side-panel registration and React portal bridge
+    velaScripts.ts                per-cell persistence for external script indicators
     usePersistedState.ts          localStorage-backed state with runtime validation
     view.ts                       default screener view and its validator
     velaTheme.ts                  dark/light Vela theme matching the app tokens
@@ -160,14 +161,17 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   indicator library, and scan results. Persisted keys are `screener.*`; the
   library lives at `screener.indicators.v1`; workspace state is keyed per tab as
   `screener-v2:ws:<tabId>`.
-- The library stores raw `.pine` source only. Saved scripts are passed to the
-  Vela host, which maps them to picker-only manifest entries (`enabled: false`,
-  `category: 'My scripts'`) and refreshes them with `ws.setIndicators(...)`.
-  Apply and scan always use the same source text. The native Vela indicator
-  picker is replaced by the app's own `IndicatorWindow`, opened by a topbar
-  action registered under the built-in `'indicators'` slot. The window reads
-  `cell.libraryRows()`/`onChartRows()` and adds through `addFromLibrary`; Vela
-  still owns the button, `/` and mobile stop, but never constructs its picker.
+- The library stores raw `.pine` source only. Saved scripts are app-owned: the
+  host adds them as external indicators under `saved-<id>`, and the custom
+  `IndicatorWindow` lists `My scripts` from app state plus `Built-in` from
+  `cell.libraryRows()`. There is no Vela `indicators` manifest and no
+  `setIndicators` seam. `lib/velaScripts.ts` registers a cell-scope state
+  handler (`screener.scripts`) that persists every external script except the
+  applied `screener-pine`, so saved and Library-added indicators survive tab
+  switches and reloads. Vela's native picker is replaced by the app's own
+  `IndicatorWindow`, opened by a topbar action registered under the built-in
+  `'indicators'` slot. Vela still owns the button, `/` and mobile stop, but never
+  constructs its picker.
 - The `LuxAlgo` tab of `IndicatorWindow` reads the bundled catalog
   (`src/data/luxalgoCatalog.json`, 845 indicators, refresh with
   `npm run library:catalog`). It renders preview cards through Vela's public
@@ -228,6 +232,11 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   fetched. `Venue` is a fixed first column with icons only and an empty-but-
   sortable header (globe plus the tri-state sort glyph). Column sort cycles
   descending → ascending → unsorted; `ScreenerView.sort` is nullable.
+- The app mounts one Vela host per **visited** tab and keeps it alive; inactive
+  hosts stay in the DOM with `visibility:hidden` (size preserved), so their
+  charts, engines and alerts keep running. Handles live in a
+  `Map<tabId, handle>`; every app action targets the active tab. A tab mounts on
+  first activation; closing it destroys its workspace.
 - The Vela host listens to `state:changed`, `cell:active`, and `layout:changed`,
   debounces for 120 ms, and writes the active symbol/timeframe/layout back to the
   tab. Do not update state if the values are unchanged.
@@ -281,12 +290,14 @@ previous handle before adding. Store `pineScript`, `pineName`, and `pineAll` on 
 tab and reapply on mount. `lastAppliedRef` prevents a double add when the tab state
 update and the imperative Apply happen together.
 
-**Saved indicators are picker-only manifest entries.** The library stores raw
-`.pine` source only, never transpiled output. The host maps each saved item to
-`{ enabled: false, category: 'My scripts', language: 'pine' }` and refreshes the
-manifest through `ws.setIndicators(...)`. `addSavedIndicator` looks up the index in
-`cell.libraryRows()` by category and name, then calls `cell.addFromLibrary(index)`;
-keep that lookup aligned with Vela's row order (natives first, manifest after).
+**Saved indicators are app-owned external scripts.** The library stores raw
+`.pine` source only, never transpiled output. `addSavedIndicator(item)` adds it
+through `cell.addExternalIndicator({ id: 'saved-<id>', name, script })`; the
+custom window lists these from app state and native indicators from
+`cell.libraryRows()`. There is no `setIndicators` call and no Vela manifest for
+user scripts. `lib/velaScripts.ts` persists the external scripts per cell (the
+applied `screener-pine` is excluded and restored by the host); keep that handler
+registered before any workspace is constructed.
 
 **The indicator window is app-owned.** `lib/velaIndicators.ts` registers a
 topbar action under the built-in `'indicators'` id; this replaces Vela's native
@@ -311,10 +322,12 @@ button or reach into renderer internals.
 
 **The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
 registers `Screener`, `Pine`, and `Library` with `registerSidePanel` at import
-time and portals the React content into the bodies Vela hands `mount`. Open them
-with `openVelaPanel(...)`; the dock's open panel and width live in the Vela
-workspace document, not in `screener.dock.*`. Do not reach into panel internals.
-`screener.panels.welcomed` only controls the one-time Screener default.
+time and portals the React content into the bodies Vela hands `mount`. Mounts are
+keyed `<tabId>:<panelId>`; `openVelaPanel` targets the active tab and the
+portals render only into its bodies. The dock's open panel and width live in the
+Vela workspace document, not in `screener.dock.*`. Do not reach into panel
+internals. `screener.panels.welcomed` only controls the one-time Screener
+default.
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
 maximized Pine editor keeps the pointer. Keep that override.
@@ -472,6 +485,11 @@ Useful browser probes:
   the script appears in `My scripts` with its Library URL in notes. A large
   script (SMC, ~50 KB) adds the same way. After reload the saved source remains
   in the library.
+- Three workspace tabs stay live: add a saved or Library script to each, switch
+  between them, and every chart keeps its indicators and panel state. Reload the
+  active tab restores its external scripts from the workspace document; other
+  tabs restore on first visit. The chart source action opens Pine and selects the
+  saved item in the Library panel.
 - The Pine editor renders a non-empty `.cm-editor` with a gutter, highlighted
   tokens, and the resolved editor background from the active theme.
 - The topbar hamburger opens `File / View / Window / Help`; File and View actions
