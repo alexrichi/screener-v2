@@ -13,7 +13,8 @@
       "@luxalgo/vela/plugin": ["../Vela/src/plugin.ts"],
       "@luxalgo/vela/ui": ["../Vela/src/ui/index.ts"],
       "@luxalgo/vela/providers/binance": ["../Vela/src/data/providers/binance/index.ts"],
-      "@luxalgo/vela-pinets/editor": ["../Vela-pinets/src/editor/index.ts"]
+      "@luxalgo/vela-pinets/editor": ["../Vela-pinets/src/editor/index.ts"],
+      "@luxalgo/vela-pinets": ["../Vela-pinets/src/index.ts"]
     },
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,
