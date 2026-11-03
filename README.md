@@ -18,8 +18,9 @@ TypeScript app; there is no private backend and no API key.
 - Electron shell for the desktop build: the bundled sidecar runs as a child
   process, and the app uses a custom title bar with an application menu.
 
-The app resolves `@luxalgo/vela` and `@luxalgo/vela-pinets/editor` to the local
-`../Vela` and `../Vela-pinets` checkouts, so chart and editor changes run live.
+The app resolves `@luxalgo/vela` and `@luxalgo/vela-pinets` (engine and editor) to
+the local `../Vela` and `../Vela-pinets` checkouts, so chart, engine and editor
+changes run live. A small Vite plugin inlines the Pine worker from source.
 
 ## Run
 
@@ -85,8 +86,12 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   workspace.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
   delete scripts; export or import `.pine` files and the JSON library. Saved
-  scripts also appear in Vela's `Indicators → My scripts` section, above the
-  built-in catalogue.
+  scripts also appear in the app's `Indicators` window under `My scripts`, above
+  the built-in catalogue.
+- `LuxAlgo` tab in the `Indicators` window: search 845 public Library indicators
+  bundled with the app, browse preview cards with family and date, and add one
+  to the chart. The full Pine source is loaded on demand, saved to the local
+  library with its original licence header, and appears under `My scripts`.
 - Source button on every Pine indicator legend row: opens the exact script Vela
   is running in the editor, and selects the matching saved indicator.
 - Scanner runs the same script over closed candles in a Web Worker and adds the
@@ -99,6 +104,9 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
 - Vela PineTS and PineTS are AGPL-3.0. This app is intended for private use;
   distributing or hosting it triggers AGPL obligations or requires a commercial
   license.
+- Indicators imported from the LuxAlgo Library keep their own licence header
+  (usually CC BY-NC-SA 4.0) and are stored with it intact. Refresh the bundled
+  catalog with `npm run library:catalog`.
 - The app reads public market data only. It does not trade.
 - The sidecar exposes public Binance, OKX, Bybit, Bitget, Hyperliquid, and
   Coinbase data through one `VenueAdapter` per venue and a shared cache. The table, scanner, and Vela

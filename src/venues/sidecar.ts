@@ -16,6 +16,11 @@ function defaultBaseUrl(): string {
   return (configured || DEFAULT_BASE).replace(/\/+$/, '');
 }
 
+/** Base URL for app-level sidecar routes (not venue data). */
+export function sidecarBaseUrl(): string {
+  return defaultBaseUrl();
+}
+
 function errorDetail(body: string): string {
   const text = body.trim();
   if (!text) return '';

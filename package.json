@@ -16,7 +16,8 @@
     "sidecar:build": "node electron/build-sidecar.mjs",
     "electron:assets": "npm run build && npm run sidecar:build",
     "electron:start": "npm run electron:assets && electron .",
-    "electron:pack": "npm run electron:assets && electron-builder --win dir"
+    "electron:pack": "npm run electron:assets && electron-builder --win dir",
+    "library:catalog": "node scripts/build-library-catalog.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

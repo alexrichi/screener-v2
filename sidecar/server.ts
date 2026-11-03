@@ -10,6 +10,7 @@ import { OkxVenueAdapter } from '../src/venues/okx';
 import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
 import { VenueHub } from './hub';
+import { librarySource } from './luxalgo';
 import { BinanceKlineStream, PollingBarsStream } from './stream';
 import type { BarsStream } from './stream';
 import { VenueKlineStream } from './ws';
@@ -141,6 +142,16 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       id: hub.adapter.id,
       label: hub.adapter.label,
     })));
+    return;
+  }
+
+  if (path === '/library/source') {
+    const codeId = (url.searchParams.get('codeId') ?? '').trim();
+    if (!/^[a-z0-9]{8,40}$/i.test(codeId)) {
+      fail(res, 400, 'Invalid codeId');
+      return;
+    }
+    json(res, 200, { code: await librarySource(codeId) });
     return;
   }
 

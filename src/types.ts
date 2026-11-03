@@ -14,6 +14,19 @@ export interface MarketRow {
   nextFunding: number | null;
 }
 
+/** One row of the active chart's indicator picker. */
+export interface IndicatorRow {
+  /** Index in `ChartCell.libraryRows()`; pass it back to `addFromLibrary`. */
+  index: number;
+  name: string;
+  native: boolean;
+  category: string | null;
+  language: string | null;
+  nativeType: string | null;
+  beta: boolean;
+  present: boolean;
+}
+
 export interface WorkspaceTab {
   id: string;
   /** Vela symbol, bare Binance ticker, or provider-qualified symbol. */

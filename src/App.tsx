@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type {
+  IndicatorRow,
   PlotColumn,
   ScanProgress,
   ScanResult,
@@ -10,6 +11,7 @@ import type {
   WorkspaceTab,
 } from './types';
 import { AppHeader } from './components/AppHeader';
+import { IndicatorWindow } from './components/IndicatorWindow';
 import { LibraryPanel } from './components/LibraryPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
@@ -20,6 +22,12 @@ import {
   type VelaWorkspaceHandle,
 } from './components/VelaWorkspaceHost';
 import { openVelaPanel, VelaPanelPortals } from './lib/velaPanels';
+import { setIndicatorWindowBridge } from './lib/velaIndicators';
+import {
+  fetchLibrarySource,
+  libraryPageUrl,
+  type LibraryItem,
+} from './lib/luxalgoLibrary';
 import { useMarketRows } from './hooks/useMarketRows';
 import {
   isBoolean,
@@ -241,6 +249,9 @@ export default function App() {
     error?: string;
   } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [indicatorOpen, setIndicatorOpen] = useState(false);
+  const [indicatorRows, setIndicatorRows] = useState<IndicatorRow[]>([]);
+  const [indicatorOnChart, setIndicatorOnChart] = useState<string[]>([]);
   const [scanResults, setScanResults] = useState<Map<string, ScanResult>>(new Map());
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -249,6 +260,39 @@ export default function App() {
   const workspaceRef = useRef<VelaWorkspaceHandle | null>(null);
   const newTabRef = useRef<string | null>(null);
   const scanner = useScanner();
+
+  const refreshIndicatorRows = useCallback(() => {
+    setIndicatorRows(workspaceRef.current?.indicatorRows() ?? []);
+    setIndicatorOnChart(workspaceRef.current?.onChartNames() ?? []);
+  }, []);
+
+  const openIndicators = useCallback(() => {
+    refreshIndicatorRows();
+    setIndicatorOpen(true);
+  }, [refreshIndicatorRows]);
+
+  const addIndicator = useCallback(
+    (index: number) => {
+      workspaceRef.current?.addIndicatorRow(index);
+      refreshIndicatorRows();
+    },
+    [refreshIndicatorRows],
+  );
+
+  const addLibraryIndicator = useCallback(
+    async (item: LibraryItem) => {
+      const code = await fetchLibrarySource(item.codeId);
+      const notes = `LuxAlgo Library: ${libraryPageUrl(item.slug)}`;
+      const existing = library.items.find((saved) => saved.notes === notes);
+      const saved = existing ?? createIndicator(uniqueName(library.items, item.name), code, notes);
+      if (!existing) {
+        setLibrary((prev) => ({ version: 1, items: [...prev.items, saved] }));
+      }
+      workspaceRef.current?.addLibraryIndicator(item.codeId, saved.name, code);
+      refreshIndicatorRows();
+    },
+    [library.items, refreshIndicatorRows, setLibrary],
+  );
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
   const currentSaved =
@@ -264,6 +308,15 @@ export default function App() {
     if (!activeTabId || newTabRef.current !== activeTabId) return;
     newTabRef.current = null;
     openVelaPanel('screener');
+  }, [activeTabId]);
+
+  useEffect(() => {
+    setIndicatorWindowBridge(openIndicators);
+    return () => setIndicatorWindowBridge(null);
+  }, [openIndicators]);
+
+  useEffect(() => {
+    setIndicatorOpen(false);
   }, [activeTabId]);
 
   useEffect(() => {
@@ -887,6 +940,7 @@ export default function App() {
               theme={theme}
               savedScripts={library.items}
               onShowSource={showSource}
+              onIndicatorsChange={refreshIndicatorRows}
               onMarketChange={handleMarketChange}
             />
           ) : (
@@ -1040,6 +1094,15 @@ export default function App() {
         onOpenChange={setSettingsOpen}
         settings={settings}
         onSave={saveSettings}
+      />
+
+      <IndicatorWindow
+        open={indicatorOpen}
+        onOpenChange={setIndicatorOpen}
+        rows={indicatorRows}
+        onChartNames={indicatorOnChart}
+        onAdd={addIndicator}
+        onAddLibrary={addLibraryIndicator}
       />
 
       {failedScans > 0 && !scanProgress ? (

@@ -8,7 +8,7 @@ import { VelaWorkspace } from '@luxalgo/vela/workspace';
 import type { ChartCell } from '@luxalgo/vela/workspace';
 import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
 import { PineWorkerEngine } from '@luxalgo/vela-pinets';
-import type { ThemeMode, WorkspaceTab } from '../types';
+import type { IndicatorRow, ThemeMode, WorkspaceTab } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
@@ -26,6 +26,11 @@ export interface VelaWorkspaceHandle {
   applyScript: (script: string, name: string, allCells: boolean) => number;
   addSavedIndicator: (name: string, allCells: boolean) => number;
   removeScript: () => void;
+  indicatorRows: () => IndicatorRow[];
+  addIndicatorRow: (index: number) => void;
+  onChartNames: () => string[];
+  /** Adds a Library script as its own external indicator; false when it is already shown. */
+  addLibraryIndicator: (codeId: string, name: string, script: string) => boolean;
   setActiveSymbol: (symbol: string) => void;
   setActiveTimeframe: (timeframe: string) => void;
   setLayout: (layout: string) => void;
@@ -37,6 +42,7 @@ interface Props {
   theme: ThemeMode;
   savedScripts: SavedScript[];
   onShowSource: (source: string) => void;
+  onIndicatorsChange?: () => void;
   onMarketChange: (
     tabId: string,
     patch: { symbol?: string; timeframe?: string; layout?: string },
@@ -371,7 +377,7 @@ function attachHistoryScroll(ws: VelaWorkspace): () => void {
 
 export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
   function VelaWorkspaceHost(
-    { tab, theme, savedScripts, onShowSource, onMarketChange },
+    { tab, theme, savedScripts, onShowSource, onIndicatorsChange, onMarketChange },
     ref,
   ) {
     const hostRef = useRef<HTMLDivElement | null>(null);
@@ -381,6 +387,8 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     onMarketChangeRef.current = onMarketChange;
     const onShowSourceRef = useRef(onShowSource);
     onShowSourceRef.current = onShowSource;
+    const onIndicatorsChangeRef = useRef(onIndicatorsChange);
+    onIndicatorsChangeRef.current = onIndicatorsChange;
     const savedScriptsRef = useRef(savedScripts);
     savedScriptsRef.current = savedScripts;
 
@@ -523,9 +531,12 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     useEffect(() => {
       const ws = wsRef.current;
       if (!ws) return;
-      void ws.setIndicators(manifestOf(savedScripts)).catch((cause) => {
-        console.warn('[screener] could not update saved indicators', cause);
-      });
+      void ws
+        .setIndicators(manifestOf(savedScripts))
+        .then(() => onIndicatorsChangeRef.current?.())
+        .catch((cause) => {
+          console.warn('[screener] could not update saved indicators', cause);
+        });
     }, [savedScripts]);
 
     useEffect(() => {
@@ -591,6 +602,35 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             existing?.handle?.remove();
           }
           lastAppliedRef.current = null;
+        },
+        indicatorRows() {
+          const cell = wsRef.current?.active;
+          if (!cell) return [];
+          const onChart = new Set(cell.onChartRows().map((row) => row.name));
+          return cell.libraryRows().map((row, index) => ({
+            index,
+            name: row.name,
+            native: row.native === true,
+            category: row.category ?? null,
+            language: row.language ?? null,
+            nativeType: row.nativeType ?? null,
+            beta: row.beta === true,
+            present: onChart.has(row.name),
+          }));
+        },
+        addIndicatorRow(index: number) {
+          wsRef.current?.active.addFromLibrary(index);
+        },
+        onChartNames() {
+          return wsRef.current?.active.onChartRows().map((row) => row.name) ?? [];
+        },
+        addLibraryIndicator(codeId: string, name: string, script: string) {
+          const cell = wsRef.current?.active;
+          if (!cell) return false;
+          const id = `library-${codeId}`;
+          if (cell.instances.some((instance) => instance.id === id)) return false;
+          cell.addExternalIndicator({ id, name, script, language: 'pine' });
+          return true;
         },
         setActiveSymbol(symbol: string) {
           const cell = wsRef.current?.active;

@@ -103,6 +103,7 @@ src/
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
+    luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
     universe.ts                   per-venue trim, scan target grouping, favorites key
@@ -116,6 +117,7 @@ src/
     scan.worker.ts                PineTS scan worker
     useScanner.ts                 worker lifecycle, progress, cancel, errors
   scripts/presets.ts              built-in Pine presets
+  data/luxalgoCatalog.json        bundled LuxAlgo Library catalog (generated)
   ui/                             tokens, primitives, overlays, theme provider
   types.ts                        shared app/data/worker types
   venues/
@@ -138,6 +140,7 @@ src/
 sidecar/
   server.ts                       public-data HTTP + WebSocket server; one hub per venue
   hub.ts                          one adapter per venue; shared caches/fan-out
+  luxalgo.ts                      LuxAlgo Library source fetch and cache
   stream.ts                       Binance kline WS plus a REST-polling stream for
                                   venues without a WS feed
   ws.ts                           generic ref-counted venue WebSocket stream
@@ -146,6 +149,7 @@ electron/
   main.cjs                        desktop shell: sidecar child, static server, window
   preload.cjs                     narrow title-bar/window IPC bridge
   build-sidecar.mjs               esbuild bundle of sidecar/server.ts for packaging
+scripts/build-library-catalog.mjs regenerates src/data/luxalgoCatalog.json
 test/market.test.ts               pure logic tests
 test/venues.test.ts               instrument, adapter and rate-limit tests
 ```
@@ -159,7 +163,20 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
 - The library stores raw `.pine` source only. Saved scripts are passed to the
   Vela host, which maps them to picker-only manifest entries (`enabled: false`,
   `category: 'My scripts'`) and refreshes them with `ws.setIndicators(...)`.
-  Apply and scan always use the same source text.
+  Apply and scan always use the same source text. The native Vela indicator
+  picker is replaced by the app's own `IndicatorWindow`, opened by a topbar
+  action registered under the built-in `'indicators'` slot. The window reads
+  `cell.libraryRows()`/`onChartRows()` and adds through `addFromLibrary`; Vela
+  still owns the button, `/` and mobile stop, but never constructs its picker.
+- The `LuxAlgo` tab of `IndicatorWindow` reads the bundled catalog
+  (`src/data/luxalgoCatalog.json`, 845 indicators, refresh with
+  `npm run library:catalog`). It renders preview cards through Vela's public
+  image-resizing proxy. `Add` fetches the full Pine source through the sidecar
+  (`/library/source`, 24 h in-memory cache), stores it in the local library with
+  the canonical Library URL in notes, and attaches it as its own external
+  indicator (`library-<codeId>`). Several Library scripts can sit on one chart
+  and the tab's own Pine script is not replaced. Sources are fetched on demand,
+  never bulk-copied into the repo.
 - `useMarketRows` calls `fetchMarketRows` every `settings.refreshSeconds` for
   the checked venues, in parallel through `Promise.allSettled`. Rows come from
   the sidecar only; its `VenueHub` owns one adapter, ticker/bars caches and
@@ -267,9 +284,24 @@ update and the imperative Apply happen together.
 **Saved indicators are picker-only manifest entries.** The library stores raw
 `.pine` source only, never transpiled output. The host maps each saved item to
 `{ enabled: false, category: 'My scripts', language: 'pine' }` and refreshes the
-picker through `ws.setIndicators(...)`. `addSavedIndicator` looks up the index in
+manifest through `ws.setIndicators(...)`. `addSavedIndicator` looks up the index in
 `cell.libraryRows()` by category and name, then calls `cell.addFromLibrary(index)`;
 keep that lookup aligned with Vela's row order (natives first, manifest after).
+
+**The indicator window is app-owned.** `lib/velaIndicators.ts` registers a
+topbar action under the built-in `'indicators'` id; this replaces Vela's native
+picker, including its `/` and mobile entry points. The action only calls a
+bridge into `App`, which renders `IndicatorWindow`. The window reads the active
+cell's `libraryRows()`/`onChartRows()` (mapped to `IndicatorRow`) and adds via
+`addFromLibrary(index)`. Do not build the native picker a second time, and keep
+the original row indices: `libraryRows()` is the index space `addFromLibrary`
+expects.
+
+**LuxAlgo Library imports keep their licence.** The source comes verbatim from
+the same public endpoint Vela's picker uses, including its header (MPL 2.0 or
+CC BY-NC-SA 4.0). Never strip the header or relicense it; keep the Library page
+URL in the saved indicator's notes. The bundled catalog holds display metadata
+only.
 
 **The legend source action uses Vela's public contribution seam.** The host
 registers one `registerLegendAction` for Pine indicators and forwards
@@ -283,6 +315,9 @@ time and portals the React content into the bodies Vela hands `mount`. Open them
 with `openVelaPanel(...)`; the dock's open panel and width live in the Vela
 workspace document, not in `screener.dock.*`. Do not reach into panel internals.
 `screener.panels.welcomed` only controls the one-time Screener default.
+Vela's workspace splitter strips carry an inline `z-index: 30`, above the
+floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
+maximized Pine editor keeps the pointer. Keep that override.
 
 **Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
 `Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,
@@ -314,6 +349,12 @@ serve natively (`45`, `180`) are unsupported until the sidecar builds them.
 **PineTS output is the contract.** `extractPlots` skips internal `__*` plots and takes
 the last finite numeric value. Keep the cap (12) and the table's dynamic column
 merge stable. Plot keys are the column identity; titles are display only.
+
+**Vela only fills between series.** `hline()` becomes a `PriceLine`, so a
+`fill(hline1, hline2)` (or `fill(hline, plot)`) would be dropped. Vela-pinets
+`toScene` gives each filled hline a hidden constant series (`visible: false`,
+all display surfaces off) as its anchor while keeping the visible price line.
+Do not remove that mapping when touching the scene transform.
 
 **The table is fixed-layout and horizontally scrollable.** Column definitions feed
 both `<colgroup>` and the header/cell renderer. New columns must be added to the
@@ -349,6 +390,9 @@ replace the data boundary cleanly.
 Vela-pinets and PineTS are AGPL-3.0. This app is intended for private use;
 distributing or hosting it triggers AGPL obligations or requires a commercial
 license. Do not remove attribution or relicence dependencies casually.
+LuxAlgo Library scripts keep their own licence (usually CC BY-NC-SA 4.0) and
+are saved with the header intact; private use is fine, redistribution is not
+without meeting those terms.
 
 **No secrets.** The app uses public endpoints only. Never add API keys to the client
 or commit `.env`; `.env*` is gitignored.
@@ -419,9 +463,15 @@ Useful browser probes:
 - Applying the RSI preset and scanning two venues adds RSI / Oversold /
   Overbought columns to both venues' rows; one venue's failure leaves the other
   values intact.
-- Saving a script adds it to the Library and to Vela's `Indicators → My scripts`;
-  adding it from the picker changes the on-chart count, and both the library and
-  the picker entry survive a reload.
+- Saving a script adds it to the Library and to the custom `Indicators` window
+  under `My scripts`; adding it there changes the on-chart count, and both the
+  library and the applied entry survive a reload. The native `Indicators` button
+  opens this window, not Vela's picker; `/` opens it too.
+- The `LuxAlgo` tab lists the bundled catalog, search filters it, and `Add`
+  loads the full source: the on-chart count grows, the row shows `On chart`, and
+  the script appears in `My scripts` with its Library URL in notes. A large
+  script (SMC, ~50 KB) adds the same way. After reload the saved source remains
+  in the library.
 - The Pine editor renders a non-empty `.cm-editor` with a gutter, highlighted
   tokens, and the resolved editor background from the active theme.
 - The topbar hamburger opens `File / View / Window / Help`; File and View actions
@@ -534,11 +584,13 @@ indicators. Its docs are at <https://docs.luxalgo.com/developers/pinets>:
 - Using PineTS with Vela charts: <https://docs.luxalgo.com/developers/pinets/using-within-charts>
 
 The LLM index is <https://docs.luxalgo.com/llms.mdx/pinets/content.md>. The app
-uses `@luxalgo/vela-pinets` (0.3.2) and `pinets`; the installed packages are the
-source of truth for the exact API. PineTS runs scripts over closed bars in
-`scan.worker.ts`; do not reimplement Pine semantics in app code. PineTS and
-Vela-PineTS are AGPL-3.0: keep the attribution and do not copy their code into
-this repo without checking the license.
+uses `@luxalgo/vela-pinets` and `pinets`; the installed package is the baseline,
+but Vite and `tsconfig` resolve the addon to the local `../Vela-pinets/src`
+checkout (the `inline-worker:` import is bundled by the small plugin in
+`vite.config.ts`). PineTS runs scripts over closed bars in `scan.worker.ts`; do
+not reimplement Pine semantics in app code. PineTS and Vela-PineTS are
+AGPL-3.0: keep the attribution and do not copy their code into this repo
+without checking the license.
 
 ---
 
