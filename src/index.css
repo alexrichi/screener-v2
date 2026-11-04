@@ -219,16 +219,112 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   z-index: 20 !important;
 }
 
+/* The AI toggle sits at the top of Vela's shared drawing toolbar; the widget
+   attachment keeps it in place when the toolbar is rebuilt. */
+.screener-ai-rail {
+  position: relative;
+  display: flex;
+  width: 36px;
+  height: 44px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin: 4px auto 10px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--vela-fg, #d1d4dc) 16%, transparent);
+  border-radius: 7px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--vela-bg, #0b1220) 84%, #fff 16%) 0%,
+    color-mix(in srgb, var(--vela-bg, #0b1220) 92%, #000 8%) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 14%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 35%, transparent),
+    0 2px 5px color-mix(in srgb, #000 45%, transparent);
+  color: var(--vela-fg-muted, #8b93a7);
+  cursor: pointer;
+  transition:
+    color 90ms ease,
+    border-color 90ms ease,
+    box-shadow 90ms ease,
+    transform 90ms ease;
+}
+
+.screener-ai-rail:hover {
+  color: var(--vela-fg, #d1d4dc);
+  border-color: color-mix(in srgb, var(--vela-fg, #d1d4dc) 26%, transparent);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 20%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 35%, transparent),
+    0 4px 8px color-mix(in srgb, #000 48%, transparent);
+}
+
+.screener-ai-rail:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 5px color-mix(in srgb, #000 45%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px color-mix(in srgb, #000 40%, transparent);
+}
+
+.screener-ai-rail[data-active='true'] {
+  color: var(--primary-foreground);
+  border-color: color-mix(in srgb, var(--primary) 65%, #fff 20%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--primary) 80%, #fff 20%) 0%,
+    color-mix(in srgb, var(--primary) 82%, #000 18%) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 25%, transparent),
+    0 2px 8px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+.screener-ai-rail-icon {
+  display: flex;
+}
+
+.screener-ai-rail-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.screener-ai-rail-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+
+.screener-ai-rail::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: -10px;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
 /* The app's Layouts action is the only text action in the right cluster. Draw
-   hairlines in the neighbouring 4px gaps, and one before the Screener panel. */
+   hairlines in the neighbouring 4px gaps, before the Screener panel and before
+   the screenshot button. */
 .vela-widget-topbar .vela-widget-action,
-.vela-widget-topbar button[aria-label='Screener'] {
+.vela-widget-topbar button[aria-label='Screener'],
+.vela-widget-topbar button[aria-label='Download screenshot'] {
   position: relative;
 }
 
 .vela-widget-topbar .vela-widget-action::before,
 .vela-widget-topbar .vela-widget-action::after,
-.vela-widget-topbar button[aria-label='Screener']::before {
+.vela-widget-topbar button[aria-label='Screener']::before,
+.vela-widget-topbar button[aria-label='Download screenshot']::before {
   content: '';
   position: absolute;
   top: 7px;
@@ -246,7 +342,8 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   right: -2px;
 }
 
-.vela-widget-topbar button[aria-label='Screener']::before {
+.vela-widget-topbar button[aria-label='Screener']::before,
+.vela-widget-topbar button[aria-label='Download screenshot']::before {
   left: -2px;
 }
 

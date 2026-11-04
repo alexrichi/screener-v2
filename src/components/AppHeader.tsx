@@ -8,7 +8,6 @@ import {
   RefreshCw,
   Search,
   Settings,
-  Sparkles,
   Sun,
   X,
 } from 'lucide-react';
@@ -46,7 +45,6 @@ interface Props {
   aiOpen: boolean;
   /** Clamped sidebar width; when open it also offsets the tab strip. */
   aiWidth: number;
-  onToggleAi: () => void;
 }
 
 export function AppHeader({
@@ -65,7 +63,6 @@ export function AppHeader({
   onOpenSettings,
   aiOpen,
   aiWidth,
-  onToggleAi,
 }: Props) {
   const { theme, toggleTheme } = useTheme();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -453,13 +450,6 @@ export function AppHeader({
         </span>
         <IconButton label="Refresh markets" onClick={onRefresh} disabled={loading}>
           <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
-        </IconButton>
-        <IconButton
-          label={aiOpen ? 'Hide AI' : 'Show AI'}
-          onClick={onToggleAi}
-          className={aiOpen ? 'bg-primary-soft text-primary' : undefined}
-        >
-          <Sparkles className="size-3.5" />
         </IconButton>
         <IconButton
           label={theme === 'dark' ? 'Light theme' : 'Dark theme'}

@@ -39,6 +39,7 @@ import {
   type LayoutPine,
 } from './lib/layouts';
 import { setLayoutsActionLabel, setLayoutsBridge } from './lib/velaLayouts';
+import { setAiBridge, setAiRailState } from './lib/velaAi';
 import {
   VelaWorkspaceHost,
   type ScriptApplyReport,
@@ -340,6 +341,7 @@ export default function App() {
   const layoutImportRef = useRef<HTMLInputElement | null>(null);
   const [aiOpen, setAiOpen] = usePersistedState<boolean>('screener.ai.open', false, isBoolean);
   const [aiWidth, setAiWidth] = usePersistedState<number>('screener.ai.width', 380, isNumber);
+  const toggleAi = useCallback(() => setAiOpen((open) => !open), [setAiOpen]);
   const [libraryQuery, setLibraryQuery] = useState('');
   const [libraryReveal, setLibraryReveal] = useState<{ id: string; nonce: number } | null>(
     null,
@@ -1416,6 +1418,15 @@ export default function App() {
     refreshAiStatus();
   }, [aiOpen, refreshAiStatus]);
 
+  useEffect(() => {
+    setAiRailState(aiOpen);
+  }, [aiOpen]);
+
+  useEffect(() => {
+    setAiBridge(toggleAi);
+    return () => setAiBridge(null);
+  }, [toggleAi]);
+
   const [aiAgentId, setAiAgentId] = usePersistedState<string>(
     'screener.ai.agent',
     'assistant',
@@ -1575,7 +1586,6 @@ export default function App() {
         }}
         aiOpen={aiOpen}
         aiWidth={aiSidebarWidth}
-        onToggleAi={() => setAiOpen((open) => !open)}
       />
 
       <main className="flex min-h-0 flex-1 overflow-hidden">

@@ -143,7 +143,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   whole chart configuration, under a name and reapplies it later. Templates stay
   in localStorage.
 - AI sidebar on the left, outside the Vela dock, so it stays visible next to the
-  chart and the Pine editor. Chats are kept until deleted, and accept images,
+  chart and the Pine editor. Its toggle sits at the top of the chart's left
+  drawing toolbar, above the cursor tool. Chats are kept until deleted, and accept images,
   text files and dictation. The assistant reads the script, rewrites the editor
   buffer, runs a debug pass on the active chart (errors, warnings, plot values,
   vars) and receives the chart as an image when `Chart` is on. Agent presets

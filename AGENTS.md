@@ -125,6 +125,7 @@ src/
     favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
     universe.ts                   per-venue trim, scan target grouping, favorites key
+    velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
     velaLayouts.ts                topbar Layouts action and popover bridge
     velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
     velaPanels.tsx                Vela side-panel registration and React portal bridge
@@ -293,9 +294,10 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   one JSON file and no candle data is stored. Saving is explicit; the tab itself
   still autosaves through Vela. The maximize actions are leftmost in the chart
   toolbar's right group (`order: -200`); `Layouts` follows (`order: -100`).
-  `index.css` draws topbar hairlines around the Layouts action (`.vela-widget-action`)
-  and before the Screener panel (`aria-label='Screener'`); renaming either needs a
-  CSS update.
+  `index.css` draws topbar hairlines around the Layouts action (`.vela-widget-action`),
+  before the Screener panel (`aria-label='Screener'`) and before the screenshot
+  button (`aria-label='Download screenshot'`); renaming any of them needs a CSS
+  update.
 
 ---
 
@@ -416,6 +418,15 @@ chart image is attached as a `file` part of the **user** message, not as a tool
 result: the OpenAI-compatible adapter drops
 file parts from `role: 'tool'` messages, so a screenshot tool would silently
 never reach the model.
+
+**The AI rail toggle is an app attachment.** `lib/velaAi.ts` registers a widget
+attachment that inserts `.screener-ai-rail` at the top of Vela's shared drawing
+toolbar (`.vela-dtb`) and reattaches it when the toolbar is rebuilt; Vela has no
+public left-rail action slot. The app header has no AI button. The button calls
+`setAiBridge(toggleAi)` and paints from `setAiRailState(aiOpen)`. The rail is a
+raised 36×44 tile with the sparkles mark and an `AI` label; a hairline under it
+separates the toggle from the drawing tools. Collapsing the drawing toolbar
+hides the rail with the tools. Re-check the `.vela-dtb` class on Vela upgrades.
 
 **Attachments and dictation have provider limits.** Chat providers accept images,
 not arbitrary files: text-like attachments (`.pine`, `.txt`, `.md`, `.csv`,
@@ -678,8 +689,10 @@ Useful browser probes:
   saved item in the Library panel.
 - The Pine editor renders a non-empty `.cm-editor` with a gutter, highlighted
   tokens, and the resolved editor background from the active theme.
-- The `AI` button opens a left sidebar that compresses the chart (the chart host
-  refills history), the width survives reload, and closing it restores the chart.
+- The AI toggle sits at the top of the left drawing toolbar above `Cursor`;
+  clicking it opens the sidebar (the chart host refills history), flips to
+  `Hide AI` with the active highlight, and closing restores the chart. The width
+  survives reload; collapsing the drawing toolbar hides the rail with the tools.
   With the mock model, `get_script` / `apply_script` / `run_script` /
   `get_chart_context` run end to end: the editor buffer becomes the returned
   source, `run_script` returns `{ ok, live, worker }` with the full
