@@ -67,12 +67,15 @@ export function PopoverContent({
   side = 'bottom',
   align = 'start',
   sideOffset = 6,
+  anchor,
 }: {
   children: ReactNode;
   className?: string;
   side?: 'top' | 'bottom' | 'left' | 'right';
   align?: 'start' | 'center' | 'end';
   sideOffset?: number;
+  /** Position against an element outside this tree, e.g. a Vela topbar button. */
+  anchor?: Element | null;
 }) {
   return (
     <Popover.Portal>
@@ -80,6 +83,7 @@ export function PopoverContent({
         side={side}
         align={align}
         sideOffset={sideOffset}
+        anchor={anchor}
         className="z-50 outline-none"
       >
         <Popover.Popup

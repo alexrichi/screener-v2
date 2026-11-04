@@ -4,8 +4,8 @@ import {
   useImperativeHandle,
   useRef,
 } from 'react';
-import { VelaWorkspace } from '@luxalgo/vela/workspace';
-import type { ChartCell } from '@luxalgo/vela/workspace';
+import { sanitizeState, VelaWorkspace } from '@luxalgo/vela/workspace';
+import type { ChartCell, WorkspaceStorage } from '@luxalgo/vela/workspace';
 import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
 import { PineWorkerEngine } from '@luxalgo/vela-pinets';
 import type {
@@ -16,6 +16,7 @@ import type {
   WorkspaceTab,
 } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
+import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab } from '../lib/velaPanels';
@@ -39,6 +40,12 @@ export interface ScriptApplyReport {
 
 export interface VelaWorkspaceHandle {
   applyScript: (script: string, name: string, allCells: boolean) => Promise<ScriptApplyReport>;
+  /** Snapshot the live workspace for a named layout. */
+  captureLayout: () => LayoutCapture | null;
+  /** Replace the workspace from a saved layout and reapply its script. */
+  applyLayout: (layout: { state: unknown; pine?: LayoutPine }) => Promise<LayoutApplyReport>;
+  /** Re-register the topbar action labels after the layout name changes. */
+  refreshTopbar: () => void;
   addSavedIndicator: (script: SavedScript, allCells: boolean) => number;
   removeScript: () => void;
   indicatorRows: () => IndicatorRow[];
@@ -62,6 +69,8 @@ interface Props {
   /** WebGL cap for this workspace; lower when several tabs stay mounted. */
   maxWebglCells: number;
   savedScripts: SavedScript[];
+  /** Saved layout state for a fresh tab; ignored once the tab has its own doc. */
+  layoutSeed?: unknown;
   onShowSource: (source: string) => void;
   onIndicatorsChange?: () => void;
   onMarketChange: (
@@ -102,6 +111,47 @@ registerLegendAction({
     if (indicator.source) showSourceHandler?.(indicator.source);
   },
 });
+
+/**
+ * Boot a tab from a saved layout only while it has no document of its own.
+ * After the first autosave (or on reload) the tab's document wins, so edits are
+ * never clobbered by the seed.
+ */
+function seededStorage(key: string, seed: unknown): WorkspaceStorage {
+  let seeded = false;
+  return {
+    get(requested) {
+      if (requested !== key) return null;
+      try {
+        const existing = localStorage.getItem(requested);
+        if (existing) return existing;
+      } catch {
+        return null;
+      }
+      if (seeded) return null;
+      seeded = true;
+      try {
+        return JSON.stringify(seed);
+      } catch {
+        return null;
+      }
+    },
+    set(requested, value) {
+      try {
+        localStorage.setItem(requested, value);
+      } catch {
+        /* a full store keeps the workspace in memory */
+      }
+    },
+    remove(requested) {
+      try {
+        localStorage.removeItem(requested);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
 
 const EXTRA_SYMBOLS = [
   'SOLUSDT',
@@ -450,6 +500,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       theme,
       maxWebglCells,
       savedScripts,
+      layoutSeed,
       onShowSource,
       onIndicatorsChange,
       onMarketChange,
@@ -504,6 +555,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           timeframe: tab.timeframe,
         };
       });
+      const persistKey = `screener-v2:ws:${tab.id}`;
       const ws = (() => {
         setMountingVelaTab(tab.id);
         try {
@@ -522,7 +574,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             live: true,
             theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
             timezone: 'UTC',
-            persist: `screener-v2:ws:${tab.id}`,
+            persist: persistKey,
+            ...(layoutSeed !== undefined
+              ? { storage: seededStorage(persistKey, layoutSeed) }
+              : {}),
             drawingToolbar: true,
             maxWebglCells,
           });
@@ -658,6 +713,86 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           const report = await applyToCells(ws, script, name, allCells);
           if (report.count > 0) lastAppliedRef.current = script;
           return report;
+        },
+        captureLayout() {
+          const ws = wsRef.current;
+          if (!ws) return null;
+          try {
+            const cell = ws.active;
+            const other = ws.cells().find((item) => item.id !== cell.id);
+            // Shared preference sets are the user's, not the layout's: leaving
+            // them out keeps a layout from rewriting the drawing/timeframe stars.
+            const {
+              favorites: _favorites,
+              timeframeFavorites: _timeframeFavorites,
+              ...state
+            } = ws.getState();
+            return {
+              state,
+              layout: ws.layout.id,
+              symbol: spotSymbol(cell.symbol),
+              timeframe: cell.timeframe,
+              altSymbol: other ? spotSymbol(other.symbol) : tab.altSymbol,
+            };
+          } catch (cause) {
+            console.warn('[screener] could not capture the layout', cause);
+            return null;
+          }
+        },
+        async applyLayout(layout: { state: unknown; pine?: LayoutPine }) {
+          const ws = wsRef.current;
+          const empty: LayoutApplyReport = {
+            ok: false,
+            error: 'The chart is not ready yet',
+            symbol: tab.symbol,
+            timeframe: tab.timeframe,
+            layout: tab.layout,
+            altSymbol: tab.altSymbol,
+            cells: 0,
+          };
+          if (!ws) return empty;
+          const state = sanitizeState(layout.state);
+          if (!state) return { ...empty, error: 'This layout cannot be read' };
+          try {
+            ws.applyState(state);
+          } catch (cause) {
+            return { ...empty, error: cause instanceof Error ? cause.message : String(cause) };
+          }
+          // The applied script is app-owned and absent from the document; drop
+          // the previous one, then reapply the snapshot's script if it has one.
+          for (const cell of ws.cells()) {
+            cell.instances.find((item) => item.id === PINE_ID)?.handle?.remove();
+          }
+          lastAppliedRef.current = null;
+          let pineError: string | null = null;
+          if (layout.pine) {
+            const report = await applyToCells(
+              ws,
+              layout.pine.script,
+              layout.pine.name,
+              layout.pine.all,
+            );
+            if (report.count > 0) lastAppliedRef.current = layout.pine.script;
+            pineError = report.errors[0] ?? null;
+          }
+          try {
+            const cell = ws.active;
+            const other = ws.cells().find((item) => item.id !== cell.id);
+            return {
+              ok: pineError === null,
+              error: pineError,
+              symbol: spotSymbol(cell.symbol),
+              timeframe: cell.timeframe,
+              layout: ws.layout.id,
+              altSymbol: other ? spotSymbol(other.symbol) : '',
+              cells: ws.cells().length,
+            };
+          } catch (cause) {
+            return { ...empty, error: cause instanceof Error ? cause.message : String(cause) };
+          }
+        },
+        refreshTopbar() {
+          wsRef.current?.refreshActions();
         },
         addSavedIndicator(script: SavedScript, allCells: boolean) {
           const ws = wsRef.current;

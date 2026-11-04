@@ -284,6 +284,13 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   folded into the prompt; images ride as `file` parts of the user message.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
+- Named layouts live at `screener.layouts.v1` (`{ version: 1, items }`). A layout
+  is a full `ws.getState()` snapshot (grid, cells, markets, indicators, drawings,
+  dock) plus the app-owned applied Pine script. New tabs from a layout boot from
+  a seeded `VelaStorage` only while they have no document of their own. The
+  `Layouts` topbar action (`lib/velaLayouts.ts`) manages them; import/export is
+  one JSON file and no candle data is stored. Saving is explicit; the tab itself
+  still autosaves through Vela.
 
 ---
 
@@ -295,12 +302,24 @@ chart. Keep the picker enabled: the default is `'1'`. Layout changes come from
 Vela's own chart control; the host listens to `layout:changed` and writes the
 active layout back to the tab. Do not add a second selector to the app header.
 
+**Named layouts use Vela's state document.** `captureLayout` calls
+`ws.getState()`; `applyLayout` gates the document through `sanitizeState` and
+calls `ws.applyState()`. The applied `screener-pine` is external and absent from
+the document, so applying removes it and reapplies the snapshot's script. The
+`Layouts` action is registered with `align: 'right', order: -100`, so it is the
+first action in the right cluster and Maximize (order 0) follows it. Widget
+actions only target the topbar and context menus (`WidgetActionTarget`); the
+bottom bar is internal, so do not move Maximize there without a Vela API. A
+seeded tab uses a `VelaStorage` that returns the seed only when no tab document
+exists; after the first autosave (or on reload) its own document wins.
+
 **Cell maximize is transient.** The app registers `screener-maximize` /
 `screener-restore` topbar widget actions (`lib/velaMaximize.ts`) in the `actions`
-slot, before `Alerts`, bridged to `ws.maximizeCell(active.id)` or `null`. They
-are hidden on a single-cell grid and refreshed on `cell:maximized` and
-`layout:changed`. Siblings stay alive underneath; the state is never persisted,
-and a layout switch or state restore clears it.
+slot, after the `Layouts` action and before `Alerts`, bridged to
+`ws.maximizeCell(active.id)` or `null`. They are hidden on a single-cell grid and
+refreshed on `cell:maximized` and `layout:changed`. Siblings stay alive
+underneath; the state is never persisted, and a layout switch or state restore
+clears it.
 
 **Seed cells, never pre-collapse.** Create the workspace directly with the tab's
 layout and pass seeds for `main`, `alt`, and extra slots. Expanding later hydrates
@@ -633,6 +652,15 @@ Useful browser probes:
   the error while the previous code keeps running. `All` adds or updates every
   cell. The Pine developer AI calls `edit_code` then `apply_live` and reports
   the live result; `Chart analyst` gets none of the three editing tools.
+- The `Layouts` toolbar action sits left of Maximize and shows the active tab's
+  linked layout name (or `Layouts`). Saving a 2×2 workspace creates an item in
+  `screener.layouts.v1` and renames the action. A row click loads the layout into
+  the current tab (grid, markets, indicators, drawings, script); `Open in new
+  tab` seeds a new tab with the same state and survives a reload with its own
+  edits; `Update` captures the live state; rename, duplicate and delete work;
+  `Export all` writes `screener-layouts.json` and `Import` merges it with a
+  unique name. A full localStorage reports the quota error instead of losing the
+  save.
 - The `LuxAlgo` tab lists the bundled catalog, search filters it, and `Add`
   loads the full source: the on-chart count grows, the row shows `On chart`, and
   the script appears in `My scripts` with its Library URL in notes. A large

@@ -124,6 +124,10 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   search, and lint. Apply a script to the active chart or all charts in the
   workspace; an on-chart script updates in place and keeps its inputs and
   settings.
+- Named layouts: save the full workspace (grid, markets, indicators, drawings,
+  applied script), open it in a new tab or load it here, update, rename,
+  duplicate, and import or export JSON. The `Layouts` button sits in the chart
+  toolbar left of Maximize.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
   delete scripts; export or import `.pine` files and the JSON library. Saved
   scripts also appear in the app's `Indicators` window under `My scripts`, above

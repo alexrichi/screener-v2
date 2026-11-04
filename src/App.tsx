@@ -18,7 +18,27 @@ import { LibraryPanel } from './components/LibraryPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
+import { LayoutsDialog } from './components/LayoutsDialog';
+import { LayoutsMenu } from './components/LayoutsMenu';
+import { LayoutNameDialog, type LayoutNameRequest } from './components/LayoutNameDialog';
 import { DEFAULT_VIEW, isScreenerView } from './lib/view';
+import { layoutLabel } from './lib/format';
+import { symbolLabel } from './lib/binance';
+import {
+  MAX_LAYOUTS,
+  createLayout,
+  duplicateLayout,
+  layoutsJson,
+  parseLayoutsFile,
+  persistLayouts,
+  readLayouts,
+  uniqueLayoutName,
+  updateLayout,
+  type LayoutItem,
+  type LayoutLibrary,
+  type LayoutPine,
+} from './lib/layouts';
+import { setLayoutsActionLabel, setLayoutsBridge } from './lib/velaLayouts';
 import {
   VelaWorkspaceHost,
   type ScriptApplyReport,
@@ -129,7 +149,8 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
     isString(tab.altSymbol) &&
     (tab.pineScript === undefined || isString(tab.pineScript)) &&
     (tab.pineName === undefined || isString(tab.pineName)) &&
-    (tab.pineAll === undefined || isBoolean(tab.pineAll))
+    (tab.pineAll === undefined || isBoolean(tab.pineAll)) &&
+    (tab.layoutId === undefined || isString(tab.layoutId))
   );
 }
 
@@ -153,6 +174,45 @@ function makeTab(symbol: string, layout: string, timeframe = '15'): WorkspaceTab
     layout,
     altSymbol: altFor(symbol),
   };
+}
+
+function tabPine(tab: WorkspaceTab): LayoutPine | undefined {
+  if (!tab.pineScript) return undefined;
+  return {
+    script: tab.pineScript,
+    name: tab.pineName ?? 'Screener Pine',
+    all: tab.pineAll ?? false,
+  };
+}
+
+const TIMEFRAME_NAMES: Record<string, string> = {
+  '1': '1m',
+  '3': '3m',
+  '5': '5m',
+  '15': '15m',
+  '30': '30m',
+  '60': '1h',
+  '120': '2h',
+  '240': '4h',
+  '360': '6h',
+  '720': '12h',
+  D: '1D',
+  W: '1W',
+  M: '1M',
+};
+
+function defaultLayoutName(tab: WorkspaceTab): string {
+  const timeframe = TIMEFRAME_NAMES[tab.timeframe] ?? tab.timeframe;
+  return `${symbolLabel(tab.symbol)} ${layoutLabel(tab.layout)} · ${timeframe}`;
+}
+
+function layoutFileName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `layout-${slug || 'workspace'}.json`;
 }
 
 const NEW_SCRIPT = `//@version=6
@@ -270,6 +330,14 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<'screener' | 'ai'>('screener');
   const [indicatorOpen, setIndicatorOpen] = useState(false);
   const [indicatorRows, setIndicatorRows] = useState<IndicatorRow[]>([]);
+  const [layouts, setLayouts] = useState<LayoutLibrary>(() => readLayouts());
+  const [layoutsMenuOpen, setLayoutsMenuOpen] = useState(false);
+  const [layoutsAnchor, setLayoutsAnchor] = useState<HTMLElement | null>(null);
+  const [layoutsDialogOpen, setLayoutsDialogOpen] = useState(false);
+  const [layoutNameRequest, setLayoutNameRequest] = useState<LayoutNameRequest | null>(null);
+  const [layoutNameError, setLayoutNameError] = useState<string | null>(null);
+  const [layoutDelete, setLayoutDelete] = useState<LayoutItem | null>(null);
+  const layoutImportRef = useRef<HTMLInputElement | null>(null);
   const [aiOpen, setAiOpen] = usePersistedState<boolean>('screener.ai.open', false, isBoolean);
   const [aiWidth, setAiWidth] = usePersistedState<number>('screener.ai.width', 380, isNumber);
   const [libraryQuery, setLibraryQuery] = useState('');
@@ -354,6 +422,9 @@ export default function App() {
   );
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
+  const activeLayout = activeTab?.layoutId
+    ? (layouts.items.find((item) => item.id === activeTab.layoutId) ?? null)
+    : null;
   const currentSaved =
     library.items.find((item) => item.id === currentSavedId) ?? null;
   const dirty = currentSaved ? currentSaved.source !== script : false;
@@ -399,6 +470,28 @@ export default function App() {
     setIndicatorWindowBridge(openIndicators);
     return () => setIndicatorWindowBridge(null);
   }, [openIndicators]);
+
+  useEffect(() => {
+    setLayoutsBridge((anchor) => {
+      if (anchor) {
+        setLayoutsAnchor(anchor);
+        setLayoutsMenuOpen(true);
+      } else {
+        setLayoutsDialogOpen(true);
+      }
+    });
+    return () => setLayoutsBridge(null);
+  }, []);
+
+  useEffect(() => {
+    setLayoutsMenuOpen(false);
+  }, [activeTabId]);
+
+  // The topbar action is global: keep its label on the active tab's layout.
+  useEffect(() => {
+    setLayoutsActionLabel(activeLayout?.name ?? null);
+    activeWorkspace()?.refreshTopbar();
+  }, [activeLayout?.name, activeWorkspace, activeTabId]);
 
   useEffect(() => {
     setIndicatorOpen(false);
@@ -770,6 +863,296 @@ export default function App() {
     },
     [applyScriptToChart],
   );
+
+  const saveLayoutsStore = useCallback((next: LayoutLibrary): boolean => {
+    const error = persistLayouts(next);
+    if (error) {
+      toast.error('Layouts could not be saved', { description: error });
+      return false;
+    }
+    setLayouts(next);
+    return true;
+  }, []);
+
+  const closeLayouts = useCallback(() => {
+    setLayoutsMenuOpen(false);
+    setLayoutsDialogOpen(false);
+  }, []);
+
+  const openLayoutName = useCallback((request: LayoutNameRequest) => {
+    setLayoutNameError(null);
+    setLayoutNameRequest(request);
+  }, []);
+
+  const openSaveLayout = useCallback(() => {
+    if (!activeTab) {
+      toast.error('No workspace is open');
+      return;
+    }
+    closeLayouts();
+    openLayoutName({
+      mode: 'save',
+      name: uniqueLayoutName(layouts.items, defaultLayoutName(activeTab)),
+    });
+  }, [activeTab, closeLayouts, layouts.items, openLayoutName]);
+
+  const openSaveAsLayout = useCallback(() => {
+    if (!activeTab) {
+      toast.error('No workspace is open');
+      return;
+    }
+    closeLayouts();
+    openLayoutName({
+      mode: 'saveAs',
+      name: uniqueLayoutName(
+        layouts.items,
+        activeLayout ? `${activeLayout.name} copy` : defaultLayoutName(activeTab),
+      ),
+    });
+  }, [activeLayout, activeTab, closeLayouts, layouts.items, openLayoutName]);
+
+  const openRenameLayout = useCallback(
+    (item: LayoutItem) => {
+      closeLayouts();
+      openLayoutName({ mode: 'rename', id: item.id, name: item.name });
+    },
+    [closeLayouts, openLayoutName],
+  );
+
+  const submitLayoutName = useCallback(
+    (name: string) => {
+      const request = layoutNameRequest;
+      if (!request) return;
+      const trimmed = name.trim();
+      if (!trimmed) {
+        setLayoutNameError('Enter a name');
+        return;
+      }
+      const exceptId = request.mode === 'rename' ? request.id : undefined;
+      if (
+        layouts.items.some(
+          (item) => item.id !== exceptId && item.name.toLowerCase() === trimmed.toLowerCase(),
+        )
+      ) {
+        setLayoutNameError('That name is already used');
+        return;
+      }
+      if (request.mode === 'rename') {
+        if (!request.id) return;
+        const next: LayoutLibrary = {
+          version: 1,
+          items: layouts.items.map((item) =>
+            item.id === request.id ? { ...item, name: trimmed, updatedAt: Date.now() } : item,
+          ),
+        };
+        if (!saveLayoutsStore(next)) return;
+        setLayoutNameRequest(null);
+        toast.success('Layout renamed');
+        return;
+      }
+      const tab = activeTab;
+      const handle = activeWorkspace();
+      if (!tab || !handle) {
+        setLayoutNameError('No workspace is open');
+        return;
+      }
+      if (layouts.items.length >= MAX_LAYOUTS) {
+        setLayoutNameError(`You can keep up to ${MAX_LAYOUTS} layouts`);
+        return;
+      }
+      const capture = handle.captureLayout();
+      if (!capture) {
+        setLayoutNameError('The chart is not ready yet');
+        return;
+      }
+      const item = createLayout(trimmed, capture, tabPine(tab));
+      if (!saveLayoutsStore({ version: 1, items: [item, ...layouts.items] })) return;
+      setTabs((prev) =>
+        prev.map((candidate) =>
+          candidate.id === tab.id ? { ...candidate, layoutId: item.id } : candidate,
+        ),
+      );
+      setLayoutNameRequest(null);
+      toast.success(`Saved layout ${item.name}`);
+    },
+    [activeTab, activeWorkspace, layoutNameRequest, layouts.items, saveLayoutsStore, setTabs],
+  );
+
+  const updateActiveLayout = useCallback(() => {
+    const tab = activeTab;
+    const handle = activeWorkspace();
+    const item = activeLayout;
+    if (!tab || !handle || !item) return;
+    const capture = handle.captureLayout();
+    if (!capture) {
+      toast.error('The chart is not ready yet');
+      return;
+    }
+    const next: LayoutLibrary = {
+      version: 1,
+      items: layouts.items.map((candidate) =>
+        candidate.id === item.id ? updateLayout(candidate, capture, tabPine(tab)) : candidate,
+      ),
+    };
+    if (!saveLayoutsStore(next)) return;
+    closeLayouts();
+    toast.success(`Updated ${item.name}`);
+  }, [activeLayout, activeTab, activeWorkspace, closeLayouts, layouts.items, saveLayoutsStore]);
+
+  const applyLayoutItem = useCallback(
+    async (item: LayoutItem) => {
+      const tab = activeTab;
+      const handle = activeWorkspace();
+      closeLayouts();
+      if (!tab || !handle) {
+        toast.error('No workspace is open');
+        return;
+      }
+      const report = await handle.applyLayout({ state: item.state, pine: item.pine });
+      if (report.cells === 0) {
+        toast.error('Layout could not be loaded', {
+          description: report.error ?? 'The workspace rejected it.',
+        });
+        return;
+      }
+      setTabs((prev) =>
+        prev.map((candidate) =>
+          candidate.id === tab.id
+            ? {
+                ...candidate,
+                layoutId: item.id,
+                symbol: report.symbol || candidate.symbol,
+                timeframe: report.timeframe || candidate.timeframe,
+                layout: report.layout || candidate.layout,
+                altSymbol: report.altSymbol || candidate.altSymbol,
+                ...(item.pine
+                  ? {
+                      pineScript: item.pine.script,
+                      pineName: item.pine.name,
+                      pineAll: item.pine.all,
+                    }
+                  : { pineScript: undefined, pineName: undefined, pineAll: undefined }),
+              }
+            : candidate,
+        ),
+      );
+      refreshIndicatorRows();
+      if (report.error) {
+        toast.error('Layout loaded, but its script failed', { description: report.error });
+      } else {
+        toast.success(`Loaded ${item.name}`);
+      }
+    },
+    [activeTab, activeWorkspace, closeLayouts, refreshIndicatorRows, setTabs],
+  );
+
+  const openLayoutTab = useCallback(
+    (item: LayoutItem) => {
+      const tab: WorkspaceTab = {
+        ...makeTab(item.symbol, item.layout, item.timeframe),
+        altSymbol: item.altSymbol || altFor(item.symbol),
+        layoutId: item.id,
+        ...(item.pine
+          ? { pineScript: item.pine.script, pineName: item.pine.name, pineAll: item.pine.all }
+          : {}),
+      };
+      setTabs((prev) => [...prev, tab]);
+      setActiveTabId(tab.id);
+      closeLayouts();
+    },
+    [closeLayouts, setActiveTabId, setTabs],
+  );
+
+  const duplicateLayoutItem = useCallback(
+    (item: LayoutItem) => {
+      if (layouts.items.length >= MAX_LAYOUTS) {
+        toast.error(`You can keep up to ${MAX_LAYOUTS} layouts`);
+        return;
+      }
+      const copy = duplicateLayout(item, uniqueLayoutName(layouts.items, `${item.name} copy`));
+      if (!saveLayoutsStore({ version: 1, items: [copy, ...layouts.items] })) return;
+      closeLayouts();
+      toast.success(`Duplicated ${item.name}`);
+    },
+    [closeLayouts, layouts.items, saveLayoutsStore],
+  );
+
+  const exportLayoutItem = useCallback(
+    (item: LayoutItem) => {
+      downloadText(layoutFileName(item.name), layoutsJson([item]), 'application/json;charset=utf-8');
+      closeLayouts();
+      toast.success(`Exported ${item.name}`);
+    },
+    [closeLayouts],
+  );
+
+  const exportAllLayouts = useCallback(() => {
+    if (layouts.items.length === 0) return;
+    downloadText(
+      'screener-layouts.json',
+      layoutsJson(layouts.items),
+      'application/json;charset=utf-8',
+    );
+    toast.success(`Exported ${layouts.items.length} layouts`);
+  }, [layouts.items]);
+
+  const importLayoutsFile = useCallback(
+    async (file: File) => {
+      try {
+        const parsed = parseLayoutsFile(await file.text());
+        if (parsed.items.length === 0) {
+          toast.error('No layouts found', {
+            description: parsed.skipped
+              ? `${parsed.skipped} entries were not readable.`
+              : 'The file contains no layouts.',
+          });
+          return;
+        }
+        const nextItems = [...layouts.items];
+        let added = 0;
+        for (const incoming of parsed.items) {
+          if (nextItems.length >= MAX_LAYOUTS) break;
+          nextItems.unshift({ ...incoming, name: uniqueLayoutName(nextItems, incoming.name) });
+          added += 1;
+        }
+        if (added === 0) {
+          toast.error('Layout list is full', {
+            description: `Delete an old layout first (max ${MAX_LAYOUTS}).`,
+          });
+          return;
+        }
+        if (!saveLayoutsStore({ version: 1, items: nextItems })) return;
+        const skipped = parsed.skipped + (parsed.items.length - added);
+        toast.success(`Imported ${added} layout${added === 1 ? '' : 's'}`, {
+          description: skipped > 0 ? `${skipped} entries skipped.` : undefined,
+        });
+      } catch (cause) {
+        toast.error('Could not import layouts', {
+          description: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
+    },
+    [layouts.items, saveLayoutsStore],
+  );
+
+  const confirmDeleteLayout = useCallback(() => {
+    const item = layoutDelete;
+    if (!item) return;
+    if (
+      !saveLayoutsStore({
+        version: 1,
+        items: layouts.items.filter((candidate) => candidate.id !== item.id),
+      })
+    ) {
+      return;
+    }
+    setTabs((prev) =>
+      prev.map((tab) => (tab.layoutId === item.id ? { ...tab, layoutId: undefined } : tab)),
+    );
+    setLayoutDelete(null);
+    closeLayouts();
+    toast.success(`Deleted ${item.name}`);
+  }, [closeLayouts, layoutDelete, layouts.items, saveLayoutsStore, setTabs]);
 
   const openSaveAs = useCallback(
     (source = script) => {
@@ -1255,6 +1638,11 @@ export default function App() {
                     Math.floor(8 / Math.max(1, visitedTabs.size)),
                   )}
                   savedScripts={library.items}
+                  layoutSeed={
+                    tab.layoutId
+                      ? layouts.items.find((item) => item.id === tab.layoutId)?.state
+                      : undefined
+                  }
                   onShowSource={showSource}
                   onIndicatorsChange={refreshIndicatorRows}
                   onMarketChange={handleMarketChange}
@@ -1350,6 +1738,102 @@ export default function App() {
           }}
         />
       </main>
+
+      <LayoutsMenu
+        open={layoutsMenuOpen}
+        anchor={layoutsAnchor}
+        onOpenChange={setLayoutsMenuOpen}
+        items={layouts.items}
+        activeId={activeTab?.layoutId ?? null}
+        onApply={(item) => void applyLayoutItem(item)}
+        onOpenTab={openLayoutTab}
+        onRename={openRenameLayout}
+        onDuplicate={duplicateLayoutItem}
+        onExport={exportLayoutItem}
+        onDelete={(item) => {
+          setLayoutDelete(item);
+          closeLayouts();
+        }}
+        onSaveCurrent={openSaveLayout}
+        onUpdate={updateActiveLayout}
+        onSaveAs={openSaveAsLayout}
+        onShowAll={() => {
+          setLayoutsMenuOpen(false);
+          setLayoutsDialogOpen(true);
+        }}
+        onImport={() => {
+          closeLayouts();
+          layoutImportRef.current?.click();
+        }}
+        onExportAll={() => {
+          exportAllLayouts();
+          setLayoutsMenuOpen(false);
+        }}
+      />
+
+      <LayoutsDialog
+        open={layoutsDialogOpen}
+        onOpenChange={setLayoutsDialogOpen}
+        items={layouts.items}
+        activeId={activeTab?.layoutId ?? null}
+        onApply={(item) => void applyLayoutItem(item)}
+        onOpenTab={openLayoutTab}
+        onRename={openRenameLayout}
+        onDuplicate={duplicateLayoutItem}
+        onExport={exportLayoutItem}
+        onDelete={(item) => {
+          setLayoutDelete(item);
+          closeLayouts();
+        }}
+        onImport={() => layoutImportRef.current?.click()}
+        onExportAll={exportAllLayouts}
+      />
+
+      <LayoutNameDialog
+        request={layoutNameRequest}
+        error={layoutNameError}
+        onClose={() => {
+          setLayoutNameRequest(null);
+          setLayoutNameError(null);
+        }}
+        onSubmit={submitLayoutName}
+      />
+
+      <Modal
+        open={layoutDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setLayoutDelete(null);
+        }}
+        title="Delete layout"
+        description={layoutDelete?.name}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setLayoutDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDeleteLayout}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[12px] leading-5 text-muted-foreground">
+          The saved snapshot is removed. Open workspaces keep their current charts.
+        </p>
+      </Modal>
+
+      <input
+        ref={layoutImportRef}
+        type="file"
+        accept=".json,application/json"
+        data-layout-import
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) void importLayoutsFile(file);
+        }}
+      />
 
       <Modal
         open={saveDialog !== null}

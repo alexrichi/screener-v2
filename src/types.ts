@@ -44,6 +44,8 @@ export interface WorkspaceTab {
   pineName?: string;
   /** Whether that script was applied to every cell. */
   pineAll?: boolean;
+  /** Saved layout this tab was opened from or last linked to. */
+  layoutId?: string;
 }
 
 /** The active cell's chart, as reported to the AI sidebar. */
