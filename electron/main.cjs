@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain, session } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -88,6 +88,8 @@ async function ensureSidecar() {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       SIDECAR_PORT: String(SIDECAR_PORT),
+      // Keep the AI settings file next to the app's own state, not in the repo.
+      AI_CONFIG_FILE: path.join(app.getPath('userData'), 'ai.json'),
     },
   });
   ownsSidecar = true;
@@ -337,6 +339,10 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     registerWindowIpc();
     Menu.setApplicationMenu(null);
+    // The only origin is the bundled UI; dictation needs the microphone.
+    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+      callback(permission === 'media');
+    });
     if (!(await ensureSidecar())) {
       app.quit();
       return;

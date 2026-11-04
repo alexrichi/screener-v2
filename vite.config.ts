@@ -45,6 +45,8 @@ export default defineConfig({
     // The local Vela-pinets editor entry has its own CodeMirror and pinets installs.
     // Keep one copy or production bundles two @codemirror/state instances and fails.
     dedupe: [
+      'react',
+      'react-dom',
       '@codemirror/autocomplete',
       '@codemirror/commands',
       '@codemirror/language',
@@ -56,6 +58,8 @@ export default defineConfig({
       'pinets',
     ],
     alias: [
+      // shadcn/assistant-ui registry components use the `@/` project alias.
+      { find: /^@\//, replacement: `${root.replace(/\\/g, '/')}/src/` },
       // Local Vela checkout: edit the chart core and see it live.
       { find: /^@luxalgo\/vela$/, replacement: path.join(velaSrc, 'index.ts') },
       {

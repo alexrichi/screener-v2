@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   FilePlus2,
   Layers,
@@ -37,7 +37,7 @@ interface Props {
   onScanTimeframeChange: (timeframe: string) => void;
   scanBars: number;
   onScanBarsChange: (bars: number) => void;
-  onApply: (script: string, allCells: boolean) => void;
+  onApply: (script: string, allCells: boolean) => Promise<void>;
   onScan: () => void;
   onCancel: () => void;
   scanning: boolean;
@@ -88,6 +88,17 @@ export function PinePanel({
         ? `preset:${presetId}`
         : 'draft';
   const percent = progress && progress.total > 0 ? (progress.done / progress.total) * 100 : 0;
+  const [applying, setApplying] = useState<'active' | 'all' | null>(null);
+
+  const apply = async (scope: 'active' | 'all') => {
+    if (applying) return;
+    setApplying(scope);
+    try {
+      await onApply(script, scope === 'all');
+    } finally {
+      setApplying(null);
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -129,6 +140,28 @@ export function PinePanel({
             ))}
           </optgroup>
         </Select>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => void apply('active')}
+          disabled={!script.trim() || applying !== null}
+          loading={applying === 'active'}
+          title="Apply to the active chart; updates the indicator in place when it is already there"
+        >
+          <Upload className="size-3" />
+          Apply
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => void apply('all')}
+          disabled={!script.trim() || applying !== null}
+          loading={applying === 'all'}
+          title="Apply to every chart in this workspace"
+        >
+          <Layers className="size-3" />
+          All
+        </Button>
         <button
           type="button"
           title="Save indicator"
@@ -191,26 +224,6 @@ export function PinePanel({
           />
           <span className="text-[10px] text-muted-foreground">bars</span>
           <div className="ml-auto flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => onApply(script, false)}
-              disabled={!script.trim()}
-              title="Apply to the active chart"
-            >
-              <Upload className="size-3" />
-              Apply
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => onApply(script, true)}
-              disabled={!script.trim()}
-              title="Apply to every chart in this workspace"
-            >
-              <Layers className="size-3" />
-              All
-            </Button>
             {scanning ? (
               <Button size="sm" variant="secondary" onClick={onCancel}>
                 <Square className="size-3" />

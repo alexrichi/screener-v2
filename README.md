@@ -42,6 +42,45 @@ npm run sidecar
 # http://127.0.0.1:8787/health
 ```
 
+### AI assistant
+
+Open **Settings → AI assistant** and fill in a base URL, model and key. The
+sidecar stores them in your user profile (`%APPDATA%\screener-v2\ai.json`),
+never in the browser, and applies them without a restart. **Clear** removes the
+file and disables the sidebar. Add a Whisper-compatible transcription model to
+enable the microphone.
+
+Any OpenAI-compatible endpoint works: OpenRouter, a local Ollama/LM Studio, or a
+provider API. The model needs tool calling; vision is optional but required for
+questions about the chart image.
+
+The sidebar keeps every chat until you delete it. The default assistant-ui chat
+has `Chat` / `All chats` tabs: history searches titles and chart context, groups
+chats by date, renames inline and deletes. After the first reply it generates a
+short title in the user's language, falling back to the first prompt. The
+built-in chat (the `Columns2` toggle, or `Show app chat` in the chat menu) keeps
+its own history with titles from the first message. Both accept pasted, dropped
+or picked images and text files, dictated prompts and an optional **Chart**
+capture that attaches the active chart image. A run's activity is folded into a
+`Used N …` line: expand it for the Thoughts and tool cards, and expand those
+further for details. The final answer stays visible. The assistant-ui composer
+also picks the model and reasoning level; the agent mode (Assistant, Chart
+analyst or Pine developer) sits just below it and changes the system prompt and
+tools.
+
+Environment variables still work and win over the stored settings:
+
+```bash
+AI_BASE_URL=https://openrouter.ai/api/v1
+AI_MODEL=google/gemini-2.5-flash
+AI_API_KEY=sk-or-...
+AI_TRANSCRIBE_MODEL=whisper-1   # optional, enables the mic
+npm run sidecar
+```
+
+A local server needs no key: `AI_BASE_URL=http://127.0.0.1:11434/v1` with
+`AI_MODEL` set to an installed model.
+
 ## Desktop build
 
 ```bash
@@ -83,7 +122,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   The active list name labels the favorites button in the screener toolbar.
 - Pine editor with presets and CodeMirror highlighting, completions, folding,
   search, and lint. Apply a script to the active chart or all charts in the
-  workspace.
+  workspace; an on-chart script updates in place and keeps its inputs and
+  settings.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
   delete scripts; export or import `.pine` files and the JSON library. Saved
   scripts also appear in the app's `Indicators` window under `My scripts`, above
@@ -94,6 +134,17 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   library with its original licence header, and appears under `My scripts`.
 - Source button on every Pine indicator legend row: opens the exact script Vela
   is running in the editor, and selects the matching saved indicator.
+- Settings templates: the indicator gear dialog and the chart settings dialog
+  have a `Template` menu that saves the current inputs and properties, or the
+  whole chart configuration, under a name and reapplies it later. Templates stay
+  in localStorage.
+- AI sidebar on the left, outside the Vela dock, so it stays visible next to the
+  chart and the Pine editor. Chats are kept until deleted, and accept images,
+  text files and dictation. The assistant reads the script, rewrites the editor
+  buffer, runs a debug pass on the active chart (errors, warnings, plot values,
+  vars) and receives the chart as an image when `Chart` is on. Agent presets
+  switch between general, read-only chart analysis and Pine development. It
+  works against any OpenAI-compatible model; the key stays in the sidecar.
 - Scanner runs the same script over closed candles in a Web Worker and adds the
   last plot values as table columns. It walks the checked venues sequentially;
   one venue's failure does not stop the rest.

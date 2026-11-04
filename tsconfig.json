@@ -8,6 +8,7 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
+      "@/*": ["src/*"],
       "@luxalgo/vela": ["../Vela/src/index.ts"],
       "@luxalgo/vela/workspace": ["../Vela/src/workspace/index.ts"],
       "@luxalgo/vela/plugin": ["../Vela/src/plugin.ts"],

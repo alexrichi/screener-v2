@@ -8,7 +8,13 @@ import { VelaWorkspace } from '@luxalgo/vela/workspace';
 import type { ChartCell } from '@luxalgo/vela/workspace';
 import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
 import { PineWorkerEngine } from '@luxalgo/vela-pinets';
-import type { IndicatorRow, ThemeMode, WorkspaceTab } from '../types';
+import type {
+  ChartContext,
+  IndicatorRow,
+  ScriptRunSummary,
+  ThemeMode,
+  WorkspaceTab,
+} from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
@@ -24,8 +30,15 @@ export interface SavedScript {
   source: string;
 }
 
+export interface ScriptApplyReport {
+  /** Charts that took the new code. */
+  count: number;
+  /** Why a chart rejected it; its previous code keeps running. */
+  errors: string[];
+}
+
 export interface VelaWorkspaceHandle {
-  applyScript: (script: string, name: string, allCells: boolean) => number;
+  applyScript: (script: string, name: string, allCells: boolean) => Promise<ScriptApplyReport>;
   addSavedIndicator: (script: SavedScript, allCells: boolean) => number;
   removeScript: () => void;
   indicatorRows: () => IndicatorRow[];
@@ -33,6 +46,12 @@ export interface VelaWorkspaceHandle {
   setActiveSymbol: (symbol: string) => void;
   setActiveTimeframe: (timeframe: string) => void;
   setLayout: (layout: string) => void;
+  /** Active cell summary for the AI sidebar. */
+  chartContext: () => ChartContext | null;
+  /** PNG data URL of the active cell, or null when the renderer cannot export. */
+  screenshot: () => string | null;
+  /** Run a script on the active chart once and report the run; nothing stays on the chart. */
+  runScript: (source: string) => Promise<ScriptRunSummary>;
   workspace: () => VelaWorkspace | null;
 }
 
@@ -95,22 +114,49 @@ const EXTRA_SYMBOLS = [
   'LTCUSDT',
 ];
 
-function applyToCells(
+async function applyToCells(
   ws: VelaWorkspace,
   script: string,
   name: string,
   allCells: boolean,
-): number {
+): Promise<ScriptApplyReport> {
   const cells = allCells ? ws.cells() : [ws.active];
   let count = 0;
+  const errors: string[] = [];
   for (const cell of cells) {
-    const existing = cell.instances.find((item) => item.id === PINE_ID);
-    existing?.handle?.remove();
-    cell.addExternalIndicator({ id: PINE_ID, name, script, language: 'pine' });
-    count += 1;
+    try {
+      const existing = cell.instances.find((item) => item.id === PINE_ID);
+      if (existing?.handle) {
+        // Same handle, same legend row, same inputs and props. Vela restores the
+        // previous code when the new one fails to compile or run.
+        const result = await existing.handle.updateCode(script);
+        if (result.ok) count += 1;
+        else errors.push(result.error?.message ?? 'The chart rejected the script');
+      } else {
+        cell.addExternalIndicator({ id: PINE_ID, name, script, language: 'pine' });
+        count += 1;
+      }
+    } catch (cause) {
+      errors.push(cause instanceof Error ? cause.message : String(cause));
+    }
   }
-  return count;
+  return { count, errors };
 }
+
+/** Model-facing vars: primitives only, bounded. Objects and arrays stay out. */
+function scalarVars(vars: Readonly<Record<string, unknown>> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(vars ?? {})) {
+    if (Object.keys(out).length >= 40) break;
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
+      out[key] = String(value).slice(0, 200);
+    }
+  }
+  return out;
+}
+
+/** Unique probe ids: a timed-out run can stay live and block the next one. */
+let debugSeq = 0;
 
 const HISTORY_STEP = 500;
 const HISTORY_MAX = 100_000;
@@ -135,6 +181,34 @@ function barMsOf(chart: CellChart): number {
   } catch {
     return 0;
   }
+}
+
+/** Loaded bars in the cell, derived from the replay bounds. */
+function chartBarCount(chart: CellChart): number {
+  try {
+    const bounds = chart.replay.bounds;
+    const barMs = barMsOf(chart);
+    if (!bounds || barMs <= 0) return 0;
+    return Math.max(0, Math.round((bounds.last - bounds.first) / barMs) + 1);
+  } catch {
+    return 0;
+  }
+}
+
+function maxBarsBackOf(source: string): number | null {
+  const match = /max_bars_back\s*=\s*(\d+)/.exec(source);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function stackOf(error: Error | null | undefined): string | null {
+  return error?.stack ? error.stack.slice(0, 4000) : null;
+}
+
+function methodOf(error: unknown): string | null {
+  const method = (error as { method?: unknown } | null)?.method;
+  return typeof method === 'string' ? method : null;
 }
 
 function setHistoryStatus(
@@ -434,23 +508,23 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         setMountingVelaTab(tab.id);
         try {
           return new VelaWorkspace(host, {
-        layout: wantedLayout,
-        symbol: chartSymbol(tab.symbol),
-        timeframe: tab.timeframe,
-        cells: cellSeeds,
-        providers: Object.fromEntries(
-          VENUE_CATALOG.map((venue) => [
-            venue.id,
-            () => new SidecarVelaProvider(venue.id, venue.label),
-          ]),
-        ),
-        engines: { pine: () => new PineWorkerEngine() },
-        live: true,
-        theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
-        timezone: 'UTC',
-        persist: `screener-v2:ws:${tab.id}`,
-        drawingToolbar: true,
-        maxWebglCells,
+            layout: wantedLayout,
+            symbol: chartSymbol(tab.symbol),
+            timeframe: tab.timeframe,
+            cells: cellSeeds,
+            providers: Object.fromEntries(
+              VENUE_CATALOG.map((venue) => [
+                venue.id,
+                () => new SidecarVelaProvider(venue.id, venue.label),
+              ]),
+            ),
+            engines: { pine: () => new PineWorkerEngine() },
+            live: true,
+            theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
+            timezone: 'UTC',
+            persist: `screener-v2:ws:${tab.id}`,
+            drawingToolbar: true,
+            maxWebglCells,
           });
         } finally {
           setMountingVelaTab(null);
@@ -463,7 +537,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       if (matchingCell) ws.setActiveCell(matchingCell.id);
       if (tab.pineScript) {
         try {
-          applyToCells(
+          void applyToCells(
             ws,
             tab.pineScript,
             tab.pineName ?? 'Screener Pine',
@@ -568,7 +642,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       const ws = wsRef.current;
       if (!ws || !tab.pineScript || tab.pineScript === lastAppliedRef.current) return;
       try {
-        applyToCells(ws, tab.pineScript, 'Screener Pine', tab.pineAll ?? false);
+        void applyToCells(ws, tab.pineScript, 'Screener Pine', tab.pineAll ?? false);
         lastAppliedRef.current = tab.pineScript;
       } catch (cause) {
         console.warn('[screener] could not apply the Pine script', cause);
@@ -578,12 +652,12 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     useImperativeHandle(
       ref,
       () => ({
-        applyScript(script: string, name: string, allCells: boolean) {
+        async applyScript(script: string, name: string, allCells: boolean) {
           const ws = wsRef.current;
-          if (!ws) return 0;
-          const count = applyToCells(ws, script, name, allCells);
-          lastAppliedRef.current = script;
-          return count;
+          if (!ws) return { count: 0, errors: ['The chart is not ready yet'] };
+          const report = await applyToCells(ws, script, name, allCells);
+          if (report.count > 0) lastAppliedRef.current = script;
+          return report;
         },
         addSavedIndicator(script: SavedScript, allCells: boolean) {
           const ws = wsRef.current;
@@ -668,6 +742,88 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         },
         setLayout(layout: string) {
           wsRef.current?.setLayout(layout);
+        },
+        chartContext() {
+          const ws = wsRef.current;
+          const cell = ws?.active;
+          if (!ws || !cell) return null;
+          const range = cell.chart.getVisibleRange();
+          return {
+            symbol: cell.symbol,
+            timeframe: cell.timeframe,
+            layout: ws.layout.id,
+            indicators: cell.chart.indicators().map((handle) => handle.title),
+            cells: ws.cells().length,
+            bars: chartBarCount(cell.chart),
+            visible: range ? { from: range.from, to: range.to } : null,
+          };
+        },
+        screenshot() {
+          return wsRef.current?.active.chart.renderer.screenshot() ?? null;
+        },
+        async runScript(source: string): Promise<ScriptRunSummary> {
+          const cell = wsRef.current?.active;
+          const bars = cell ? chartBarCount(cell.chart) : 0;
+          const maxBarsBack = maxBarsBackOf(source);
+          const base: ScriptRunSummary = {
+            ok: false,
+            error: null,
+            stack: null,
+            errorName: null,
+            method: null,
+            complete: false,
+            warnings: [],
+            plots: {},
+            vars: {},
+            strategy: false,
+            bars,
+            maxBarsBack,
+            symbol: cell?.symbol ?? '',
+            timeframe: cell?.timeframe ?? '',
+            logs: [],
+          };
+          if (!cell) return { ...base, error: 'No active chart' };
+          // A chart without history never emits its first run; do not hang the
+          // model on it, and drop the probe we already mounted.
+          let timer: number | undefined;
+          const timedOut = new Promise<null>((resolve) => {
+            timer = window.setTimeout(() => resolve(null), 15_000);
+          });
+          const debugId = `ai-debug-${++debugSeq}`;
+          const result = await Promise.race([
+            cell.chart.runScript(source, { id: debugId }),
+            timedOut,
+          ]);
+          window.clearTimeout(timer);
+          if (!result) {
+            cell.chart.indicators().find((handle) => handle.id === debugId)?.remove();
+            return {
+              ...base,
+              error: 'The chart did not finish the run within 15 seconds; check that it has data.',
+            };
+          }
+          const run = result.run;
+          const error = result.error;
+          const summary: ScriptRunSummary = {
+            ok: result.ok,
+            error: error ? error.message : null,
+            stack: stackOf(error),
+            errorName: error?.name ?? null,
+            method: methodOf(error),
+            complete: run?.complete ?? false,
+            warnings: (run?.warnings ?? []).map((warning) => warning.message).slice(0, 20),
+            plots: run ? { ...run.plots } : {},
+            vars: scalarVars(run?.vars),
+            strategy: run?.kind === 'strategy',
+            bars,
+            maxBarsBack,
+            symbol: cell.symbol,
+            timeframe: cell.timeframe,
+            logs: [],
+          };
+          // The debug run is a probe, not an indicator the user asked for.
+          result.remove();
+          return summary;
         },
         workspace() {
           return wsRef.current;

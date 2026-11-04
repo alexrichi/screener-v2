@@ -46,12 +46,61 @@ export interface WorkspaceTab {
   pineAll?: boolean;
 }
 
+/** The active cell's chart, as reported to the AI sidebar. */
+export interface ChartContext {
+  symbol: string;
+  timeframe: string;
+  layout: string;
+  indicators: string[];
+  cells: number;
+  /** Bars loaded in the active cell, including the forming bar. */
+  bars: number;
+  /** Visible window in epoch milliseconds, when the chart has painted. */
+  visible: { from: number; to: number } | null;
+}
+
+/** One debug evaluation of a Pine script, on the live chart or in the worker. */
+export interface ScriptRunSummary {
+  ok: boolean;
+  error: string | null;
+  /** JavaScript stack from the engine; the only mapping we get for transpiled Pine. */
+  stack: string | null;
+  errorName: string | null;
+  /** `PineRuntimeError.method`, e.g. `array.get`, when the engine reports one. */
+  method: string | null;
+  complete: boolean;
+  warnings: string[];
+  /** Last finite plot values, keyed by plot id. */
+  plots: Record<string, number | null>;
+  /** Scalar vars, stringified; large objects are dropped. */
+  vars: Record<string, string>;
+  strategy: boolean;
+  /** Bars the run evaluated. */
+  bars: number;
+  /** `max_bars_back` declared by the script, when present. */
+  maxBarsBack: number | null;
+  /** Venue-qualified symbol and timeframe the run used. */
+  symbol: string;
+  timeframe: string;
+  /** `log.info` / `log.warning` / `log.error` lines, oldest first. Worker only. */
+  logs: string[];
+}
+
+/**
+ * `run_script` runs the source twice: on the live chart and in a disposable
+ * worker over sidecar bars. The chart is the truth; the worker adds logs and a
+ * second engine path to compare against.
+ */
+export interface ScriptRunReport {
+  ok: boolean;
+  live: ScriptRunSummary;
+  worker: ScriptRunSummary;
+}
+
 export interface SortState {
   key: string;
   dir: 1 | -1;
-}
-
-export interface ColumnState {
+}export interface ColumnState {
   order: string[];
   hidden: string[];
   widths: Record<string, number>;

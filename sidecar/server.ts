@@ -9,6 +9,7 @@ import { HyperliquidVenueAdapter } from '../src/venues/hyperliquid';
 import { OkxVenueAdapter } from '../src/venues/okx';
 import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
+import { handleAi } from './ai';
 import { VenueHub } from './hub';
 import { librarySource } from './luxalgo';
 import { BinanceKlineStream, PollingBarsStream } from './stream';
@@ -81,8 +82,8 @@ function json(res: http.ServerResponse, status: number, body: unknown, headers: 
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': '*',
-    'access-control-allow-headers': 'content-type',
-    'access-control-allow-methods': 'GET,OPTIONS',
+    'access-control-allow-headers': 'content-type, authorization, x-opencode-session',
+    'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
     ...headers,
   });
   res.end(JSON.stringify(body));
@@ -119,13 +120,15 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     json(res, 204, null);
     return;
   }
+
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  if (await handleAi(req, res, path)) return;
+
   if (req.method !== 'GET') {
     fail(res, 405, 'Method not allowed');
     return;
   }
-
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
-  const path = url.pathname.replace(/\/+$/, '') || '/';
   console.log(`[sidecar] ${req.method} ${path}`);
 
   if (path === '/health') {

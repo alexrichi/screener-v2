@@ -90,6 +90,15 @@ src/
   App.tsx                         composition root; persisted app state and scan orchestration
   components/
     AppHeader.tsx                 brand, workspace tabs, "+" picker, status
+    AiSidebar.tsx                 left AI sidebar: chats, attachments, dictation, agents
+    AiAgentPicker.tsx             agent preset picker for the header and composer
+    AiChatHistory.tsx             chat history: search, date groups, inline rename, delete
+    AiChatTabs.tsx                current-chat / all-chats tab strip
+    AiModelPicker.tsx             composer model catalog and reasoning level
+    AiToolCard.tsx                human-readable, collapsible tool calls
+    AssistantUiThread.tsx         assistant-ui chat over the same tools
+    assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
+    ui/                           shadcn shims used by the registry kit (Base UI)
     VelaWorkspaceHost.tsx         Vela workspace per tab; cells, active-cell sync, Pine apply,
                                   source-code legend action
     ScreenerTable.tsx             market table, filters, favorites, column actions
@@ -99,7 +108,16 @@ src/
     SettingsDialog.tsx            universe and scan defaults
   hooks/
     useMarketRows.ts              market-row poll loop via the venue layer
+    useAiChat.ts                  streaming chat state and the renderer-side tool loop
   lib/
+    ai/agents.ts                  agent presets: prompt, read-only flag
+    ai/attachments.ts             image/text attachment reading and prompt folding
+    ai/model.ts                   OpenAI-compatible provider + config and transcription calls
+    ai/sessions.ts                persisted app-chat sessions, titles, message trimming
+    ai/title.ts                   one-shot generated title for assistant-ui chats
+    ai/tools.ts                   app tools: script, chart context, debug run
+    ai/uiChats.ts                 assistant-ui sessions, migration, groups, title fallback
+    utils.ts                      shadcn `cn` helper for registry components
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
@@ -140,6 +158,7 @@ src/
     fake.ts                       deterministic conformance adapter
 sidecar/
   server.ts                       public-data HTTP + WebSocket server; one hub per venue
+  ai.ts                           AI key-injecting proxy for an OpenAI-compatible model
   hub.ts                          one adapter per venue; shared caches/fan-out
   luxalgo.ts                      LuxAlgo Library source fetch and cache
   stream.ts                       Binance kline WS plus a REST-polling stream for
@@ -251,6 +270,18 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   reapplies the stored script on mount.
 - Scan results are session-only. Tabs, table view, settings, theme, the open Vela
   side panel, and the applied Pine script persist; scan rows and plot columns do not.
+- The AI sidebar is a sibling of the Vela section, not a Vela panel, so it stays
+  visible next to the chart and the Pine dock. `screener.ai.open` and
+  `screener.ai.width` persist; chats live in `screener.ai.sessions.v1`
+  (`{ version, sessions, activeId }`, capped at 30 chats and 200 messages each)
+  and the selected agent in `screener.ai.agent`. The agent loop runs in the
+  renderer (`useAiChat`) because the tools need the live editor and chart; the
+  sidecar only proxies the model call with `AI_BASE_URL`, `AI_MODEL`,
+  `AI_TRANSCRIBE_MODEL` and `AI_API_KEY`. Tools are `get_chart_context`,
+  `get_script`, `read_lines`, `edit_code`, `apply_script`, `run_script` and
+  `apply_live`; read-only agents drop `edit_code`, `apply_script` and
+  `apply_live`. Attached text files are
+  folded into the prompt; images ride as `file` parts of the user message.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
 
@@ -285,10 +316,14 @@ symbol to a live cell and call `ws.setActiveCell(...)`. Otherwise a fresh tab ca
 open with the alt cell active while the tab label says the main symbol.
 
 **Vela external indicators are app-owned.** Add with
-`cell.addExternalIndicator({ id: 'screener-pine', name, script })`; remove the
-previous handle before adding. Store `pineScript`, `pineName`, and `pineAll` on the
-tab and reapply on mount. `lastAppliedRef` prevents a double add when the tab state
-update and the imperative Apply happen together.
+`cell.addExternalIndicator({ id: 'screener-pine', name, script })`. When
+`screener-pine` is already on the cell, Apply updates it in place through
+`handle.updateCode(source)`: same handle, same legend row, and the inputs and
+props survive; Vela restores the previous code when the new one fails. Only a
+missing indicator is added. The host returns `{ count, errors }` per chart, and
+the panel reports the first error. Store `pineScript`, `pineName`, and `pineAll`
+on the tab and reapply on mount. `lastAppliedRef` prevents a double apply when
+the tab state update and the imperative Apply happen together.
 
 **Saved indicators are app-owned external scripts.** The library stores raw
 `.pine` source only, never transpiled output. `addSavedIndicator(item)` adds it
@@ -296,8 +331,23 @@ through `cell.addExternalIndicator({ id: 'saved-<id>', name, script })`; the
 custom window lists these from app state and native indicators from
 `cell.libraryRows()`. There is no `setIndicators` call and no Vela manifest for
 user scripts. `lib/velaScripts.ts` persists the external scripts per cell (the
-applied `screener-pine` is excluded and restored by the host); keep that handler
-registered before any workspace is constructed.
+applied `screener-pine` is excluded and restored by the host), together with the
+input/prop deltas and the hidden flag, so custom-indicator settings survive a
+reload; keep that handler registered before any workspace is constructed.
+
+**Settings templates are an app layer over Vela's dialogs.** `SettingsTemplateHost`
+watches `.vela-ind-dialog` and `.vela-dialog--settings` and injects the shared
+`SettingsTemplateMenu` into their footers, keeping the native Reset defaults in
+the DOM but hidden. Templates live in `screener.settingsTemplates.v1`, scoped:
+`indicator:<native|source-hash>` stores input deltas plus prop overrides; `chart`
+stores the renderer config and the cell `priceStyle` so the chart type survives a
+reload. Indicator dialogs keep a working copy and commit on OK, so Save commits
+before capturing; chart settings are live, so the host adds Cancel/OK and Cancel
+restores the open-time config plus priceStyle. Apply closes the dialog before
+writing so stale working values cannot win. The old
+`screener.indicatorTemplates.v1` is folded into the shared store on first load.
+Vela Pro uses the same injection pattern; a Vela dialog markup change needs a
+check here.
 
 **The indicator window is app-owned.** `lib/velaIndicators.ts` registers a
 topbar action under the built-in `'indicators'` id; this replaces Vela's native
@@ -319,6 +369,103 @@ registers one `registerLegendAction` for Pine indicators and forwards
 `LegendIndicatorInfo.source` to `App`, which opens the Pine tab and selects a
 saved item only when its source matches exactly. Do not add a parallel chart
 button or reach into renderer internals.
+
+**The AI sidebar is renderer-side and keyless.** `lib/ai/model.ts` points an
+OpenAI-compatible provider at `<sidecar>/ai/v1`; `sidecar/ai.ts` swaps in the real
+key and model. The key lives only in the sidecar process and its settings file
+(`%APPDATA%\screener-v2\ai.json`, or `AI_CONFIG_FILE`), written at mode 0600.
+Keep that default in sync with Electron's `app.getPath('userData')`; a different
+directory makes the dev sidecar and the packaged app read different keys. A blank
+key keeps the stored one, and replacing a saved key requires `replaceKey: true`,
+so a stray config POST cannot wipe it. Never move it into `VITE_*` env,
+localStorage, or the bundle. `AI_BASE_URL` /
+`AI_MODEL` / `AI_API_KEY` in the environment override the file, and the settings
+route refuses to edit while they are set. `apply_script`
+only rewrites the editor buffer (undo works, nothing runs); `apply_live` applies
+that buffer to the active chart through the same in-place path as the editor's
+Apply button and returns the live `{ ok, error }`; `run_script` runs the
+same source twice: on the active chart through `chart.runScript()` (the truth,
+including the forming bar) and in a disposable worker over sidecar bars of the
+same length (captures `log.info/warning/error`, hard-terminated after 20 s). The
+chart probe removes its indicator again, so debugging leaves no legend row. The
+chart image is attached as a `file` part of the **user** message, not as a tool
+result: the OpenAI-compatible adapter drops
+file parts from `role: 'tool'` messages, so a screenshot tool would silently
+never reach the model.
+
+**Attachments and dictation have provider limits.** Chat providers accept images,
+not arbitrary files: text-like attachments (`.pine`, `.txt`, `.md`, `.csv`,
+`.json`, `.log`) are folded into the user prompt between `--- attached file ---`
+markers, everything else is rejected with a toast. Images are `file` parts of the
+current user message and are stripped from older turns and from the persisted
+session (`lib/ai/sessions.ts`) so localStorage does not grow with base64. The mic
+records `audio/webm` with `MediaRecorder` and posts it to the sidecar, which
+forwards it to `<base>/audio/transcriptions` using the configured
+`transcriptionModel`; without that model the button is hidden. Electron must keep
+the `media` permission handler in `electron/main.cjs`.
+
+**Large scripts are read in ranges and patched, never re-sent whole.**
+`get_script` sends the source inline only up to 40k chars; above that it returns
+`{ chars, lines, truncated: true, source: null, outline }`, where the outline
+maps declarations, functions, `request.security`, `var`/`varip` and `array.*` to
+line numbers (`lib/ai/scriptOutline.ts`). The model then calls
+`read_lines(from, to)` (400-line page, raw text, no prefixes) and applies fixes
+with `edit_code`, a list of `{ oldStr, newStr }` patches validated by
+`lib/ai/edits.ts` (each anchor must be unique). `apply_script` refuses sources
+over 40k so a truncated model answer cannot overwrite a 126k file. Read-only
+agents get neither editing tool.
+
+**The assistant-ui chat is a registry kit, not an npm UI package.** The
+`Columns2` button switches the AI sidebar between the app chat and assistant-ui's
+`Thread` from `src/components/assistant-ui/`, installed with
+`npx shadcn add https://r.assistant-ui.com/base/thread.json`. The visible chat
+fills the sidebar width; assistant-ui is the current default, and the app chat is
+one click away. Those files
+use the `@/` alias (mapped to `src/`) and Base UI props (`render`,
+`nativeButton`), so the shadcn `button`/`dialog`/`tooltip`/`avatar` shims in
+`src/components/ui/` are Base UI, not Radix. `src/lib/utils.ts` provides `cn`,
+`index.css` imports `tw-shimmer`, and `vite.config.ts` dedupes `react`/
+`react-dom`. The assistant-ui chat is a set of sessions at
+`screener.ai.aui.v2` (`{ version: 2, sessions, activeId }`); each session stores
+its `ThreadMessageLike[]` with image parts stripped and text attachments folded
+into the content, plus `title`, `titleSource`, `titleGenerated`, `context` and
+timestamps. `AssistantUiThread` is controlled: the sidebar passes
+`initialMessages` and receives `onSave`, and remounts it with
+`key={session.id}` when the chat changes. The adapter parses the AI SDK's
+`toUIMessageStream`/`readUIMessageStream` (the same path as the app chat), and
+`lib/ai/uiParts.ts` maps its parts: reasoning to the kit's Reasoning (labelled
+`Thought`), text before the last tool call to reasoning (step notes), tool calls
+to the tool cards, and the final answer text as text. `ChainOfThoughtGroup` folds
+a run into one `Used N <tools>` line; `ToolActivityGroup` names each smaller tool
+run, and the kit's `group-chainOfThought` honours the `ChainOfThought` slot.
+Agents keep interim notes short. The tab strip switches between the current chat
+and `All chats`; the history view has search, relative-date groups, inline rename
+and delete, and hides chats with no messages. The first assistant reply triggers
+one `generateText` title call in the user's language (fallback: the first user
+prompt). The title call sets `reasoning: 'none'`; a reasoning
+model otherwise spends the whole small token budget thinking and returns no
+text. `titleSource: 'user'` stops later generated titles from overwriting a
+manual rename. `screener.ai.aui.v1` is folded into one session and
+removed on first load. The app chat remains separate at
+`screener.ai.sessions.v1`.
+
+The composer keeps the model and reasoning pickers inside the action row and
+puts the agent mode in a `ComposerFooter` slot below the card, which keeps a
+narrow sidebar readable. The same row carries the **Chart** toggle (the active
+chart PNG rides on the newest user message, older file parts are dropped so the
+payload does not grow) and the mic; `useDictation` is shared with the app chat,
+and the mic stays hidden until a transcription model is configured. The composer
+component types are module-level constants fed by `AiComposerContext`; recreating
+them when model/reasoning/agent state changes makes assistant-ui remount the
+composer and closes an open picker popover. The chosen model
+(`screener.ai.model`) and reasoning level (`screener.ai.reasoning`) persist and
+apply to the assistant-ui requests;
+`default` means the configured model. `withModel` honors a concrete id sent by
+the renderer, and `/ai/models` proxies the provider catalog with the sidecar's
+key (OpenCode Go publishes it at `/inference/go/v1/models`, not under
+`/openai/v1`). Reasoning maps to the SDK's `reasoning` option and then to
+`reasoning_effort`; `auto` omits it. The title call always uses the selected
+model with `reasoning: 'none'`.
 
 **The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
 registers `Screener`, `Pine`, and `Library` with `registerSidePanel` at import
@@ -480,6 +627,12 @@ Useful browser probes:
   under `My scripts`; adding it there changes the on-chart count, and both the
   library and the applied entry survive a reload. The native `Indicators` button
   opens this window, not Vela's picker; `/` opens it too.
+- The Pine panel's top row holds `Apply` and `All`. Applying a script that is
+  already on the chart updates the same legend row and keeps its inputs and
+  props; a new plot in the edited source appears, and a broken source reports
+  the error while the previous code keeps running. `All` adds or updates every
+  cell. The Pine developer AI calls `edit_code` then `apply_live` and reports
+  the live result; `Chart analyst` gets none of the three editing tools.
 - The `LuxAlgo` tab lists the bundled catalog, search filters it, and `Add`
   loads the full source: the on-chart count grows, the row shows `On chart`, and
   the script appears in `My scripts` with its Library URL in notes. A large
@@ -492,6 +645,34 @@ Useful browser probes:
   saved item in the Library panel.
 - The Pine editor renders a non-empty `.cm-editor` with a gutter, highlighted
   tokens, and the resolved editor background from the active theme.
+- The `AI` button opens a left sidebar that compresses the chart (the chart host
+  refills history), the width survives reload, and closing it restores the chart.
+  With the mock model, `get_script` / `apply_script` / `run_script` /
+  `get_chart_context` run end to end: the editor buffer becomes the returned
+  source, `run_script` returns `{ ok, live, worker }` with the full
+  plots/vars/logs of both runs, a broken script returns its error, and a
+  `Chart`-attached turn sends the PNG as a user
+  image part (`image_url` reaches the provider).
+- The assistant-ui chat shows `Chat` / `All chats` tabs. History searches titles
+  and chart context, groups by date, renames inline and deletes; empty chats are
+  hidden. After the first reply the title is generated in the user's language
+  (fallback: the first prompt); a manual rename is never overwritten. Reload
+  keeps the active chat, and the old `screener.ai.aui.v1` transcript folds into
+  one chat.
+- Chats persist: send in one, create another, switch back, reload, and both
+  titles and transcripts survive; deleting the active chat falls back to the
+  next one. Attaching a PNG and a `.pine` file shows two chips, the request
+  carries both images and the file text, and reload keeps the text but not the
+  base64. With a fake media device, dictation fills the composer from the
+  sidecar transcription; the mic is hidden without a transcription model.
+  Switching to `Chart analyst` sends four tools (no `edit_code`, `apply_script`
+  or `apply_live`); the selection and the chosen agent survive reload.
+- A script over 40k chars comes back from `get_script` as
+  `{ chars, lines, truncated: true, source: null, outline }`; `read_lines(1, 5)`
+  returns exactly those raw lines and the total; `edit_code` with one anchor
+  changes only that line (the stored script grows by the newStr delta) and the
+  rest of the file keeps its length. `apply_script` with a 100k source returns
+  `applied: false` instead of overwriting the buffer.
 - The topbar hamburger opens `File / View / Window / Help`; File and View actions
   drive the existing React state, Window uses the preload bridge, and About opens
   the app modal.

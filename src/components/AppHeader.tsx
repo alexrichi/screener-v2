@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Sparkles,
   Sun,
   X,
 } from 'lucide-react';
@@ -42,6 +43,10 @@ interface Props {
   onAdd: (symbol: string) => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
+  aiOpen: boolean;
+  /** Clamped sidebar width; when open it also offsets the tab strip. */
+  aiWidth: number;
+  onToggleAi: () => void;
 }
 
 export function AppHeader({
@@ -58,6 +63,9 @@ export function AppHeader({
   onAdd,
   onRefresh,
   onOpenSettings,
+  aiOpen,
+  aiWidth,
+  onToggleAi,
 }: Props) {
   const { theme, toggleTheme } = useTheme();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -106,7 +114,10 @@ export function AppHeader({
   return (
     <>
       <header className="app-titlebar flex h-9 shrink-0 items-stretch border-b border-border bg-background">
-        <div className="flex shrink-0 items-center gap-1.5 border-r border-border px-2.5">
+        <div
+          className="flex shrink-0 items-center gap-1.5 overflow-hidden border-r border-border px-2.5"
+          style={aiOpen ? { width: aiWidth } : undefined}
+        >
           <img
             src="/icon.png"
             alt="Screener"
@@ -442,6 +453,13 @@ export function AppHeader({
         </span>
         <IconButton label="Refresh markets" onClick={onRefresh} disabled={loading}>
           <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+        </IconButton>
+        <IconButton
+          label={aiOpen ? 'Hide AI' : 'Show AI'}
+          onClick={onToggleAi}
+          className={aiOpen ? 'bg-primary-soft text-primary' : undefined}
+        >
+          <Sparkles className="size-3.5" />
         </IconButton>
         <IconButton
           label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
