@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { applyEdits } from '../src/lib/ai/edits';
 import { outlineScript } from '../src/lib/ai/scriptOutline';
-import { toolView } from '../src/lib/ai/toolView';
 
 describe('applyEdits', () => {
   it('applies ordered patches to the buffer', () => {
@@ -33,127 +32,6 @@ describe('applyEdits', () => {
       { oldStr: 'x = 2', newStr: 'x = 3' },
     ]);
     expect(result).toEqual({ ok: true, code: 'x = 3' });
-  });
-});
-
-describe('toolView', () => {
-  const liveFailure = {
-    ok: false,
-    error: "Cannot read properties of undefined (reading '2883')",
-    errorName: 'TypeError',
-    method: null,
-    stack: 'TypeError: ...\n    at jit (pineToJS)',
-    warnings: [],
-    plots: {},
-    vars: {},
-    bars: 500,
-    maxBarsBack: 500,
-    symbol: 'BINANCE:BTCUSDT.P',
-    timeframe: '15',
-    logs: [],
-  };
-  const workerSuccess = {
-    ok: true,
-    error: null,
-    errorName: null,
-    method: null,
-    stack: null,
-    warnings: [],
-    plots: { A: 1, B: 2 },
-    vars: { count: '3' },
-    bars: 500,
-    maxBarsBack: 500,
-    symbol: 'BINANCE:BTCUSDT.P',
-    timeframe: '15',
-    logs: ['[2026-11-03T18:00:00.000Z] probe 2883'],
-  };
-
-  it('opens a failed live run but still shows the full worker result', () => {
-    const view = toolView({
-      name: 'run_script',
-      state: 'output-available',
-      output: { ok: false, live: liveFailure, worker: workerSuccess },
-    });
-    expect(view.status).toBe('error');
-    expect(view.defaultOpen).toBe(true);
-    expect(view.summary).toContain('live failed');
-    expect(view.summary).toContain('worker ok');
-    expect(view.sections.map((section) => section.label)).toEqual(
-      expect.arrayContaining(['Live error', 'Live stack', 'Live context']),
-    );
-    expect(view.sections.find((section) => section.label === 'Live context')?.text).toContain(
-      '500 bars',
-    );
-    expect(view.sections.find((section) => section.label === 'Worker logs')?.text).toContain(
-      'probe 2883',
-    );
-    expect(view.sections.find((section) => section.label === 'Worker plots')?.text).toContain(
-      'A = 1',
-    );
-  });
-
-  it('keeps a matching two-run result compact and lists both contexts', () => {
-    const view = toolView({
-      name: 'run_script',
-      state: 'output-available',
-      output: {
-        ok: true,
-        live: { ...workerSuccess, ok: true, logs: [] },
-        worker: workerSuccess,
-      },
-    });
-    expect(view.status).toBe('ok');
-    expect(view.defaultOpen).toBe(false);
-    expect(view.summary).toContain('live ok');
-    expect(view.summary).toContain('worker ok');
-    expect(view.sections.find((section) => section.label === 'Live plots')?.text).toContain('A = 1');
-    expect(view.sections.find((section) => section.label === 'Worker plots')?.text).toContain('A = 1');
-  });
-
-  it('shows an outline instead of the source for a truncated script', () => {
-    const view = toolView({
-      name: 'get_script',
-      state: 'output-available',
-      output: {
-        chars: 126_111,
-        lines: 2001,
-        truncated: true,
-        source: null,
-        outline: [{ line: 12, kind: 'type', text: 'type info' }],
-      },
-    });
-    expect(view.summary).toContain('outline');
-    expect(view.sections.some((section) => section.label === 'Source')).toBe(false);
-    expect(view.sections.find((section) => section.label === 'Outline')?.text).toContain('L12');
-  });
-
-  it('turns a rejected patch into an open error card', () => {
-    const view = toolView({
-      name: 'edit_code',
-      state: 'output-available',
-      input: { summary: 'fix', edits: [{ oldStr: 'a', newStr: 'b' }] },
-      output: { applied: false, reason: 'Edit #1: oldStr was not found.' },
-    });
-    expect(view.status).toBe('error');
-    expect(view.defaultOpen).toBe(true);
-    expect(view.summary).toContain('Rejected');
-  });
-
-  it('summarizes a line read', () => {
-    const view = toolView({
-      name: 'read_lines',
-      state: 'output-available',
-      input: { from: 1, to: 5 },
-      output: { from: 1, to: 5, total: 2001, text: 'a\nb' },
-    });
-    expect(view.summary).toBe('Lines 1–5 of 2,001');
-    expect(view.sections[0].text).toContain('a');
-  });
-
-  it('shows a running call without any payload', () => {
-    const view = toolView({ name: 'get_script', state: 'input-streaming' });
-    expect(view.status).toBe('running');
-    expect(view.sections).toHaveLength(0);
   });
 });
 

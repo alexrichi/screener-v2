@@ -90,12 +90,12 @@ src/
   App.tsx                         composition root; persisted app state and scan orchestration
   components/
     AppHeader.tsx                 brand, workspace tabs, "+" picker, status
-    AiSidebar.tsx                 left AI sidebar: chats, attachments, dictation, agents
+    AiSidebar.tsx                 left AI sidebar: assistant-ui chat, history, attachments,
+                                  dictation, agents
     AiAgentPicker.tsx             agent preset picker for the header and composer
     AiChatHistory.tsx             chat history: search, date groups, inline rename, delete
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
-    AiToolCard.tsx                human-readable, collapsible tool calls
     AlertsPanel.tsx               per-tab script alerts in the right rail
     AssistantUiThread.tsx         assistant-ui chat over the same tools
     assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
@@ -109,12 +109,10 @@ src/
     SettingsDialog.tsx            universe and scan defaults
   hooks/
     useMarketRows.ts              market-row poll loop via the venue layer
-    useAiChat.ts                  streaming chat state and the renderer-side tool loop
+    useDictation.ts               microphone recording and sidecar transcription
   lib/
     ai/agents.ts                  agent presets: prompt, read-only flag
-    ai/attachments.ts             image/text attachment reading and prompt folding
     ai/model.ts                   OpenAI-compatible provider + config and transcription calls
-    ai/sessions.ts                persisted app-chat sessions, titles, message trimming
     ai/title.ts                   one-shot generated title for assistant-ui chats
     ai/tools.ts                   app tools: script, chart context, debug run
     ai/uiChats.ts                 assistant-ui sessions, migration, groups, title fallback
@@ -276,16 +274,16 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   side panel, and the applied Pine script persist; scan rows and plot columns do not.
 - The AI sidebar is a sibling of the Vela section, not a Vela panel, so it stays
   visible next to the chart and the Pine dock. `screener.ai.open` and
-  `screener.ai.width` persist; chats live in `screener.ai.sessions.v1`
-  (`{ version, sessions, activeId }`, capped at 30 chats and 200 messages each)
-  and the selected agent in `screener.ai.agent`. The agent loop runs in the
-  renderer (`useAiChat`) because the tools need the live editor and chart; the
-  sidecar only proxies the model call with `AI_BASE_URL`, `AI_MODEL`,
+  `screener.ai.width` persist; chats live in `screener.ai.aui.v2`
+  (`{ version: 2, sessions, activeId }`, capped at 30 chats and 200 messages each)
+  and the selected agent in `screener.ai.agent`. The tool loop runs in the
+  renderer (`AssistantUiThread`) because the tools need the live editor and
+  chart; the sidecar only proxies the model call with `AI_BASE_URL`, `AI_MODEL`,
   `AI_TRANSCRIBE_MODEL` and `AI_API_KEY`. Tools are `get_chart_context`,
   `get_script`, `read_lines`, `edit_code`, `apply_script`, `run_script` and
   `apply_live`; read-only agents drop `edit_code`, `apply_script` and
   `apply_live`. Attached text files are
-  folded into the prompt; images ride as `file` parts of the user message.
+  folded into the prompt; images ride as image parts of the user message.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
 - Named layouts live at `screener.layouts.v1` (`{ version: 1, items }`). A layout
@@ -436,15 +434,15 @@ separates the toggle from the drawing tools. Collapsing the drawing toolbar
 hides the rail with the tools. Re-check the `.vela-dtb` class on Vela upgrades.
 
 **Attachments and dictation have provider limits.** Chat providers accept images,
-not arbitrary files: text-like attachments (`.pine`, `.txt`, `.md`, `.csv`,
-`.json`, `.log`) are folded into the user prompt between `--- attached file ---`
-markers, everything else is rejected with a toast. Images are `file` parts of the
-current user message and are stripped from older turns and from the persisted
-session (`lib/ai/sessions.ts`) so localStorage does not grow with base64. The mic
-records `audio/webm` with `MediaRecorder` and posts it to the sidecar, which
-forwards it to `<base>/audio/transcriptions` using the configured
-`transcriptionModel`; without that model the button is hidden. Electron must keep
-the `media` permission handler in `electron/main.cjs`.
+not arbitrary files: the composer's attachment adapter folds text-like files
+(`.pine`, `.txt`, `.md`, `.csv`, `.json`, `.log`) into the user prompt between
+`--- attached file ---` markers, everything else is rejected with a toast. Images
+are image parts of the current user message and are stripped from older turns
+and from the persisted assistant-ui session (`lib/ai/uiChats.ts`) so localStorage
+does not grow with base64. The mic records `audio/webm` with `MediaRecorder` and
+posts it to the sidecar, which forwards it to `<base>/audio/transcriptions` using
+the configured `transcriptionModel`; without that model the button is hidden.
+Electron must keep the `media` permission handler in `electron/main.cjs`.
 
 **Large scripts are read in ranges and patched, never re-sent whole.**
 `get_script` sends the source inline only up to 40k chars; above that it returns
@@ -457,12 +455,10 @@ with `edit_code`, a list of `{ oldStr, newStr }` patches validated by
 over 40k so a truncated model answer cannot overwrite a 126k file. Read-only
 agents get neither editing tool.
 
-**The assistant-ui chat is a registry kit, not an npm UI package.** The
-`Columns2` button switches the AI sidebar between the app chat and assistant-ui's
-`Thread` from `src/components/assistant-ui/`, installed with
-`npx shadcn add https://r.assistant-ui.com/base/thread.json`. The visible chat
-fills the sidebar width; assistant-ui is the current default, and the app chat is
-one click away. Those files
+**The assistant-ui chat is the AI sidebar.** It renders the `Thread` from
+`src/components/assistant-ui/`, installed with
+`npx shadcn add https://r.assistant-ui.com/base/thread.json`. The chat fills the
+sidebar width. Those files
 use the `@/` alias (mapped to `src/`) and Base UI props (`render`,
 `nativeButton`), so the shadcn `button`/`dialog`/`tooltip`/`avatar` shims in
 `src/components/ui/` are Base UI, not Radix. `src/lib/utils.ts` provides `cn`,
@@ -474,7 +470,7 @@ into the content, plus `title`, `titleSource`, `titleGenerated`, `context` and
 timestamps. `AssistantUiThread` is controlled: the sidebar passes
 `initialMessages` and receives `onSave`, and remounts it with
 `key={session.id}` when the chat changes. The adapter parses the AI SDK's
-`toUIMessageStream`/`readUIMessageStream` (the same path as the app chat), and
+`toUIMessageStream`/`readUIMessageStream`, and
 `lib/ai/uiParts.ts` maps its parts: reasoning to the kit's Reasoning (labelled
 `Thought`), text before the last tool call to reasoning (step notes), tool calls
 to the tool cards, and the final answer text as text. `ChainOfThoughtGroup` folds
@@ -488,15 +484,14 @@ prompt). The title call sets `reasoning: 'none'`; a reasoning
 model otherwise spends the whole small token budget thinking and returns no
 text. `titleSource: 'user'` stops later generated titles from overwriting a
 manual rename. `screener.ai.aui.v1` is folded into one session and
-removed on first load. The app chat remains separate at
-`screener.ai.sessions.v1`.
+removed on first load.
 
 The composer keeps the model and reasoning pickers inside the action row and
 puts the agent mode in a `ComposerFooter` slot below the card, which keeps a
 narrow sidebar readable. The same row carries the **Chart** toggle (the active
 chart PNG rides on the newest user message, older file parts are dropped so the
-payload does not grow) and the mic; `useDictation` is shared with the app chat,
-and the mic stays hidden until a transcription model is configured. The composer
+payload does not grow) and the mic; the mic uses `useDictation`,
+and it stays hidden until a transcription model is configured. The composer
 component types are module-level constants fed by `AiComposerContext`; recreating
 them when model/reasoning/agent state changes makes assistant-ui remount the
 composer and closes an open picker popover. The chosen model

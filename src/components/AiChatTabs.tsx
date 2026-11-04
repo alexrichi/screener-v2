@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Popover } from '@base-ui/react';
 import {
-  Columns2,
   MessagesSquare,
   MoreVertical,
   Plus,
@@ -19,7 +18,6 @@ interface Props {
   onShowChat: () => void;
   onShowHistory: () => void;
   onNewChat: () => void;
-  onShowAppChat: () => void;
   onOpenSettings: () => void;
   onClose: () => void;
 }
@@ -39,7 +37,6 @@ export function AiChatTabs({
   onShowChat,
   onShowHistory,
   onNewChat,
-  onShowAppChat,
   onOpenSettings,
   onClose,
 }: Props) {
@@ -88,14 +85,6 @@ export function AiChatTabs({
           >
             <Plus className="size-3.5 text-muted-foreground" />
             New chat
-          </button>
-          <button
-            type="button"
-            onClick={() => run(onShowAppChat)}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground/85 hover:bg-accent/60"
-          >
-            <Columns2 className="size-3.5 text-muted-foreground" />
-            Show app chat
           </button>
           <button
             type="button"

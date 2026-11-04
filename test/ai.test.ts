@@ -8,20 +8,8 @@ import {
   parseModelIds,
   withModel,
 } from '../sidecar/ai';
-import { attachmentPrompt, mediaTypeOf } from '../src/lib/ai/attachments';
-import {
-  createSession,
-  deleteSession,
-  initialAiSessions,
-  isAiSessions,
-  saveMessages,
-  sessionTitle,
-  stripFiles,
-} from '../src/lib/ai/sessions';
 import { providerIdFor, presetById } from '../src/lib/ai/providers';
 import { toolsForAgent } from '../src/lib/ai/tools';
-import { toolView } from '../src/lib/ai/toolView';
-import type { UIMessage } from 'ai';
 
 describe('AI sidecar config', () => {
   it('trims the base URL and keeps the stored key when the field is blank', () => {
@@ -141,22 +129,6 @@ describe('AI sidecar config', () => {
   });
 });
 
-describe('AI attachments', () => {
-  it('wraps text files in a marked block the model can ignore as instructions', () => {
-    const prompt = attachmentPrompt([{ name: 'notes.txt', text: 'hello' }]);
-    expect(prompt).toContain('--- attached file: notes.txt ---');
-    expect(prompt).toContain('hello');
-    expect(prompt).toContain('--- end of notes.txt ---');
-    expect(attachmentPrompt([])).toBe('');
-  });
-
-  it('reads the media type from a data URL', () => {
-    expect(mediaTypeOf('data:image/jpeg;base64,AAAA')).toBe('image/jpeg');
-    expect(mediaTypeOf('data:image/png;base64,AAAA')).toBe('image/png');
-    expect(mediaTypeOf('not-a-data-url')).toBe('image/png');
-  });
-});
-
 describe('AI provider presets', () => {
   it('maps a stored base URL back to its preset and falls back to custom', () => {
     expect(providerIdFor('https://api.openai.com/v1/')).toBe('openai');
@@ -187,77 +159,5 @@ describe('AI agent tools', () => {
       'run_script',
     ]);
     expect(toolsForAgent(tools, false)).toBe(tools);
-  });
-});
-
-describe('AI tool cards', () => {
-  it('reports an in-place apply as ok and a rejection as an error', () => {
-    expect(
-      toolView({ name: 'apply_live', state: 'output-available', output: { ok: true, charts: 1 } }),
-    ).toMatchObject({ title: 'Apply to chart', status: 'ok', defaultOpen: false });
-    const rejected = toolView({
-      name: 'apply_live',
-      state: 'output-available',
-      output: { ok: false, charts: 0, error: 'undeclared identifier at line 3' },
-    });
-    expect(rejected.status).toBe('error');
-    expect(rejected.defaultOpen).toBe(true);
-    expect(rejected.sections[0]?.text).toContain('undeclared identifier');
-  });
-});
-
-describe('AI sessions', () => {
-  const user = (text: string): UIMessage => ({
-    id: crypto.randomUUID(),
-    role: 'user',
-    parts: [{ type: 'text', text }],
-  });
-
-  it('starts with one empty session', () => {
-    const state = initialAiSessions();
-    expect(state.sessions).toHaveLength(1);
-    expect(state.activeId).toBe(state.sessions[0].id);
-    expect(state.sessions[0].title).toBe('New chat');
-  });
-
-  it('titles a session from the first user message and keeps it after later turns', () => {
-    const state = initialAiSessions();
-    const id = state.activeId;
-    const first = saveMessages(state, id, [user('  Add an EMA  filter  ')]);
-    expect(first.sessions[0].title).toBe('Add an EMA filter');
-    const second = saveMessages(first, id, [user('Something else')]);
-    expect(second.sessions[0].title).toBe('Add an EMA filter');
-    expect(sessionTitle([user('x'.repeat(80))])).toHaveLength(48);
-  });
-
-  it('creates, selects and deletes sessions, always leaving one', () => {
-    const first = initialAiSessions();
-    const second = createSession(first);
-    expect(second.sessions).toHaveLength(2);
-    expect(second.activeId).toBe(second.sessions[0].id);
-    const onlyOne = deleteSession(second, second.activeId);
-    expect(onlyOne.sessions).toHaveLength(1);
-    expect(onlyOne.activeId).toBe(onlyOne.sessions[0].id);
-    const empty = deleteSession(onlyOne, onlyOne.activeId);
-    expect(empty.sessions).toHaveLength(1);
-  });
-
-  it('drops image parts before storing and validates the persisted shape', () => {
-    const state = initialAiSessions();
-    const messages: UIMessage[] = [
-      {
-        id: 'm1',
-        role: 'user',
-        parts: [
-          { type: 'text', text: 'look' },
-          { type: 'file', mediaType: 'image/png', url: 'data:image/png;base64,AAAA' },
-        ],
-      },
-    ];
-    expect(stripFiles(messages)[0].parts).toHaveLength(1);
-    const saved = saveMessages(state, state.activeId, messages);
-    expect(isAiSessions(saved)).toBe(true);
-    expect(isAiSessions({ version: 1, sessions: [], activeId: 'x' }) && false).toBe(false);
-    expect(isAiSessions({ version: 2, sessions: [], activeId: 'x' })).toBe(false);
   });
 });

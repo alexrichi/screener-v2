@@ -54,19 +54,16 @@ Any OpenAI-compatible endpoint works: OpenRouter, a local Ollama/LM Studio, or a
 provider API. The model needs tool calling; vision is optional but required for
 questions about the chart image.
 
-The sidebar keeps every chat until you delete it. The default assistant-ui chat
-has `Chat` / `All chats` tabs: history searches titles and chart context, groups
-chats by date, renames inline and deletes. After the first reply it generates a
-short title in the user's language, falling back to the first prompt. The
-built-in chat (the `Columns2` toggle, or `Show app chat` in the chat menu) keeps
-its own history with titles from the first message. Both accept pasted, dropped
+The sidebar keeps every chat until you delete it. `Chat` / `All chats` tabs:
+history searches titles and chart context, groups chats by date, renames inline
+and deletes. After the first reply it generates a short title in the user's
+language, falling back to the first prompt. The composer accepts pasted, dropped
 or picked images and text files, dictated prompts and an optional **Chart**
 capture that attaches the active chart image. A run's activity is folded into a
 `Used N …` line: expand it for the Thoughts and tool cards, and expand those
-further for details. The final answer stays visible. The assistant-ui composer
-also picks the model and reasoning level; the agent mode (Assistant, Chart
-analyst or Pine developer) sits just below it and changes the system prompt and
-tools.
+further for details. The final answer stays visible. The composer also picks the
+model and reasoning level; the agent mode (Assistant, Chart analyst or Pine
+developer) sits just below it and changes the system prompt and tools.
 
 Environment variables still work and win over the stored settings:
 

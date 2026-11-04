@@ -91,20 +91,9 @@ import {
   type SavedIndicator,
 } from './lib/indicatorLibrary';
 import { DEFAULT_SCRIPT } from './scripts/presets';
-import { useAiChat } from './hooks/useAiChat';
 import { AI_AGENTS, agentById, type AiAgentId } from './lib/ai/agents';
 import { runScriptInWorker } from './lib/ai/debugRun';
 import { fetchAiStatus, type AiStatus } from './lib/ai/model';
-import {
-  AI_SESSIONS_KEY,
-  createSession,
-  deleteSession,
-  initialAiSessions,
-  isAiSessions,
-  saveMessages,
-  selectSession,
-  type AiSessions,
-} from './lib/ai/sessions';
 import { createAppTools, toolsForAgent } from './lib/ai/tools';
 import { useScanner } from './scan/useScanner';
 import { useTheme } from './ui/theme';
@@ -1583,44 +1572,6 @@ export default function App() {
     return lines.join('\n');
   }, [activeTab, activeWorkspace, aiAgent.instructions]);
 
-  const initialAiSessionsState = useMemo(() => initialAiSessions(), []);
-  const [aiSessions, setAiSessions] = usePersistedState<AiSessions>(
-    AI_SESSIONS_KEY,
-    initialAiSessionsState,
-    isAiSessions,
-  );
-  const activeAiSession =
-    aiSessions.sessions.find((session) => session.id === aiSessions.activeId) ??
-    aiSessions.sessions[0];
-
-  const newAiChat = useCallback(() => {
-    setAiSessions((prev) => createSession(prev));
-  }, [setAiSessions]);
-
-  const selectAiSession = useCallback(
-    (id: string) => {
-      setAiSessions((prev) => selectSession(prev, id));
-    },
-    [setAiSessions],
-  );
-
-  const deleteAiSession = useCallback(
-    (id: string) => {
-      setAiSessions((prev) => deleteSession(prev, id));
-    },
-    [setAiSessions],
-  );
-
-  const aiChat = useAiChat({
-    sessionId: activeAiSession.id,
-    initialMessages: activeAiSession.messages,
-    onTurnEnd: (messages, sessionId) => {
-      setAiSessions((prev) => saveMessages(prev, sessionId, messages));
-    },
-    tools: aiAgentTools,
-    system: aiSystem,
-  });
-
   const saveSettings = useCallback(
     (next: Settings) => {
       setSettings(next);
@@ -1659,9 +1610,8 @@ export default function App() {
         {aiOpen ? (
           <AiSidebar
             width={aiSidebarWidth}
-            chat={aiChat}
-            sessions={aiSessions.sessions}
-            activeSessionId={activeAiSession.id}
+            tools={aiAgentTools}
+            system={aiSystem}
             agents={AI_AGENTS}
             agent={aiAgent}
             onAgentChange={(id) => setAiAgentId(id)}
@@ -1676,16 +1626,11 @@ export default function App() {
                 : 'No chart open'
             }
             screenshot={() => activeWorkspace()?.screenshot() ?? null}
-            onNewChat={newAiChat}
-            onSelectSession={selectAiSession}
-            onDeleteSession={deleteAiSession}
             onOpenSettings={() => {
               refreshAiStatus();
               setSettingsTab('ai');
               setSettingsOpen(true);
             }}
-            compareTools={aiAgentTools}
-            compareSystem={aiSystem}
             onWidthChange={setAiWidth}
             onClose={() => setAiOpen(false)}
           />
