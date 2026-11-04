@@ -1375,7 +1375,6 @@ export default function App() {
             ? `Added ${item.name} to ${count} chart${count === 1 ? '' : 's'}`
             : `Added ${item.name} to the active chart`,
         );
-        openVelaPanel('screener');
       } else {
         toast.error('The chart is not ready yet');
       }
