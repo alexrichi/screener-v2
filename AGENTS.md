@@ -293,6 +293,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   one JSON file and no candle data is stored. Saving is explicit; the tab itself
   still autosaves through Vela. The maximize actions are leftmost in the chart
   toolbar's right group (`order: -200`); `Layouts` follows (`order: -100`).
+  `index.css` draws topbar hairlines around the Layouts action (`.vela-widget-action`)
+  and before the Screener panel (`aria-label='Screener'`); renaming either needs a
+  CSS update.
 
 ---
 

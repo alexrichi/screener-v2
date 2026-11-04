@@ -219,6 +219,37 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   z-index: 20 !important;
 }
 
+/* The app's Layouts action is the only text action in the right cluster. Draw
+   hairlines in the neighbouring 4px gaps, and one before the Screener panel. */
+.vela-widget-topbar .vela-widget-action,
+.vela-widget-topbar button[aria-label='Screener'] {
+  position: relative;
+}
+
+.vela-widget-topbar .vela-widget-action::before,
+.vela-widget-topbar .vela-widget-action::after,
+.vela-widget-topbar button[aria-label='Screener']::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.vela-widget-topbar .vela-widget-action::before {
+  left: -2px;
+}
+
+.vela-widget-topbar .vela-widget-action::after {
+  right: -2px;
+}
+
+.vela-widget-topbar button[aria-label='Screener']::before {
+  left: -2px;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--primary) 35%, transparent);
 }
