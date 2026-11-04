@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import {
   registerIcon,
   registerSidePanel,
+  registerWidgetAttachment,
   type WidgetContext,
 } from '@luxalgo/vela/plugin';
+import { alertsFor, subscribeAlerts } from './alerts';
 
-export type VelaPanelId = 'screener' | 'pine' | 'library';
+export type VelaPanelId = 'screener' | 'pine' | 'library' | 'alerts';
 
 interface PanelMount {
   tabId: string;
@@ -23,6 +25,14 @@ let pendingOpen: { id: VelaPanelId; tabId: string } | null = null;
 
 function mountKey(tabId: string, id: VelaPanelId): string {
   return `${tabId}:${id}`;
+}
+
+function panelTabId(ctx: WidgetContext): string {
+  return (
+    mountingTabId ??
+    ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ??
+    ''
+  );
 }
 
 function emit(): void {
@@ -63,10 +73,7 @@ function mountPanel(
   ctx: WidgetContext,
   body: HTMLElement,
 ): () => void {
-  const tabId =
-    mountingTabId ??
-    ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ??
-    '';
+  const tabId = panelTabId(ctx);
   const key = mountKey(tabId, id);
   const toggle = (panelId: string, open?: boolean) => ctx.togglePanel(panelId, open);
   const mount: PanelMount = { tabId, body, toggle };
@@ -119,10 +126,7 @@ registerSidePanel({
   maximizable: true,
   mount: (ctx, body) => {
     const destroy = mountPanel('screener', ctx, body);
-    const tabId =
-      mountingTabId ??
-      ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ??
-      '';
+    const tabId = panelTabId(ctx);
     // First run after the dock migration: keep the table visible by default.
     try {
       if (!localStorage.getItem('screener.panels.welcomed')) {
@@ -164,6 +168,41 @@ registerSidePanel({
   maxWidth: 620,
   maximizable: true,
   mount: (ctx, body) => ({ destroy: mountPanel('library', ctx, body) }),
+});
+
+registerSidePanel({
+  id: 'alerts',
+  title: 'Alerts',
+  icon: 'bell',
+  order: 70,
+  width: 320,
+  resizable: true,
+  minWidth: 260,
+  maxWidth: 560,
+  maximizable: true,
+  mount: (ctx, body) => {
+    const destroy = mountPanel('alerts', ctx, body);
+    const tabId = panelTabId(ctx);
+    const sync = () => ctx.sidebar.setBadge('alerts', alertsFor(tabId).length);
+    const off = subscribeAlerts(sync);
+    sync();
+    return {
+      destroy: () => {
+        off();
+        destroy();
+      },
+    };
+  },
+});
+
+// The rail's alerts panel replaces Vela's topbar bell; its menu only lists the
+// workspace's own entries and has no panel of its own.
+registerWidgetAttachment({
+  id: 'screener-alerts-panel',
+  mount: (ctx) => {
+    ctx.topbar.setVisible('alerts', false);
+    return () => ctx.topbar.setVisible('alerts', true);
+  },
 });
 
 interface Props {

@@ -15,6 +15,7 @@ import { AiSidebar } from './components/AiSidebar';
 import { SettingsTemplateHost } from './components/SettingsTemplateHost';
 import { IndicatorWindow } from './components/IndicatorWindow';
 import { LibraryPanel } from './components/LibraryPanel';
+import { AlertsPanel } from './components/AlertsPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -670,6 +671,26 @@ export default function App() {
         }
         return prev.map((item) => (item.id === tabId ? next : item));
       });
+    },
+    [setTabs],
+  );
+
+  /** The applied Pine script was removed from the chart, not replaced: forget it
+   *  so a reload or a layout save cannot apply it again. */
+  const clearTabPine = useCallback(
+    (tabId: string) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === tabId
+            ? {
+                ...tab,
+                pineScript: undefined,
+                pineName: undefined,
+                pineAll: undefined,
+              }
+            : tab,
+        ),
+      );
     },
     [setTabs],
   );
@@ -1654,6 +1675,7 @@ export default function App() {
                   }
                   onShowSource={showSource}
                   onIndicatorsChange={refreshIndicatorRows}
+                  onPineRemoved={clearTabPine}
                   onMarketChange={handleMarketChange}
                 />
               </div>
@@ -1744,6 +1766,7 @@ export default function App() {
                 onImportFile={(file) => void importLibraryFile(file)}
               />
             ),
+            alerts: <AlertsPanel tabId={activeTabId} />,
           }}
         />
       </main>

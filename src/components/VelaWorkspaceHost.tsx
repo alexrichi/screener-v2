@@ -17,6 +17,7 @@ import type {
 } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
+import { pushAlert, type ChartAlertInput } from '../lib/alerts';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab } from '../lib/velaPanels';
@@ -73,6 +74,8 @@ interface Props {
   layoutSeed?: unknown;
   onShowSource: (source: string) => void;
   onIndicatorsChange?: () => void;
+  /** The applied Pine script left a chart on its own (legend ✕, object tree). */
+  onPineRemoved: (tabId: string) => void;
   onMarketChange: (
     tabId: string,
     patch: { symbol?: string; timeframe?: string; layout?: string },
@@ -359,7 +362,12 @@ function extendHistory(chart: CellChart, state: CellHistory, requested?: number)
  * keeps the bar spacing across a resize, so a 0.5 px/bar view leaves the extra
  * width empty until the missing history arrives).
  */
-function attachHistoryScroll(ws: VelaWorkspace, onIndicatorsChange: () => void): () => void {
+function attachHistoryScroll(
+  ws: VelaWorkspace,
+  onIndicatorsChange: () => void,
+  onAlert: (alert: ChartAlertInput) => void,
+  onPineRemoved: () => void,
+): () => void {
   const cells = new Map<string, CellHistory>();
   const cleanups = new Map<string, () => void>();
   const subscriptions: Array<() => void> = [];
@@ -459,7 +467,22 @@ function attachHistoryScroll(ws: VelaWorkspace, onIndicatorsChange: () => void):
         extendHistory(chart, state);
       }),
       chart.on('indicator:added', onIndicatorsChange),
-      chart.on('indicator:removed', onIndicatorsChange),
+      chart.on('indicator:removed', ({ id }) => {
+        onIndicatorsChange();
+        if (id === PINE_ID) onPineRemoved();
+      }),
+      chart.on('alert', (alert) =>
+        onAlert({
+          id: alert.id,
+          cellId: cell.id,
+          symbol: cell.symbol.replace(/^[^:]+:/, ''),
+          timeframe: cell.timeframe,
+          indicator: alert.indicator,
+          title: alert.title,
+          message: alert.message,
+          time: alert.time,
+        }),
+      ),
     ];
 
     cleanups.set(cell.id, () => {
@@ -503,6 +526,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       layoutSeed,
       onShowSource,
       onIndicatorsChange,
+      onPineRemoved,
       onMarketChange,
     },
     ref,
@@ -510,12 +534,15 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     const hostRef = useRef<HTMLDivElement | null>(null);
     const wsRef = useRef<VelaWorkspace | null>(null);
     const lastAppliedRef = useRef<string | null>(null);
+    const pineSwapRef = useRef(false);
     const onMarketChangeRef = useRef(onMarketChange);
     onMarketChangeRef.current = onMarketChange;
     const onShowSourceRef = useRef(onShowSource);
     onShowSourceRef.current = onShowSource;
     const onIndicatorsChangeRef = useRef(onIndicatorsChange);
     onIndicatorsChangeRef.current = onIndicatorsChange;
+    const onPineRemovedRef = useRef(onPineRemoved);
+    onPineRemovedRef.current = onPineRemoved;
     const savedScriptsRef = useRef(savedScripts);
     savedScriptsRef.current = savedScripts;
     const activeRef = useRef(active);
@@ -528,6 +555,24 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         showSourceHandler = null;
       };
     }, []);
+
+    /** The applied script left the chart on its own: forget it on the tab so a
+     *  reload, a layout save or a layout switch cannot bring it back. */
+    const dropStoredPine = () => {
+      if (pineSwapRef.current) return;
+      const ws = wsRef.current;
+      if (!ws) return;
+      pineSwapRef.current = true;
+      try {
+        for (const cell of ws.cells()) {
+          cell.instances.find((item) => item.id === PINE_ID)?.handle?.remove();
+        }
+      } finally {
+        pineSwapRef.current = false;
+      }
+      lastAppliedRef.current = null;
+      onPineRemovedRef.current(tab.id);
+    };
 
     useEffect(() => {
       const host = hostRef.current;
@@ -579,7 +624,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               ? { storage: seededStorage(persistKey, layoutSeed) }
               : {}),
             drawingToolbar: true,
-            sidebar: true,
+            sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] },
             maxWebglCells,
           });
         } finally {
@@ -587,7 +632,12 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         }
       })();
       wsRef.current = ws;
-      const detachHistory = attachHistoryScroll(ws, () => onIndicatorsChangeRef.current?.());
+      const detachHistory = attachHistoryScroll(
+        ws,
+        () => onIndicatorsChangeRef.current?.(),
+        (alert) => pushAlert({ tabId: tab.id, ...alert }),
+        dropStoredPine,
+      );
       const wantedSymbol = chartSymbol(tab.symbol);
       const matchingCell = ws.cells().find((cell) => cell.symbol === wantedSymbol);
       if (matchingCell) ws.setActiveCell(matchingCell.id);
@@ -761,8 +811,15 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           }
           // The applied script is app-owned and absent from the document; drop
           // the previous one, then reapply the snapshot's script if it has one.
-          for (const cell of ws.cells()) {
-            cell.instances.find((item) => item.id === PINE_ID)?.handle?.remove();
+          // The removal is a swap, not a user delete: keep the tab's stored
+          // script until the caller writes the snapshot's value.
+          pineSwapRef.current = true;
+          try {
+            for (const cell of ws.cells()) {
+              cell.instances.find((item) => item.id === PINE_ID)?.handle?.remove();
+            }
+          } finally {
+            pineSwapRef.current = false;
           }
           lastAppliedRef.current = null;
           let pineError: string | null = null;
@@ -817,9 +874,14 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         removeScript() {
           const ws = wsRef.current;
           if (!ws) return;
-          for (const cell of ws.cells()) {
-            const existing = cell.instances.find((item) => item.id === PINE_ID);
-            existing?.handle?.remove();
+          pineSwapRef.current = true;
+          try {
+            for (const cell of ws.cells()) {
+              const existing = cell.instances.find((item) => item.id === PINE_ID);
+              existing?.handle?.remove();
+            }
+          } finally {
+            pineSwapRef.current = false;
           }
           lastAppliedRef.current = null;
         },
