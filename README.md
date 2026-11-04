@@ -106,9 +106,9 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   unsorted.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
   own symbol and timeframe. Dragging a chart into the past or zooming out loads
-  older history in 500-bar steps, with a loading badge in the cell. The header
-  button left of `Alerts` maximizes the selected chart over the widget and
-  restores the grid on a second click.
+  older history in 500-bar steps, with a loading badge in the cell. A cell's
+  bottom-center control maximizes it over the widget and restores the grid on a
+  second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
   reorderable columns, and per-row actions. Screener, Pine, and Library open as
   Vela side panels from the chart header; the open panel and width persist.
@@ -126,8 +126,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   settings.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
-  duplicate, and import or export JSON. The `Layouts` button sits in the chart
-  toolbar left of Maximize.
+  duplicate, and import or export JSON. The `Layouts` button leads the chart
+  toolbar's right group.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
   delete scripts; export or import `.pine` files and the JSON library. Saved
   scripts also appear in the app's `Indicators` window under `My scripts`, above

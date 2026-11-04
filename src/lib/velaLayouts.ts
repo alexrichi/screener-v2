@@ -24,7 +24,7 @@ function registerAction(): void {
     label: displayLabel(),
     icon: 'screener-layouts',
     align: 'right',
-    // First in the right-hand action group: Maximize (order 0) follows it.
+    // First in the right-hand action group.
     order: -100,
     mobile: 'menu',
     run: (ctx) => {
