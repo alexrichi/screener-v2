@@ -126,6 +126,7 @@ src/
     marketData.ts                 market rows for the checked venues via the sidecar
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaLayouts.ts                topbar Layouts action and popover bridge
+    velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
     velaPanels.tsx                Vela side-panel registration and React portal bridge
     velaScripts.ts                per-cell persistence for external script indicators
     usePersistedState.ts          localStorage-backed state with runtime validation
@@ -290,7 +291,8 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   a seeded `VelaStorage` only while they have no document of their own. The
   `Layouts` topbar action (`lib/velaLayouts.ts`) manages them; import/export is
   one JSON file and no candle data is stored. Saving is explicit; the tab itself
-  still autosaves through Vela.
+  still autosaves through Vela. The maximize actions are leftmost in the chart
+  toolbar's right group (`order: -200`); `Layouts` follows (`order: -100`).
 
 ---
 
@@ -306,18 +308,20 @@ active layout back to the tab. Do not add a second selector to the app header.
 `ws.getState()`; `applyLayout` gates the document through `sanitizeState` and
 calls `ws.applyState()`. The applied `screener-pine` is external and absent from
 the document, so applying removes it and reapplies the snapshot's script. The
-`Layouts` action is registered with `align: 'right', order: -100`, so it leads
-the right cluster. Widget actions only target the topbar and context menus
-(`WidgetActionTarget`); the bottom bar is internal and has no host slot. A
+maximize actions are registered with `align: 'right', order: -200`, so they take
+the leftmost slots in the right cluster; `Layouts` (`order: -100`) follows them.
+Widget actions only target the topbar and context menus (`WidgetActionTarget`);
+the bottom bar is internal, so do not move Maximize there without a Vela API. A
 seeded tab uses a `VelaStorage` that returns the seed only when no tab document
 exists; after the first autosave (or on reload) its own document wins.
 
-**Cell maximize is Vela's own control.** The app does not register a topbar
-maximize action; it was removed so `Layouts` leads the right cluster. A
-multi-cell chart exposes maximize/restore in its bottom-center hover cluster.
-`ws.maximizeCell` remains the seam if a host control is added later. The state
-stays transient: never persisted, cleared by a layout switch or state restore;
-siblings stay alive underneath.
+**Cell maximize is transient.** The app registers `screener-maximize` /
+`screener-restore` topbar widget actions (`lib/velaMaximize.ts`) in the `actions`
+slot, leftmost in the right cluster before `Layouts` and `Alerts`, bridged to
+`ws.maximizeCell(active.id)` or `null`. They are hidden on a single-cell grid and
+refreshed on `cell:maximized` and `layout:changed`. Siblings stay alive
+underneath; the state is never persisted, and a layout switch or state restore
+clears it.
 
 **Seed cells, never pre-collapse.** Create the workspace directly with the tab's
 layout and pass seeds for `main`, `alt`, and extra slots. Expanding later hydrates
@@ -616,14 +620,12 @@ Useful browser probes:
   provider name as text.
 - Switching the layout select to `2h`/`4` changes the live cell count and the tab
   badge; the second cell is the alt symbol, not a duplicate.
-- In a multi-cell grid the active cell's bottom-center hover cluster expands it
-  over the widget (`data-maximized=1`, siblings hidden) and restores the grid on
-  a second click. The topbar has no Maximize button; `Layouts` leads the right
-  group.
-- Zoom a cell to its scale floor, maximize it from the cell's bottom-center
-  control: the host loads enough history to fill the wider window at the same
-  `barSpacing` (no click, resize or refit), and the left edge shows candles
-  instead of empty space.
+- In a multi-cell grid the leftmost topbar control (left of `Layouts`) expands
+  the active cell over the widget (`data-maximized=1`, siblings hidden), flips to
+  Restore, and returns the grid on a second click; a single-cell grid hides it.
+- Zoom a cell to its scale floor, maximize it: the host loads enough history to
+  fill the wider window at the same `barSpacing` (no click, resize or refit), and
+  the left edge shows candles instead of empty space.
 - The topbar panel buttons open `Screener`, `Pine`, and `Library` as one Vela
   side panel at a time; the open panel and width survive reload. The legend source
   action opens the Pine panel.
@@ -652,8 +654,8 @@ Useful browser probes:
   the error while the previous code keeps running. `All` adds or updates every
   cell. The Pine developer AI calls `edit_code` then `apply_live` and reports
   the live result; `Chart analyst` gets none of the three editing tools.
-- The `Layouts` toolbar action leads the right group and shows the active tab's
-  linked layout name (or `Layouts`). Saving a 2×2 workspace creates an item in
+- The `Layouts` toolbar action sits right after Maximize and shows the active
+  tab's linked layout name (or `Layouts`). Saving a 2×2 workspace creates an item in
   `screener.layouts.v1` and renames the action. A row click loads the layout into
   the current tab (grid, markets, indicators, drawings, script); `Open in new
   tab` seeds a new tab with the same state and survives a reload with its own

@@ -1631,6 +1631,7 @@ export default function App() {
                 <VelaWorkspaceHost
                   ref={workspaceRefFor(tab.id)}
                   tab={tab}
+                  active={tab.id === activeTabId}
                   theme={theme}
                   maxWebglCells={Math.max(
                     1,

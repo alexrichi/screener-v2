@@ -18,6 +18,7 @@ import type {
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
 import { timeframeMs } from '../lib/timeframe';
+import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab } from '../lib/velaPanels';
 import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
@@ -63,6 +64,7 @@ export interface VelaWorkspaceHandle {
 
 interface Props {
   tab: WorkspaceTab;
+  active: boolean;
   theme: ThemeMode;
   /** WebGL cap for this workspace; lower when several tabs stay mounted. */
   maxWebglCells: number;
@@ -494,6 +496,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
   function VelaWorkspaceHost(
     {
       tab,
+      active,
       theme,
       maxWebglCells,
       savedScripts,
@@ -515,6 +518,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     onIndicatorsChangeRef.current = onIndicatorsChange;
     const savedScriptsRef = useRef(savedScripts);
     savedScriptsRef.current = savedScripts;
+    const activeRef = useRef(active);
+    activeRef.current = active;
+    const syncMaximizeRef = useRef<() => void>(() => {});
+
     useEffect(() => {
       showSourceHandler = (source) => onShowSourceRef.current(source);
       return () => {
@@ -618,15 +625,36 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         }, 120);
       };
 
+      const syncMaximize = () => {
+        if (wsRef.current !== ws || !activeRef.current) return;
+        setMaximizeBridge({
+          maximized: ws.maximizedCell !== null,
+          multi: ws.cells().length > 1,
+          toggle: () => {
+            if (ws.maximizedCell !== null) ws.maximizeCell(null);
+            else if (ws.active) ws.maximizeCell(ws.active.id);
+          },
+        });
+        ws.refreshActions();
+      };
+      syncMaximizeRef.current = syncMaximize;
+      syncMaximize();
+
       const offState = ws.on('state:changed', scheduleSync);
       const offActive = ws.on('cell:active', scheduleSync);
-      const offLayout = ws.on('layout:changed', scheduleSync);
+      const offLayout = ws.on('layout:changed', () => {
+        scheduleSync();
+        syncMaximize();
+      });
+      const offMaximized = ws.on('cell:maximized', syncMaximize);
 
       return () => {
         if (timer !== null) window.clearTimeout(timer);
         offState();
         offActive();
         offLayout();
+        offMaximized();
+        if (activeRef.current) clearMaximizeBridge();
         detachHistory();
         ws.destroy();
         if (wsRef.current === ws) wsRef.current = null;
@@ -641,6 +669,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       if (!ws) return;
       ws.setTheme(theme === 'dark' ? velaDarkTheme : velaLightTheme);
     }, [theme]);
+
+    useEffect(() => {
+      if (active) syncMaximizeRef.current();
+    }, [active]);
 
     useEffect(() => {
       const ws = wsRef.current;
