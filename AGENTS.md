@@ -294,10 +294,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   one JSON file and no candle data is stored. Saving is explicit; the tab itself
   still autosaves through Vela. The maximize actions are leftmost in the chart
   toolbar's right group (`order: -200`); `Layouts` follows (`order: -100`).
-  `index.css` draws topbar hairlines around the Layouts action (`.vela-widget-action`),
-  before the Screener panel (`aria-label='Screener'`) and before the screenshot
-  button (`aria-label='Download screenshot'`); renaming any of them needs a CSS
-  update.
+  `index.css` draws topbar hairlines around the Layouts action
+  (`.vela-widget-action`); panel toggles live in Vela's right sidebar and use its
+  own separators.
 
 ---
 
@@ -506,10 +505,14 @@ model with `reasoning: 'none'`.
 registers `Screener`, `Pine`, and `Library` with `registerSidePanel` at import
 time and portals the React content into the bodies Vela hands `mount`. Mounts are
 keyed `<tabId>:<panelId>`; `openVelaPanel` targets the active tab and the
-portals render only into its bodies. The dock's open panel and width live in the
-Vela workspace document, not in `screener.dock.*`. Do not reach into panel
-internals. `screener.panels.welcomed` only controls the one-time Screener
-default.
+portals render only into its bodies. The shell runs with `sidebar: true`
+(Vela dev): on desktop the panel toggles live in the right sidebar and the
+topbar keeps Maximize, Layouts, Alerts and the screenshot button; mobile keeps
+the panel rows in its menu. `sidebar` does not exist in main/0.9.3, so drop it
+when the checkout returns to main before the next release. The dock's open
+panel and width live in the Vela workspace document, not in
+`screener.dock.*`. Do not reach into panel internals.
+`screener.panels.welcomed` only controls the one-time Screener default.
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
 maximized Pine editor keeps the pointer. Keep that override.
@@ -640,8 +643,9 @@ Useful browser probes:
 - Zoom a cell to its scale floor, maximize it: the host loads enough history to
   fill the wider window at the same `barSpacing` (no click, resize or refit), and
   the left edge shows candles instead of empty space.
-- The topbar panel buttons open `Screener`, `Pine`, and `Library` as one Vela
-  side panel at a time; the open panel and width survive reload. The legend source
+- The right sidebar's panel buttons open `Screener`, `Pine`, and `Library` as one
+  Vela side panel at a time; the topbar keeps Maximize, Layouts, Alerts and the
+  screenshot button. The open panel and width survive reload. The legend source
   action opens the Pine panel.
 - Creating a workspace with `+` immediately requests its klines and renders candles;
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
@@ -809,10 +813,11 @@ reaching into `node_modules` or the peer `../Vela` checkout:
 - Architecture and data flow: <https://docs.luxalgo.com/vela/architecture/overview>
 
 The docs page exposes "View as Markdown"; the LLM index is
-<https://docs.luxalgo.com/llms.mdx/vela/content.md>. The app pins
-`@luxalgo/vela@0.9.3`, and the installed package is the source of truth for the
-exact API. The local `../Vela` checkout is a reference only; do not patch or fork
-Vela from this repo.
+<https://docs.luxalgo.com/llms.mdx/vela/content.md>. Vite and `tsconfig` resolve
+`@luxalgo/vela` to the local `../Vela/src` checkout; `package.json` keeps the npm
+pin as a fallback. The checkout's branch is the runtime version: `main` is
+0.9.3, `dev` is the unreleased shell (currently used for `sidebar: true`). Do not
+patch or fork Vela from this repo.
 
 ### PineTS documentation
 

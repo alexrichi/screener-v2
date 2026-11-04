@@ -111,7 +111,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   widget and restores the grid on a second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
   reorderable columns, and per-row actions. Screener, Pine, and Library open as
-  Vela side panels from the chart header; the open panel and width persist.
+  Vela side panels from the chart's right sidebar; the open panel and width
+  persist.
 - Favorites: named lists managed from the star popover in the screener toolbar.
   `Default` is the default list; star a symbol to add it to the active list.
   Lists are stored at `screener.favorites.v2` per instrument
