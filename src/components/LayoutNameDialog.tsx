@@ -3,8 +3,8 @@ import { Button, Input } from '../ui/primitives';
 import { Modal } from '../ui/overlays';
 
 export interface LayoutNameRequest {
-  mode: 'save' | 'saveAs' | 'rename';
-  /** Present for rename. */
+  mode: 'save' | 'saveAs' | 'rename' | 'duplicate';
+  /** Present for rename and duplicate. */
   id?: string;
   name: string;
 }
@@ -30,7 +30,9 @@ export function LayoutNameDialog({
       ? 'Rename layout'
       : request?.mode === 'saveAs'
         ? 'Save layout as'
-        : 'Save current layout';
+        : request?.mode === 'duplicate'
+          ? 'Duplicate layout'
+          : 'Save current layout';
   const submit = () => {
     if (name.trim()) onSubmit(name);
   };
@@ -48,7 +50,11 @@ export function LayoutNameDialog({
             Cancel
           </Button>
           <Button variant="primary" onClick={submit} disabled={!name.trim()}>
-            {request?.mode === 'rename' ? 'Rename' : 'Save'}
+            {request?.mode === 'rename'
+              ? 'Rename'
+              : request?.mode === 'duplicate'
+                ? 'Duplicate'
+                : 'Save'}
           </Button>
         </>
       }
@@ -70,8 +76,9 @@ export function LayoutNameDialog({
         />
         {error ? <p className="text-[11px] text-negative">{error}</p> : null}
         <p className="text-[11px] leading-4 text-muted-foreground">
-          Saves the grid, symbols, indicators, drawings and chart settings, plus the applied Pine
-          script.
+          {request?.mode === 'duplicate'
+            ? 'Copies the saved grid, symbols, indicators, drawings and chart settings. The original stays unchanged.'
+            : 'Saves the grid, symbols, indicators, drawings and chart settings, plus the applied Pine script.'}
         </p>
       </div>
     </Modal>

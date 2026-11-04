@@ -339,6 +339,7 @@ export default function App() {
   const [layoutNameRequest, setLayoutNameRequest] = useState<LayoutNameRequest | null>(null);
   const [layoutNameError, setLayoutNameError] = useState<string | null>(null);
   const [layoutDelete, setLayoutDelete] = useState<LayoutItem | null>(null);
+  const [layoutOverwrite, setLayoutOverwrite] = useState<LayoutItem | null>(null);
   const layoutImportRef = useRef<HTMLInputElement | null>(null);
   const [aiOpen, setAiOpen] = usePersistedState<boolean>('screener.ai.open', false, isBoolean);
   const [aiWidth, setAiWidth] = usePersistedState<number>('screener.ai.width', 380, isNumber);
@@ -934,6 +935,19 @@ export default function App() {
     });
   }, [activeLayout, activeTab, closeLayouts, layouts.items, openLayoutName]);
 
+  const openDuplicateActive = useCallback(() => {
+    if (!activeLayout) {
+      toast.error('Save the workspace as a layout first');
+      return;
+    }
+    closeLayouts();
+    openLayoutName({
+      mode: 'duplicate',
+      id: activeLayout.id,
+      name: uniqueLayoutName(layouts.items, `${activeLayout.name} copy`),
+    });
+  }, [activeLayout, closeLayouts, layouts.items, openLayoutName]);
+
   const openRenameLayout = useCallback(
     (item: LayoutItem) => {
       closeLayouts();
@@ -971,6 +985,24 @@ export default function App() {
         if (!saveLayoutsStore(next)) return;
         setLayoutNameRequest(null);
         toast.success('Layout renamed');
+        return;
+      }
+      if (request.mode === 'duplicate') {
+        const source = request.id
+          ? layouts.items.find((item) => item.id === request.id)
+          : undefined;
+        if (!source) {
+          setLayoutNameError('That layout no longer exists');
+          return;
+        }
+        if (layouts.items.length >= MAX_LAYOUTS) {
+          setLayoutNameError(`You can keep up to ${MAX_LAYOUTS} layouts`);
+          return;
+        }
+        const copy = duplicateLayout(source, trimmed);
+        if (!saveLayoutsStore({ version: 1, items: [copy, ...layouts.items] })) return;
+        setLayoutNameRequest(null);
+        toast.success(`Duplicated ${source.name}`);
         return;
       }
       const tab = activeTab;
@@ -1021,6 +1053,21 @@ export default function App() {
     closeLayouts();
     toast.success(`Updated ${item.name}`);
   }, [activeLayout, activeTab, activeWorkspace, closeLayouts, layouts.items, saveLayoutsStore]);
+
+  /** `Update` overwrites a saved snapshot: confirm before capturing the live state. */
+  const requestUpdateActiveLayout = useCallback(() => {
+    if (!activeLayout) {
+      toast.error('No saved layout is linked to this workspace');
+      return;
+    }
+    closeLayouts();
+    setLayoutOverwrite(activeLayout);
+  }, [activeLayout, closeLayouts]);
+
+  const confirmUpdateLayout = useCallback(() => {
+    setLayoutOverwrite(null);
+    updateActiveLayout();
+  }, [updateActiveLayout]);
 
   const applyLayoutItem = useCallback(
     async (item: LayoutItem) => {
@@ -1787,7 +1834,8 @@ export default function App() {
           closeLayouts();
         }}
         onSaveCurrent={openSaveLayout}
-        onUpdate={updateActiveLayout}
+        onUpdate={requestUpdateActiveLayout}
+        onDuplicateActive={openDuplicateActive}
         onSaveAs={openSaveAsLayout}
         onShowAll={() => {
           setLayoutsMenuOpen(false);
@@ -1830,6 +1878,30 @@ export default function App() {
         }}
         onSubmit={submitLayoutName}
       />
+
+      <Modal
+        open={layoutOverwrite !== null}
+        onOpenChange={(open) => {
+          if (!open) setLayoutOverwrite(null);
+        }}
+        title="Overwrite layout"
+        description={layoutOverwrite?.name}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setLayoutOverwrite(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={confirmUpdateLayout}>
+              Overwrite
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[12px] leading-5 text-muted-foreground">
+          This replaces the saved snapshot with the current workspace. Duplicate the layout first
+          to keep the saved copy.
+        </p>
+      </Modal>
 
       <Modal
         open={layoutDelete !== null}

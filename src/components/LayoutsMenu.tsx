@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Menu, Popover } from '@base-ui/react';
 import {
   Check,
+  Copy,
   Download,
   FilePlus2,
   FolderOpen,
@@ -36,6 +37,7 @@ export interface LayoutsMenuProps extends LayoutActions {
   onApply: (item: LayoutItem) => void;
   onSaveCurrent: () => void;
   onUpdate: () => void;
+  onDuplicateActive: () => void;
   onSaveAs: () => void;
   onShowAll: () => void;
   onImport: () => void;
@@ -52,6 +54,7 @@ export function LayoutsMenu({
   onApply,
   onSaveCurrent,
   onUpdate,
+  onDuplicateActive,
   onSaveAs,
   onShowAll,
   onImport,
@@ -106,6 +109,13 @@ export function LayoutsMenu({
           <>
             <MenuButton icon={Save} onClick={onUpdate} title={`Update ${active.name}`}>
               Update “{active.name}”
+            </MenuButton>
+            <MenuButton
+              icon={Copy}
+              onClick={onDuplicateActive}
+              title={`Duplicate ${active.name}`}
+            >
+              Duplicate “{active.name}”…
             </MenuButton>
             <MenuButton icon={FilePlus2} onClick={onSaveAs}>
               Save as…
