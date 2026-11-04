@@ -96,6 +96,7 @@ src/
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
     AiToolCard.tsx                human-readable, collapsible tool calls
+    AlertsPanel.tsx               per-tab script alerts in the right rail
     AssistantUiThread.tsx         assistant-ui chat over the same tools
     assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
     ui/                           shadcn shims used by the registry kit (Base UI)
@@ -118,6 +119,7 @@ src/
     ai/tools.ts                   app tools: script, chart context, debug run
     ai/uiChats.ts                 assistant-ui sessions, migration, groups, title fallback
     utils.ts                      shadcn `cn` helper for registry components
+    alerts.ts                     session-only per-tab chart alerts
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
@@ -348,7 +350,13 @@ props survive; Vela restores the previous code when the new one fails. Only a
 missing indicator is added. The host returns `{ count, errors }` per chart, and
 the panel reports the first error. Store `pineScript`, `pineName`, and `pineAll`
 on the tab and reapply on mount. `lastAppliedRef` prevents a double apply when
-the tab state update and the imperative Apply happen together.
+the tab state update and the imperative Apply happen together. The script is
+TAB state, not chart state: removing `screener-pine` from the legend (or the
+object tree) clears those tab fields through `onPineRemoved`, and the host
+removes its siblings on other cells; otherwise a reload, an `Update layout`
+(`tabPine(tab)`) or a layout switch applies it again. `applyLayout` sets
+`pineSwapRef` while it swaps the old script for the snapshot's one, so the swap
+is not mistaken for a user delete.
 
 **Saved indicators are app-owned external scripts.** The library stores raw
 `.pine` source only, never transpiled output. `addSavedIndicator(item)` adds it
@@ -502,20 +510,32 @@ key (OpenCode Go publishes it at `/inference/go/v1/models`, not under
 model with `reasoning: 'none'`.
 
 **The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
-registers `Screener`, `Pine`, and `Library` with `registerSidePanel` at import
-time and portals the React content into the bodies Vela hands `mount`. Mounts are
-keyed `<tabId>:<panelId>`; `openVelaPanel` targets the active tab and the
-portals render only into its bodies. The shell runs with `sidebar: true`
-(Vela dev): on desktop the panel toggles live in the right sidebar and the
-topbar keeps Maximize, Layouts, Alerts and the screenshot button; mobile keeps
-the panel rows in its menu. `sidebar` does not exist in main/0.9.3, so drop it
-when the checkout returns to main before the next release. The dock's open
-panel and width live in the Vela workspace document, not in
-`screener.dock.*`. Do not reach into panel internals.
-`screener.panels.welcomed` only controls the one-time Screener default.
+registers `Screener`, `Pine`, `Library`, and `Alerts` with `registerSidePanel` at
+import time and portals the React content into the bodies Vela hands `mount`.
+Mounts are keyed `<tabId>:<panelId>`; `openVelaPanel` targets the active tab and
+the portals render only into its bodies. The shell runs with
+`sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] }` (Vela dev):
+on desktop the panel toggles live in the right sidebar and the topbar keeps
+Maximize, Layouts and the screenshot button; mobile keeps the panel rows in its
+menu. `sidebar` does not exist in main/0.9.3, so drop it when the checkout
+returns to main before the next release. The dock's open panel and width live in
+the Vela workspace document, not in `screener.dock.*`. Do not reach into panel
+internals. `screener.panels.welcomed` only controls the one-time Screener
+default.
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
 maximized Pine editor keeps the pointer. Keep that override.
+
+**Alerts are app-owned and session-only.** `lib/velaPanels.tsx` hides Vela's
+topbar bell (`ctx.topbar.setVisible('alerts', false)` through a widget
+attachment) and the rail's `Alerts` panel replaces it. The host forwards every
+cell's `chart.on('alert')` to `lib/alerts.ts`, which keeps the newest 50 per
+tab; the panel subscribes with `useSyncExternalStore` and shows the active
+tab's list. Each workspace's panel mount also keeps its rail button's count in
+sync through `ctx.sidebar.setBadge('alerts', n)`, so background tabs badge too.
+Alerts from background tabs are collected too, and each tab's panel shows its
+own list. Nothing is persisted: a reload starts empty, exactly like Vela's
+bell. Do not read Vela's private alert list or add a second bell.
 
 **Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
 `Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,
@@ -643,10 +663,14 @@ Useful browser probes:
 - Zoom a cell to its scale floor, maximize it: the host loads enough history to
   fill the wider window at the same `barSpacing` (no click, resize or refit), and
   the left edge shows candles instead of empty space.
-- The right sidebar's panel buttons open `Screener`, `Pine`, and `Library` as one
-  Vela side panel at a time; the topbar keeps Maximize, Layouts, Alerts and the
-  screenshot button. The open panel and width survive reload. The legend source
-  action opens the Pine panel.
+- The right sidebar's panel buttons open `Screener`, `Pine`, `Library`, and
+  `Alerts` as one Vela side panel at a time; the topbar keeps Maximize, Layouts
+  and the screenshot button. The open panel and width survive reload. The legend
+  source action opens the Pine panel.
+- A script with `alert()` on the active chart fills the `Alerts` rail panel with
+  the symbol, timeframe, message and indicator; the topbar has no bell, and the
+  rail button carries the alert count. Clearing empties the list and the count,
+  and a reload starts empty.
 - Creating a workspace with `+` immediately requests its klines and renders candles;
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label; the
@@ -670,14 +694,19 @@ Useful browser probes:
   already on the chart updates the same legend row and keeps its inputs and
   props; a new plot in the edited source appears, and a broken source reports
   the error while the previous code keeps running. `All` adds or updates every
-  cell. The Pine developer AI calls `edit_code` then `apply_live` and reports
+  cell. Deleting the applied row from the legend clears the tab's stored script:
+  `Update layout` then drops `pine` from the snapshot, a reload does not reapply
+  it, and switching layouts does not bring it back. The Pine developer AI calls
+  `edit_code` then `apply_live` and reports
   the live result; `Chart analyst` gets none of the three editing tools.
 - The `Layouts` toolbar action sits right after Maximize and shows the active
   tab's linked layout name (or `Layouts`). Saving a 2×2 workspace creates an item in
   `screener.layouts.v1` and renames the action. A row click loads the layout into
   the current tab (grid, markets, indicators, drawings, script); `Open in new
   tab` seeds a new tab with the same state and survives a reload with its own
-  edits; `Update` captures the live state; rename, duplicate and delete work;
+  edits; `Update` asks before overwriting the saved snapshot, then captures
+  the live state; `Duplicate…` copies the active layout through the name
+  dialog, and the row menu duplicates, renames and deletes too;
   `Export all` writes `screener-layouts.json` and `Import` merges it with a
   unique name. A full localStorage reports the quota error instead of losing the
   save.

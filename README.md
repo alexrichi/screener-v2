@@ -110,9 +110,9 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   button of the chart toolbar's right group maximizes the selected chart over the
   widget and restores the grid on a second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
-  reorderable columns, and per-row actions. Screener, Pine, and Library open as
-  Vela side panels from the chart's right sidebar; the open panel and width
-  persist.
+  reorderable columns, and per-row actions. Screener, Pine, Library, and Alerts
+  open as Vela side panels from the chart's right sidebar; the open panel and
+  width persist, and script alerts are session-only.
 - Favorites: named lists managed from the star popover in the screener toolbar.
   `Default` is the default list; star a symbol to add it to the active list.
   Lists are stored at `screener.favorites.v2` per instrument
@@ -127,8 +127,9 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   settings.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
-  duplicate, and import or export JSON. The `Layouts` button sits in the chart
-  toolbar right after Maximize.
+  duplicate, and import or export JSON. Updating a saved layout asks before
+  overwriting it; `Duplicate…` keeps a copy of the active layout. The `Layouts`
+  button sits in the chart toolbar right after Maximize.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
   delete scripts; export or import `.pine` files and the JSON library. Saved
   scripts also appear in the app's `Indicators` window under `My scripts`, above
