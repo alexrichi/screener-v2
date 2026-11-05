@@ -104,7 +104,8 @@ src/
                                   source-code legend action
     ScreenerTable.tsx             market table, filters, favorites, column actions
     PinePanel.tsx                 script editor, saved scripts, apply and scan controls
-    PineEditor.tsx                CodeMirror 6 wrapper, Pine mode, keymaps
+    PineEditor.tsx                CodeMirror 6 wrapper; language and lint come from
+                                  `@screener/pine-editor`
     LibraryPanel.tsx              saved indicator list, import/export and actions
     SettingsDialog.tsx            universe and scan defaults
   hooks/
@@ -883,10 +884,17 @@ engine there and the app picks it up without a rebuild. The engine owns the
 compile-once/run-many API the scan worker needs; the app keeps only the venue
 fetching and the table mapping.
 
+`@screener/pine-editor` (`../pine-editor`) owns the editor's Pine language:
+a stream tokenizer, a CSS-variable theme, completions from the MIT
+`pinescript-v6-validator` signature table, and a linter that runs that
+validator. `PineEditor.tsx` keeps only the CodeMirror wiring and keymaps. The
+validator and its 475 signatures load through a dynamic import on first use, so
+neither is in the initial bundle.
+
 ### PineTS documentation
 
 PineTS is the AGPL TypeScript Pine Script runtime still behind Vela's chart
-indicators, the Pine editor and the AI debug runner. Its docs are at
+indicators and the AI debug runner. Its docs are at
 <https://docs.luxalgo.com/developers/pinets>:
 
 - Getting started: <https://docs.luxalgo.com/developers/pinets/getting-started>

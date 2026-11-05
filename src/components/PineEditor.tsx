@@ -32,7 +32,7 @@ import {
   pineLanguage,
   pineLinter,
   pineThemeExtensions,
-} from '@luxalgo/vela-pinets/editor';
+} from '@screener/pine-editor';
 import { cn } from '../ui/cn';
 
 const indentFold = foldService.of((state, lineStart) => {
@@ -81,8 +81,8 @@ export function PineEditor({
 
   const extensions = useMemo(
     () => [
-      pineLanguage,
-      ...pineThemeExtensions,
+      pineLanguage(),
+      ...pineThemeExtensions(),
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightActiveLine(),
