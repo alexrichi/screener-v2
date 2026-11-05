@@ -16,6 +16,7 @@ import type {
   WorkspaceTab,
 } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
+import { toast } from 'sonner';
 import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
 import { pushAlert, type ChartAlertInput } from '../lib/alerts';
 import { timeframeMs } from '../lib/timeframe';
@@ -621,7 +622,12 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
                 () => new SidecarVelaProvider(venue.id, venue.label),
               ]),
             ),
-            engines: { pine: () => new PineEngine() },
+            engines: {
+              pine: () =>
+                new PineEngine({
+                  onWarning: (message) => toast.warning(message, { duration: 8000 }),
+                }),
+            },
             live: true,
             theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
             timezone: 'UTC',

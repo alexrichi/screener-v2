@@ -120,6 +120,11 @@ function modelOf(
   };
 }
 
+export interface PineEngineOptions {
+  /** Called once per distinct warning for this workspace; hosts surface it in the UI. */
+  onWarning?: (message: string) => void;
+}
+
 /**
  * Pine Script engine for Vela, backed by the MIT `pine-engine` package.
  *
@@ -131,6 +136,15 @@ function modelOf(
 export class PineEngine implements ScriptingEngine {
   readonly language = 'pine';
   readonly capabilities = { streaming: false, visibleRange: false, inputs: true };
+  private readonly reported = new Set<string>();
+
+  constructor(private readonly options: PineEngineOptions = {}) {}
+
+  private report(message: string): void {
+    if (this.reported.has(message)) return;
+    this.reported.add(message);
+    this.options.onWarning?.(message);
+  }
 
   prepare(source: string, instanceId: string): Promise<PreparedScript> {
     const program = compilePine({ source, id: instanceId });
@@ -183,10 +197,13 @@ export class PineEngine implements ScriptingEngine {
         return;
       }
       if (result.missingStd.length > 0) {
-        handlers.onWarning?.({
-          message: `Unsupported Pine functions: ${result.missingStd.join(', ')}`,
-          bar: bars.length - 1,
-        });
+        const message = `Unsupported Pine functions: ${result.missingStd.join(', ')}`;
+        this.report(message);
+        handlers.onWarning?.({ message, bar: bars.length - 1 });
+      }
+      for (const warning of result.warnings) {
+        this.report(warning);
+        handlers.onWarning?.({ message: warning, bar: bars.length - 1 });
       }
       const model = modelOf(token, result, bars, inputs, values);
       snapshot = {

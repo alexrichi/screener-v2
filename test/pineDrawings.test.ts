@@ -13,6 +13,7 @@ function resultOf(visuals: PineVisualEvent[]): PineRunResult {
     visuals,
     inputs: [],
     missingStd: [],
+    warnings: [],
   };
 }
 
