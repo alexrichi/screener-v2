@@ -13,6 +13,7 @@ import type {
 } from '@luxalgo/vela/plugin';
 import { ACCENT, CATEGORICAL, stableSeriesId } from '@luxalgo/vela/plugin';
 import { compilePine, type PineProgram, type PineRunResult } from '@screener/pine-engine';
+import { pineDrawings } from './drawings';
 
 const INPUT_TYPES: Record<string, InputSchema['type']> = {
   integer: 'int',
@@ -72,6 +73,7 @@ function modelOf(
   const { instanceId, program } = token;
   const series: LineLikeSeries[] = [];
   const ordinalByKey = new Map<string, number>();
+  const drawings = pineDrawings(instanceId, run, bars);
 
   for (const plot of run.plots) {
     const kind = SERIES_KINDS[plot.type] ?? 'line';
@@ -108,8 +110,11 @@ function modelOf(
     paneHint: program.meta.overlay ? 'price' : 'new',
     series,
     fills: [],
-    backgrounds: [],
+    backgrounds: drawings.backgrounds,
     priceLines: [],
+    lines: drawings.lines,
+    boxes: drawings.boxes,
+    labels: drawings.labels,
     inputs,
     inputValues: values,
   };

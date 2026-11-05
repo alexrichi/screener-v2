@@ -903,13 +903,15 @@ neither is in the initial bundle.
 `ScriptingEngine` port over `pine-engine`, registered as
 `engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
 Vela re-runs it on every bar notification, and `inputs: true`, so the settings
-dialog works. It emits PLOTS only — `line`/`label`/`box`/`table` drawings,
-`bgcolor`, `alert()` and `request.security` are not wired yet, so a script that
-only draws renders nothing. It waits for `historyState: 'complete'` instead of
-running on a partial backfill. Series ids come from `stableSeriesId` so value
-patches hit the same series across runs. The old `PineWorkerEngine` and the
-`@luxalgo/vela-pinets` dependency are gone; `pinets` survives only in
-`ai/debug.worker.ts`.
+dialog works. It emits plots plus `line.new`/`box.new`/`label.new` drawings and
+`bgcolor` spans (`lib/pineVela/drawings.ts`). Object mutations
+(`line.set_xy1`, `box.set_right`, `*.delete`) and `plotshape` markers are not
+mapped yet, so a script that only moves an existing object draws it at the
+creation size. `alert()` is not emitted by the transpiler at all. It waits for
+`historyState: 'complete'` instead of running on a partial backfill. Series ids
+come from `stableSeriesId` so value patches hit the same series across runs. The
+old `PineWorkerEngine` and the `@luxalgo/vela-pinets` dependency are gone;
+`pinets` survives only in `ai/debug.worker.ts`.
 
 ### PineTS documentation
 
