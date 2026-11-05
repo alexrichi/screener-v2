@@ -288,27 +288,31 @@ export class PineEngine implements ScriptingEngine {
     let generation = 0;
     let running = false;
     let pending = false;
-    // ponytail: a 15 s lower-timeframe cache; intrabar precision on forming bars
+    // ponytail: a 60 s lower-timeframe cache; intrabar precision on forming bars
     // trails by at most that long. Shorter needs a per-bar subscription.
-    const LOWER_TTL_MS = 15_000;
+    const LOWER_TTL_MS = 60_000;
+    const LOWER_FETCH_TIMEOUT_MS = 8_000;
     const lowerCache = new Map<string, { bars: PineBar[]; at: number }>();
 
     const reportResult = (
       result: PineRunResult,
       bars: readonly PineBar[],
+      provisional = false,
     ): void => {
       if (!result.ok) {
         handlers.onError?.(new Error(result.error ?? 'The script failed'));
         return;
       }
-      if (result.missingStd.length > 0) {
-        const message = `Unsupported Pine functions: ${result.missingStd.join(', ')}`;
-        this.report(message);
-        handlers.onWarning?.({ message, bar: bars.length - 1 });
-      }
-      for (const warning of result.warnings) {
-        this.report(warning);
-        handlers.onWarning?.({ message: warning, bar: bars.length - 1 });
+      if (!provisional) {
+        if (result.missingStd.length > 0) {
+          const message = `Unsupported Pine functions: ${result.missingStd.join(', ')}`;
+          this.report(message);
+          handlers.onWarning?.({ message, bar: bars.length - 1 });
+        }
+        for (const warning of result.warnings) {
+          this.report(warning);
+          handlers.onWarning?.({ message: warning, bar: bars.length - 1 });
+        }
       }
       const model = modelOf(token, result, bars, inputs, values);
       snapshot = {
@@ -329,7 +333,7 @@ export class PineEngine implements ScriptingEngine {
         warnings: [],
       };
       handlers.onModel(model);
-      handlers.onDone?.();
+      if (!provisional) handlers.onDone?.();
     };
 
     const run = async (): Promise<void> => {
@@ -375,9 +379,15 @@ export class PineEngine implements ScriptingEngine {
         });
 
         if (missing.length > 0 && req.fetchSeries) {
+          // Paint the locally-computable part immediately; the intrabar pass
+          // replaces it when the lower series arrives.
+          if (missing.some(([key]) => !lowerCache.has(key))) {
+            reportResult(result, pineBars, true);
+          }
           const last = pineBars[pineBars.length - 1]!;
           const chartMs = timeframeMs(req.market.timeframe) || 1;
           const from = pineBars[0]?.time ?? last.time;
+          const fetchSeries = req.fetchSeries;
           await Promise.all(
             missing.map(async ([key, request]) => {
               const lowerMs = timeframeMs(request.timeframe) || 1;
@@ -386,11 +396,16 @@ export class PineEngine implements ScriptingEngine {
                 Math.max(500, Math.ceil((pineBars.length * chartMs * 1.1) / lowerMs) + 20),
               );
               try {
-                const series = await req.fetchSeries!(request.symbol, request.timeframe, {
-                  from,
-                  to: last.time + chartMs,
-                  limit,
-                });
+                const series = await Promise.race([
+                  fetchSeries(request.symbol, request.timeframe, {
+                    from,
+                    to: last.time + chartMs,
+                    limit,
+                  }),
+                  new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('lower timeframe fetch timed out')), LOWER_FETCH_TIMEOUT_MS);
+                  }),
+                ]);
                 lowerCache.set(key, {
                   bars: series
                     .map((bar) => ({

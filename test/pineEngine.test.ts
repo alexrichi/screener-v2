@@ -61,15 +61,22 @@ plot(array.get(closes, 0), "First close")`,
     } as unknown as ExecutionHandlers;
 
     engine.execute(request, handlers);
-    await waitFor(() => models.length > 0 || errors.length > 0);
+    await waitFor(() => models.some((model) => {
+      const count = model.series.find((series) => series.title === 'Count');
+      return count?.kind === 'line' && count.points[0]?.value === 15;
+    }) || errors.length > 0);
 
     expect(errors).toEqual([]);
     expect(calls[0]).toMatchObject({ symbol: 'BINANCE:BTCUSDT.P', timeframe: '1' });
-    const count = models[0]!.series.find((series) => series.title === 'Count');
+    const model = models.find((candidate) => {
+      const count = candidate.series.find((series) => series.title === 'Count');
+      return count?.kind === 'line' && count.points[0]?.value === 15;
+    })!;
+    const count = model.series.find((series) => series.title === 'Count');
     expect(count?.kind).toBe('line');
     if (count?.kind !== 'line') throw new Error('Count series missing');
     expect(count.points[0]!.value).toBe(15);
-    const first = models[0]!.series.find((series) => series.title === 'First close');
+    const first = model.series.find((series) => series.title === 'First close');
     if (first?.kind !== 'line') throw new Error('First close series missing');
     expect(first.points[0]!.value).toBe(100);
   });
