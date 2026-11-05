@@ -69,6 +69,40 @@ describe('pineDrawings', () => {
     });
   });
 
+  it('uses the handle state after mutations', () => {
+    const handle = { __id: 1, __deleted: false, left: 1, top: 20, right: 9, bottom: 10, bgcolor: 'rgba(41, 98, 255, 0.2)' };
+    const drawings = pineDrawings(
+      'inst',
+      resultOf([
+        {
+          call: 'box.new',
+          args: [1, 20, 3, 10, '#2962FF', 1, 'solid', null, null, 'rgba(41, 98, 255, 0.2)', 'FVG'],
+          barIndex: 1,
+          pineHandleId: 1,
+        },
+        { call: 'box.set_right', args: [handle, 9], barIndex: 4, pineHandleId: 1 },
+      ]),
+      bars,
+    );
+
+    expect(drawings.boxes).toHaveLength(1);
+    expect(drawings.boxes[0]).toMatchObject({ left: 1, right: 9, text: 'FVG' });
+  });
+
+  it('drops a drawing deleted by the end of the run', () => {
+    const handle = { __id: 2, __deleted: true, left: 1, top: 20, right: 3, bottom: 10 };
+    const drawings = pineDrawings(
+      'inst',
+      resultOf([
+        { call: 'box.new', args: [1, 20, 3, 10], barIndex: 1, pineHandleId: 2 },
+        { call: 'box.delete', args: [handle], barIndex: 3, pineHandleId: 2 },
+      ]),
+      bars,
+    );
+
+    expect(drawings.boxes).toEqual([]);
+  });
+
   it('maps label.new with its style and text color', () => {
     const drawings = pineDrawings(
       'inst',

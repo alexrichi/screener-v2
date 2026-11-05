@@ -897,10 +897,16 @@ neither is in the initial bundle.
 `engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
 Vela re-runs it on every bar notification, and `inputs: true`, so the settings
 dialog works. It emits plots plus `line.new`/`box.new`/`label.new` drawings and
-`bgcolor` spans (`lib/pineVela/drawings.ts`). Object mutations
-(`line.set_xy1`, `box.set_right`, `*.delete`) and `plotshape` markers are not
-mapped yet, so a script that only moves an existing object draws it at the
-creation size. `alert()` is not emitted by the transpiler at all. It waits for
+`bgcolor` spans (`lib/pineVela/drawings.ts`). Drawings are built from the
+transpiler's live handle for each object, not from the creation arguments: a
+`set_*` event carries the same object the transpiler mutates in place, so the
+handle already holds the final geometry and a deleted object is dropped. Object
+mutations the transpiler's registry does not implement (`line.set_y1`,
+`line.set_y2`, `line.set_width`, …) still throw inside the generated script; the
+registry only ships `set_x2`, `set_xy1`, `set_xy2`, `set_color` for lines and the
+`set_left/right/top/bottom` family for boxes. `plotshape` markers are not mapped.
+`alert()` is not emitted by the transpiler at all. `na()` returns false for any
+object, so `if not na(box)` guards work. It waits for
 `historyState: 'complete'` instead of running on a partial backfill. Series ids
 come from `stableSeriesId` so value patches hit the same series across runs. The
 old `PineWorkerEngine` and the `@luxalgo/vela-pinets` dependency are gone;
