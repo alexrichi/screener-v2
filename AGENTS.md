@@ -126,6 +126,7 @@ src/
     luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
+    pineVela/engine.ts            Vela ScriptingEngine backed by pine-engine
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
     velaLayouts.ts                topbar Layouts action and popover bridge
@@ -891,10 +892,22 @@ validator. `PineEditor.tsx` keeps only the CodeMirror wiring and keymaps. The
 validator and its 475 signatures load through a dynamic import on first use, so
 neither is in the initial bundle.
 
+`lib/pineVela/engine.ts` is the chart engine: `PineEngine` implements Vela's
+`ScriptingEngine` port over `pine-engine`, registered as
+`engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
+Vela re-runs it on every bar notification, and `inputs: true`, so the settings
+dialog works. It emits PLOTS only — `line`/`label`/`box`/`table` drawings,
+`bgcolor`, `alert()` and `request.security` are not wired yet, so a script that
+only draws renders nothing. It waits for `historyState: 'complete'` instead of
+running on a partial backfill. Series ids come from `stableSeriesId` so value
+patches hit the same series across runs. The old `PineWorkerEngine` and the
+`@luxalgo/vela-pinets` dependency are gone; `pinets` survives only in
+`ai/debug.worker.ts`.
+
 ### PineTS documentation
 
-PineTS is the AGPL TypeScript Pine Script runtime still behind Vela's chart
-indicators and the AI debug runner. Its docs are at
+PineTS is the AGPL TypeScript Pine Script runtime still behind the AI debug
+runner. Its docs are at
 <https://docs.luxalgo.com/developers/pinets>:
 
 - Getting started: <https://docs.luxalgo.com/developers/pinets/getting-started>

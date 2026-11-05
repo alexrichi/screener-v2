@@ -7,7 +7,7 @@ import {
 import { sanitizeState, VelaWorkspace } from '@luxalgo/vela/workspace';
 import type { ChartCell, WorkspaceStorage } from '@luxalgo/vela/workspace';
 import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
-import { PineWorkerEngine } from '@luxalgo/vela-pinets';
+import { PineEngine } from '../lib/pineVela/engine';
 import type {
   ChartContext,
   IndicatorRow,
@@ -621,7 +621,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
                 () => new SidecarVelaProvider(venue.id, venue.label),
               ]),
             ),
-            engines: { pine: () => new PineWorkerEngine() },
+            engines: { pine: () => new PineEngine() },
             live: true,
             theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
             timezone: 'UTC',

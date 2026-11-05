@@ -1,4 +1,4 @@
-import path from 'node:path';
+﻿import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import * as esbuild from 'esbuild';
@@ -7,7 +7,6 @@ import tailwindcss from '@tailwindcss/vite';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const velaSrc = path.resolve(root, '../Vela/src');
-const velaPinetsSrc = path.resolve(root, '../Vela-pinets/src');
 const pineEngineSrc = path.resolve(root, '../pine-engine/src/index.ts');
 const pineEditorSrc = path.resolve(root, '../pine-editor/src/index.ts');
 
@@ -43,8 +42,8 @@ function inlineWorker(): import('vite').Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), inlineWorker()],
   resolve: {
-    // The local Vela-pinets editor entry has its own CodeMirror and pinets installs.
-    // Keep one copy or production bundles two @codemirror/state instances and fails.
+    // The Pine editor and the local Vela checkout both pull CodeMirror; keep one
+    // copy or production bundles two @codemirror/state instances and fails.
     dedupe: [
       'react',
       'react-dom',
@@ -61,8 +60,7 @@ export default defineConfig({
     alias: [
       // shadcn/assistant-ui registry components use the `@/` project alias.
       { find: /^@\//, replacement: `${root.replace(/\\/g, '/')}/src/` },
-      // Local Vela checkout: edit the chart core and see it live.
-      { find: /^@luxalgo\/vela$/, replacement: path.join(velaSrc, 'index.ts') },
+      // Local Vela checkout: edit the chart core and see it live.      { find: /^@luxalgo\/vela$/, replacement: path.join(velaSrc, 'index.ts') },
       {
         find: /^@luxalgo\/vela\/workspace$/,
         replacement: path.join(velaSrc, 'workspace/index.ts'),
@@ -73,8 +71,6 @@ export default defineConfig({
         find: /^@luxalgo\/vela\/providers\/binance$/,
         replacement: path.join(velaSrc, 'data/providers/binance/index.ts'),
       },
-      // Local addon: edit hline/fill and engine code without rebuilding the npm package.
-      { find: /^@luxalgo\/vela-pinets$/, replacement: path.join(velaPinetsSrc, 'index.ts') },
       // Local Pine engine: edit the transpiler runtime and see it live.
       { find: /^@screener\/pine-engine$/, replacement: pineEngineSrc },
       // Local Pine editor: CodeMirror language support without the addon.
@@ -82,7 +78,7 @@ export default defineConfig({
     ],
   },
   optimizeDeps: {
-    exclude: ['@luxalgo/vela', '@luxalgo/vela-pinets', '@screener/pine-engine', '@screener/pine-editor'],
+    exclude: ['@luxalgo/vela', '@screener/pine-engine', '@screener/pine-editor'],
   },
   server: {
     port: 5173,
@@ -90,7 +86,6 @@ export default defineConfig({
       allow: [
         root,
         path.resolve(root, '../Vela'),
-        path.resolve(root, '../Vela-pinets'),
         path.resolve(root, '../pine-engine'),
         path.resolve(root, '../pine-editor'),
       ],
