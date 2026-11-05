@@ -6,6 +6,8 @@ import type {
   DrawingBox,
   DrawingLabel,
   DrawingLine,
+  DrawingLinefill,
+  DrawingPolyline,
   DrawingTable,
   LabelStyle,
   LabelYLoc,
@@ -21,6 +23,8 @@ export interface VelaDrawings {
   labels: DrawingLabel[];
   backgrounds: Background[];
   tables: DrawingTable[];
+  linefills: DrawingLinefill[];
+  polylines: DrawingPolyline[];
 }
 
 function textSize(value: string): BoxTextSize {
@@ -143,27 +147,31 @@ function tableOf(instanceId: string, table: PineTable): DrawingTable {
   };
 }
 
+function lineOf(instanceId: string, line: PineDrawings['lines'][number]): DrawingLine {
+  return {
+    id: `${instanceId}:line:${line.id}`,
+    paneId: '',
+    xloc: line.xloc,
+    x1: line.x1,
+    y1: line.y1,
+    x2: line.x2,
+    y2: line.y2,
+    extend: line.extend,
+    color: line.color || undefined,
+    invisible: false,
+    width: line.width,
+    style: lineStyle(line.style),
+    arrowLeft: line.arrowLeft === true,
+    arrowRight: line.arrowRight === true,
+  };
+}
+
 /** Map the engine's final drawing objects onto Vela's drawing model. */
 export function pineDrawings(instanceId: string, result: PineRunResult): VelaDrawings {
   const drawings: PineDrawings = result.drawings;
 
   return {
-    lines: drawings.lines.map((line) => ({
-      id: `${instanceId}:line:${line.id}`,
-      paneId: '',
-      xloc: line.xloc,
-      x1: line.x1,
-      y1: line.y1,
-      x2: line.x2,
-      y2: line.y2,
-      extend: line.extend,
-      color: line.color || undefined,
-      invisible: false,
-      width: line.width,
-      style: lineStyle(line.style),
-      arrowLeft: line.arrowLeft === true,
-      arrowRight: line.arrowRight === true,
-    })),
+    lines: drawings.lines.map((line) => lineOf(instanceId, line)),
     boxes: drawings.boxes.map((box) => ({
       id: `${instanceId}:box:${box.id}`,
       paneId: '',
@@ -214,5 +222,29 @@ export function pineDrawings(instanceId: string, result: PineRunResult): VelaDra
       color: background.color,
     })),
     tables: result.tables.map((table) => tableOf(instanceId, table)),
+    linefills: drawings.linefills.map((fill) => ({
+      id: `${instanceId}:linefill:${fill.id}`,
+      paneId: '',
+      line1: lineOf(instanceId, fill.line1),
+      line2: lineOf(instanceId, fill.line2),
+      color: fill.color || undefined,
+    })),
+    polylines: drawings.polylines.map((polyline) => ({
+      id: `${instanceId}:polyline:${polyline.id}`,
+      paneId: '',
+      points: polyline.points.map((point) => ({
+        xloc: point.xloc,
+        x: point.x,
+        price: point.price,
+      })),
+      curved: polyline.curved,
+      closed: polyline.closed,
+      lineColor: polyline.lineColor || undefined,
+      fillColor: polyline.fillColor || undefined,
+      lineWidth: polyline.lineWidth,
+      lineStyle: lineStyle(polyline.lineStyle),
+      arrowLeft: false,
+      arrowRight: false,
+    })),
   };
 }

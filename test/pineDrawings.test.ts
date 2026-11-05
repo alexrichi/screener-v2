@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { pineDrawings } from '../src/lib/pineVela/drawings';
 import type { PineDrawings, PineRunResult, PineShapePoint, PineTable } from '@screener/pine-engine';
 
-const EMPTY: PineDrawings = { lines: [], boxes: [], labels: [], backgrounds: [] };
+const EMPTY: PineDrawings = { lines: [], boxes: [], labels: [], backgrounds: [], linefills: [], polylines: [] };
 
 function resultOf(
   drawings: Partial<PineDrawings>,
@@ -17,6 +17,7 @@ function resultOf(
     drawings: { ...EMPTY, ...drawings },
     tables,
     shapes,
+    candles: [],
     inputs: [],
     missingStd: [],
     warnings: [],
@@ -235,5 +236,51 @@ describe('pineDrawings', () => {
       yloc: 'abovebar',
       color: '#FF5252',
     });
+  });
+
+  it('maps linefills and polylines', () => {
+    const line = {
+      id: 1,
+      x1: 0,
+      y1: 10,
+      x2: 2,
+      y2: 10,
+      xloc: 'bar_index' as const,
+      extend: 'none' as const,
+      color: '#2962FF',
+      style: 'solid' as const,
+      width: 1,
+    };
+    const second = { ...line, id: 2, y1: 20, y2: 20 };
+    const drawings = pineDrawings('inst', resultOf({
+      linefills: [
+        { id: 3, line1: line, line2: second, color: '#2962FF33' },
+      ],
+      polylines: [
+        {
+          id: 4,
+          points: [{ xloc: 'bar_index', x: 0, price: 10 }, { xloc: 'bar_index', x: 2, price: 20 }],
+          curved: false,
+          closed: false,
+          lineColor: '#FF5252',
+          fillColor: '',
+          lineWidth: 2,
+          lineStyle: 'dashed',
+        },
+      ],
+    }));
+
+    expect(drawings.linefills[0]).toMatchObject({
+      id: 'inst:linefill:3',
+      color: '#2962FF33',
+    });
+    expect(drawings.linefills[0]!.line1.id).toBe('inst:line:1');
+    expect(drawings.polylines[0]).toMatchObject({
+      id: 'inst:polyline:4',
+      lineColor: '#FF5252',
+      lineWidth: 2,
+      lineStyle: 'dashed',
+    });
+    expect(drawings.polylines[0]!.points).toHaveLength(2);
   });
 });

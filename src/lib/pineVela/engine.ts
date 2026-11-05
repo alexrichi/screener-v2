@@ -10,6 +10,7 @@ import type {
   LineLikeSeries,
   PreparedScript,
   ScriptingEngine,
+  SeriesSpec,
 } from '@luxalgo/vela/plugin';
 import { ACCENT, CATEGORICAL, stableSeriesId } from '@luxalgo/vela/plugin';
 import { compilePine, type PineProgram, type PineRunResult } from '@screener/pine-engine';
@@ -73,7 +74,7 @@ function modelOf(
   values: Record<string, InputValue>,
 ): IndicatorModel {
   const { instanceId, program } = token;
-  const series: LineLikeSeries[] = [];
+  const series: SeriesSpec[] = [];
   const ordinalByKey = new Map<string, number>();
   const drawings = pineDrawings(instanceId, run);
 
@@ -101,6 +102,38 @@ function modelOf(
     });
   }
 
+  for (const candle of run.candles) {
+    const key = `${candle.kind}:${candle.title}`;
+    const ordinal = ordinalByKey.get(key) ?? 0;
+    ordinalByKey.set(key, ordinal + 1);
+    series.push({
+      id: stableSeriesId({ instanceId, kind: candle.kind, title: candle.title, ordinal }),
+      title: candle.title,
+      paneId: '',
+      kind: candle.kind,
+      bars: candle.bars.map((bar) => ({
+        time: bar.time,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+      })),
+      style: candle.kind === 'candle'
+        ? {
+            up: candle.color,
+            down: candle.color,
+            wickUp: candle.wickColor,
+            wickDown: candle.wickColor,
+            borderUp: candle.borderColor,
+            borderDown: candle.borderColor,
+          }
+        : undefined,
+      barColors: candle.kind === 'bar'
+        ? candle.bars.map(() => ({ color: candle.color }))
+        : undefined,
+    });
+  }
+
   return {
     id: instanceId,
     title: program.meta.name,
@@ -118,6 +151,8 @@ function modelOf(
     boxes: drawings.boxes,
     labels: drawings.labels,
     tables: drawings.tables,
+    polylines: drawings.polylines,
+    linefills: drawings.linefills,
     inputs,
     inputValues: values,
   };
