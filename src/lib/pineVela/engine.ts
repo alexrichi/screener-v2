@@ -291,7 +291,7 @@ export class PineEngine implements ScriptingEngine {
     // ponytail: a 60 s lower-timeframe cache; intrabar precision on forming bars
     // trails by at most that long. Shorter needs a per-bar subscription.
     const LOWER_TTL_MS = 60_000;
-    const LOWER_FETCH_TIMEOUT_MS = 8_000;
+    const LOWER_FETCH_TIMEOUT_MS = 20_000;
     const lowerCache = new Map<string, { bars: PineBar[]; at: number }>();
 
     const reportResult = (
