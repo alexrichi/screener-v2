@@ -1,12 +1,8 @@
-import { Indicator, PineTS } from 'pinets';
+import { compilePine } from '@screener/pine-engine';
 import { SidecarVenueAdapter } from '../venues/sidecar';
 import { VenueRateLimitError } from '../venues/rateLimit';
 import type { Instrument, ScanResult, ScanWorkerIn, ScanWorkerOut } from '../types';
-import { extractPlots, type PlotLike } from './extractPlots';
-
-interface RunContext {
-  plots?: Record<string, PlotLike>;
-}
+import { extractEnginePlots } from './extractPlots';
 
 const workerSelf = self as unknown as {
   onmessage: ((event: MessageEvent<ScanWorkerIn>) => void) | null;
@@ -27,11 +23,13 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
   controller = new AbortController();
   const signal = controller.signal;
 
-  let indicator: Indicator;
-  try {
-    indicator = new Indicator(msg.script);
-  } catch (error) {
-    workerSelf.postMessage({ type: 'fatal', id: msg.id, error: errorMessage(error) });
+  const program = compilePine({ source: msg.script });
+  if (!program.ok) {
+    workerSelf.postMessage({
+      type: 'fatal',
+      id: msg.id,
+      error: program.error ?? 'The script could not be compiled',
+    });
     return;
   }
 
@@ -80,14 +78,26 @@ async function scan(msg: Extract<ScanWorkerIn, { type: 'scan' }>): Promise<void>
           { priority: 'background' },
         );
         if (bars.length < 2) throw new Error('Not enough closed bars');
-        const pine = new PineTS(bars, instrument.nativeId, msg.timeframe);
-        const context = (await pine.run(indicator)) as RunContext;
         if (signal.aborted) return;
+        const run = program.run({
+          bars: bars.map((bar) => ({
+            time: bar.openTime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+          })),
+          timeframe: msg.timeframe,
+          symbol: instrument.nativeId,
+        });
+        if (signal.aborted) return;
+        if (!run.ok) throw new Error(run.error ?? 'The script failed');
         const result: ScanResult = {
           key: instrument.key,
           venue: target.venue,
           symbol: instrument.nativeId,
-          plots: extractPlots(context.plots),
+          plots: extractEnginePlots(run.plots),
           ms: Math.round(performance.now() - started),
         };
         workerSelf.postMessage({ type: 'result', id: msg.id, result });

@@ -135,8 +135,8 @@ src/
     view.ts                       default screener view and its validator
     velaTheme.ts                  dark/light Vela theme matching the app tokens
   scan/
-    extractPlots.ts               last finite plot value from a PineTS context
-    scan.worker.ts                PineTS scan worker
+    extractPlots.ts               last finite plot value for the scan table and debug run
+    scan.worker.ts                Pine engine scan worker
     useScanner.ts                 worker lifecycle, progress, cancel, errors
   scripts/presets.ts              built-in Pine presets
   data/luxalgoCatalog.json        bundled LuxAlgo Library catalog (generated)
@@ -275,8 +275,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   debounces for 120 ms, and writes the active symbol/timeframe/layout back to the
   tab. Do not update state if the values are unchanged.
 - A scan sends `targets: [{ venue, instruments }]` to `scan.worker.ts`. The worker
-  walks venues sequentially, compiles one `Indicator`, fetches closed candles
-  with bounded concurrency, runs PineTS per instrument, and posts results keyed
+  walks venues sequentially, compiles the script once through
+  `@screener/pine-engine`, fetches closed candles with bounded concurrency, runs
+  the compiled program per instrument, and posts results keyed
   by `instrument.key` plus progress with the current venue. A venue failure or
   rate limit does not stop the remaining venues. The main thread only merges
   results and derives plot columns.
@@ -575,9 +576,12 @@ scanner and the default `fetchBars` path do not.
 them, with `1M` = month and `1m` = minute. Aggregated frames the venue does not
 serve natively (`45`, `180`) are unsupported until the sidecar builds them.
 
-**PineTS output is the contract.** `extractPlots` skips internal `__*` plots and takes
+**Plot output is the contract.** `extractEnginePlots` skips internal `__*` plots and takes
 the last finite numeric value. Keep the cap (12) and the table's dynamic column
-merge stable. Plot keys are the column identity; titles are display only.
+merge stable. Plot keys are the column identity; titles are display only. Titles
+come from the parsed AST, because the transpiled metainfo carries only ids and
+styles. The debug runner still reads the PineTS context through `extractPlots`
+until the engine reports variables.
 
 **Vela only fills between series.** `hline()` becomes a `PriceLine`, so a
 `fill(hline1, hline2)` (or `fill(hline, plot)`) would be dropped. Vela-pinets
@@ -869,10 +873,21 @@ pin as a fallback. The checkout's branch is the runtime version: `main` is
 0.9.3, `dev` is the unreleased shell (currently used for `sidebar: true`). Do not
 patch or fork Vela from this repo.
 
+### Pine engine
+
+The scanner runs `@screener/pine-engine`, a local MIT checkout at
+`../pine-engine` resolved through `vite.config.ts` and `tsconfig.json` paths the
+same way Vela is. It wraps the MIT `@opus-aether-ai/pine-transpiler` and backs
+its standard library with MIT OakScriptJS, so no AGPL code is involved. Edit the
+engine there and the app picks it up without a rebuild. The engine owns the
+compile-once/run-many API the scan worker needs; the app keeps only the venue
+fetching and the table mapping.
+
 ### PineTS documentation
 
-PineTS is the TypeScript Pine Script runtime behind the scanner and Vela's Pine
-indicators. Its docs are at <https://docs.luxalgo.com/developers/pinets>:
+PineTS is the AGPL TypeScript Pine Script runtime still behind Vela's chart
+indicators, the Pine editor and the AI debug runner. Its docs are at
+<https://docs.luxalgo.com/developers/pinets>:
 
 - Getting started: <https://docs.luxalgo.com/developers/pinets/getting-started>
 - Initialization and usage: <https://docs.luxalgo.com/developers/pinets/initialization-and-usage>
