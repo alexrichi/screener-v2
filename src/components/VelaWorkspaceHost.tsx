@@ -1,4 +1,4 @@
-﻿import {
+import {
   forwardRef,
   useEffect,
   useImperativeHandle,
@@ -74,7 +74,7 @@ interface Props {
   layoutSeed?: unknown;
   onShowSource: (source: string) => void;
   onIndicatorsChange?: () => void;
-  /** The applied Pine script left a chart on its own (legend âœ•, object tree). */
+  /** The applied Pine script left a chart on its own (legend ✕, object tree). */
   onPineRemoved: (tabId: string) => void;
   onMarketChange: (
     tabId: string,
@@ -333,7 +333,7 @@ function extendHistory(chart: CellChart, state: CellHistory, requested?: number)
     return;
   }
   state.busy = true;
-  setHistoryStatus(state, 'Loading older dataâ€¦');
+  setHistoryStatus(state, 'Loading older data…');
   const wait = nextHistoryComplete(chart);
   state.cancelWait = wait.cancel;
   void chart
@@ -390,7 +390,7 @@ function attachHistoryScroll(
       errorTimer: null,
     };
     cells.set(cell.id, state);
-    if (!chart.getVisibleRange()) setHistoryStatus(state, 'Loading chartâ€¦');
+    if (!chart.getVisibleRange()) setHistoryStatus(state, 'Loading chart…');
 
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY <= 0 || !atLoadedEdge(chart)) return;
@@ -425,7 +425,7 @@ function attachHistoryScroll(
 
     const offs: Array<() => void> = [
       () => cell.host.removeEventListener('wheel', onWheel, true),
-      chart.on('load:start', () => setHistoryStatus(state, 'Loading chartâ€¦')),
+      chart.on('load:start', () => setHistoryStatus(state, 'Loading chart…')),
       chart.on('load:end', ({ bars }) => {
         if (state.busy) return;
         if (bars === 0) {
@@ -438,7 +438,7 @@ function attachHistoryScroll(
         if (!state.busy) return;
         setHistoryStatus(
           state,
-          `Loading older dataâ€¦ ${loaded.toLocaleString('en-US')} / ${target.toLocaleString('en-US')}`,
+          `Loading older data… ${loaded.toLocaleString('en-US')} / ${target.toLocaleString('en-US')}`,
         );
       }),
       chart.on('history:complete', ({ reason }) => {
