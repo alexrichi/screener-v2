@@ -612,6 +612,13 @@ theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will dr
 from the UI. Use semantic classes (`bg-background`, `text-muted-foreground`,
 `border-border`, `bg-primary`) instead of raw hex values in components.
 
+Vela persists each cell's renderer config in the workspace document, and a saved
+`layout.background` wins over `setTheme` — a chart keeps the colors it was first
+saved with. `syncChartSurface` in `VelaWorkspaceHost` pushes the theme colors into
+every cell's renderer config on mount and on every theme change, then re-applies
+the theme. Without it the chart surface stays `#0b1220` while the app moves to
+`#030712`.
+
 **Binance streams may fall back to polling.** The bundled provider can log
 `stream delivered no data; falling back to polling` in restricted environments.
 That is expected; do not treat it as a chart bug.

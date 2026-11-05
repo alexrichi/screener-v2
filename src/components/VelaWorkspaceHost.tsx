@@ -39,6 +39,31 @@ export interface ScriptApplyReport {
   errors: string[];
 }
 
+/**
+ * Vela restores each cell's renderer config from the workspace document, and a
+ * saved `layout.background` wins over `setTheme`. Push the theme's surface
+ * colors into that config, then re-apply the theme so the chart follows the app
+ * theme instead of the color it was first saved with.
+ */
+function syncChartSurface(ws: VelaWorkspace, mode: ThemeMode): void {
+  const theme = mode === 'dark' ? velaDarkTheme : velaLightTheme;
+  for (const cell of ws.cells()) {
+    try {
+      cell.chart.renderer.applyConfig({
+        layout: {
+          background: theme.background,
+          textColor: theme.textColor,
+          gridColor: theme.gridColor,
+          borderColor: theme.borderColor,
+        },
+      });
+    } catch {
+      // A cell can be destroyed between the list call and the patch.
+    }
+  }
+  ws.setTheme(theme);
+}
+
 export interface VelaWorkspaceHandle {
   applyScript: (script: string, name: string, allCells: boolean) => Promise<ScriptApplyReport>;
   /** Snapshot the live workspace for a named layout. */
@@ -638,6 +663,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         }
       })();
       wsRef.current = ws;
+      syncChartSurface(ws, theme);
       const detachHistory = attachHistoryScroll(
         ws,
         () => onIndicatorsChangeRef.current?.(),
@@ -724,7 +750,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     useEffect(() => {
       const ws = wsRef.current;
       if (!ws) return;
-      ws.setTheme(theme === 'dark' ? velaDarkTheme : velaLightTheme);
+      syncChartSurface(ws, theme);
     }, [theme]);
 
     useEffect(() => {
