@@ -6,10 +6,12 @@ import type {
   DrawingBox,
   DrawingLabel,
   DrawingLine,
+  DrawingTable,
   LabelStyle,
   LabelYLoc,
+  TablePosition,
 } from '@luxalgo/vela/plugin';
-import type { PineDrawings, PineRunResult } from '@screener/pine-engine';
+import type { PineDrawings, PineRunResult, PineTable, PineTableCell } from '@screener/pine-engine';
 
 type LineStyle = 'solid' | 'dashed' | 'dotted';
 
@@ -18,6 +20,7 @@ export interface VelaDrawings {
   boxes: DrawingBox[];
   labels: DrawingLabel[];
   backgrounds: Background[];
+  tables: DrawingTable[];
 }
 
 function textSize(value: string): BoxTextSize {
@@ -49,6 +52,56 @@ function labelYLoc(value: string): LabelYLoc {
   if (value === 'top') return 'top';
   if (value === 'bottom') return 'bottom';
   return 'price';
+}
+
+const TABLE_POSITIONS = new Set<TablePosition>([
+  'top_left', 'top_center', 'top_right',
+  'middle_left', 'middle_center', 'middle_right',
+  'bottom_left', 'bottom_center', 'bottom_right',
+]);
+
+function tablePosition(value: string): TablePosition {
+  return TABLE_POSITIONS.has(value as TablePosition) ? (value as TablePosition) : 'top_right';
+}
+
+function tableCellOf(cell: PineTableCell): DrawingTable['cells'][number][number] {
+  return {
+    text: cell.text || undefined,
+    textColor: cell.textColor || undefined,
+    bgColor: cell.backgroundColor || undefined,
+    hAlign: hAlign(cell.hAlign),
+    vAlign: vAlign(cell.vAlign),
+    textSize: typeof cell.textSize === 'number' ? cell.textSize : textSize(cell.textSize),
+    fontFamily: 'default',
+    tooltip: cell.tooltip || undefined,
+    bold: cell.bold,
+    italic: cell.italic,
+    width: cell.width,
+    height: cell.height,
+    merged: cell.merged === true,
+  };
+}
+
+function tableOf(instanceId: string, table: PineTable): DrawingTable {
+  return {
+    id: `${instanceId}:table:${table.id}`,
+    paneId: '',
+    position: tablePosition(table.position),
+    columns: table.columns,
+    rows: table.rows,
+    bgColor: table.backgroundColor || undefined,
+    frameColor: table.frameColor || undefined,
+    frameWidth: table.frameWidth,
+    borderColor: table.borderColor || undefined,
+    borderWidth: table.borderWidth,
+    cells: table.cells.map((row) => row.map((cell) => (cell ? tableCellOf(cell) : null))),
+    merges: table.merges.map((merge) => ({
+      startCol: merge.startCol,
+      startRow: merge.startRow,
+      endCol: merge.endCol,
+      endRow: merge.endRow,
+    })),
+  };
 }
 
 /** Map the engine's final drawing objects onto Vela's drawing model. */
@@ -118,5 +171,6 @@ export function pineDrawings(instanceId: string, result: PineRunResult): VelaDra
       to: background.to,
       color: background.color,
     })),
+    tables: result.tables.map((table) => tableOf(instanceId, table)),
   };
 }

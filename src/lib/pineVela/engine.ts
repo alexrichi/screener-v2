@@ -117,6 +117,7 @@ function modelOf(
     lines: drawings.lines,
     boxes: drawings.boxes,
     labels: drawings.labels,
+    tables: drawings.tables,
     inputs,
     inputValues: values,
   };

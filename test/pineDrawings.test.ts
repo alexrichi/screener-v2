@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { pineDrawings } from '../src/lib/pineVela/drawings';
-import type { PineDrawings, PineRunResult } from '@screener/pine-engine';
+import type { PineDrawings, PineRunResult, PineTable } from '@screener/pine-engine';
 
 const EMPTY: PineDrawings = { lines: [], boxes: [], labels: [], backgrounds: [] };
 
-function resultOf(drawings: Partial<PineDrawings>): PineRunResult {
+function resultOf(drawings: Partial<PineDrawings>, tables: PineTable[] = []): PineRunResult {
   return {
     ok: true,
     name: 'Test',
     overlay: true,
     plots: [],
     drawings: { ...EMPTY, ...drawings },
+    tables,
     inputs: [],
     missingStd: [],
     warnings: [],
@@ -130,5 +131,60 @@ describe('pineDrawings', () => {
     expect(drawings.backgrounds).toEqual([
       { id: 'inst:bg:0', paneId: '', from: 1_000, to: 2_000, color: '#FF5252' },
     ]);
+  });
+
+  it('maps a table with cells and merges', () => {
+    const drawings = pineDrawings('inst', resultOf({}, [
+      {
+        id: 4,
+        position: 'top_right',
+        columns: 2,
+        rows: 2,
+        backgroundColor: '#00000000',
+        frameColor: '#787B86',
+        frameWidth: 2,
+        borderColor: '#FFFFFF',
+        borderWidth: 1,
+        cells: [
+          [
+            {
+              text: 'A',
+              textColor: '#FFFFFF',
+              backgroundColor: '#00FF0044',
+              textSize: 'small',
+              hAlign: 'left',
+              vAlign: 'top',
+              tooltip: 'tip',
+              bold: true,
+              italic: false,
+              width: 25,
+              height: 10,
+            },
+            null,
+          ],
+          [null, null],
+        ],
+        merges: [{ startCol: 0, startRow: 1, endCol: 1, endRow: 1 }],
+      },
+    ]));
+
+    expect(drawings.tables[0]).toMatchObject({
+      id: 'inst:table:4',
+      position: 'top_right',
+      columns: 2,
+      rows: 2,
+      frameWidth: 2,
+      borderWidth: 1,
+      merges: [{ startCol: 0, startRow: 1, endCol: 1, endRow: 1 }],
+    });
+    expect(drawings.tables[0]!.cells[0]![0]).toMatchObject({
+      text: 'A',
+      textSize: 'small',
+      hAlign: 'left',
+      vAlign: 'top',
+      bold: true,
+      width: 25,
+      height: 10,
+    });
   });
 });
