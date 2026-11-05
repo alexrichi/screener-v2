@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('screenerWindow', {
   toggleMaximize: () => ipcRenderer.send('screener:window', 'toggle-maximize'),
   close: () => ipcRenderer.send('screener:window', 'close'),
   quit: () => ipcRenderer.send('screener:window', 'quit'),
+  pickScript: () => ipcRenderer.invoke('screener:pick-script'),
 });

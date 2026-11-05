@@ -466,9 +466,15 @@ function attachHistoryScroll(
         if (first == null || from > first + barMs * HISTORY_EDGE_BARS) return;
         extendHistory(chart, state);
       }),
-      chart.on('indicator:added', onIndicatorsChange),
+      chart.on('indicator:added', () => {
+        onIndicatorsChange();
+        // Native adds and removes only reach the workspace through the async
+        // catalog refresh; the app owns the picker, so force the save itself.
+        ws.context().stateChanged();
+      }),
       chart.on('indicator:removed', ({ id }) => {
         onIndicatorsChange();
+        ws.context().stateChanged();
         if (id === PINE_ID) onPineRemoved();
       }),
       chart.on('alert', (alert) =>
@@ -889,6 +895,12 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           const cell = wsRef.current?.active;
           if (!cell) return [];
           const onChart = new Set(cell.onChartRows().map((row) => row.name));
+          const onChartNatives = new Set(
+            cell
+              .onChartRows()
+              .map((row) => row.nativeType)
+              .filter((type): type is string => Boolean(type)),
+          );
           const scripts = savedScriptsRef.current.map((script) => ({
             index: -1,
             savedId: script.id,
@@ -914,7 +926,9 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
                     language: row.language ?? null,
                     nativeType: row.nativeType ?? null,
                     beta: row.beta === true,
-                    present: onChart.has(row.name),
+                    present: row.nativeType
+                      ? onChartNatives.has(row.nativeType)
+                      : onChart.has(row.name),
                   },
                 ]
               : [],

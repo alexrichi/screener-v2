@@ -1386,7 +1386,7 @@ export default function App() {
         const text = await file.text();
         const lower = file.name.toLowerCase();
         if (!lower.endsWith('.json')) {
-          const fallback = file.name.replace(/\.pine$/i, '') || suggestedName(text);
+          const fallback = file.name.replace(/\.(pine|txt)$/i, '') || suggestedName(text);
           const name = uniqueName(library.items, fallback);
           const item = createIndicator(name, text);
           setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
@@ -1960,6 +1960,7 @@ export default function App() {
           if (item) addSavedToChart(item, false);
         }}
         onAddLibrary={addLibraryIndicator}
+        onImportFile={importLibraryFile}
       />
 
       <SettingsTemplateHost workspace={getVelaWorkspace} />

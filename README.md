@@ -129,12 +129,15 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   button sits in the chart toolbar right after Maximize.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
   delete scripts; export or import `.pine` files and the JSON library. Saved
-  scripts also appear in the app's `Indicators` window under `My scripts`, above
-  the built-in catalogue.
-- `LuxAlgo` tab in the `Indicators` window: search 845 public Library indicators
-  bundled with the app, browse preview cards with family and date, and add one
-  to the chart. The full Pine source is loaded on demand, saved to the local
-  library with its original licence header, and appears under `My scripts`.
+  scripts also appear in the app's `Indicators` window under `My scripts`, next
+  to `Built-in` and the Library.
+- `Indicators` window: a three-pane picker with search across names, families
+  and descriptions. `Yours` holds favorites, recent items, saved scripts and
+  `Bring a script`; `Built-in` lists the chart engine's indicators; `Library`
+  has Discover, all 845 bundled indicators and family filters. Results show
+  preview cards, the right pane shows details, and `Add` fetches the full Pine
+  source on demand, saves it with its original licence header, and adds it to
+  the chart.
 - Source button on every Pine indicator legend row: opens the exact script Vela
   is running in the editor, and selects the matching saved indicator.
 - Settings templates: the indicator gear dialog and the chart settings dialog

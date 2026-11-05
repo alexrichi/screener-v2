@@ -247,6 +247,30 @@ function registerWindowIpc() {
     mainWindow.setTitleBarOverlay({ ...palette, height: TITLEBAR_HEIGHT });
   });
 
+  ipcMain.handle('screener:pick-script', async (event) => {
+    if (event.sender !== mainWindow?.webContents || !mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Bring a script',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Pine Script', extensions: ['pine'] },
+        { name: 'Text files', extensions: ['txt'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const filePath = result.filePaths[0];
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (stat.size > 5 * 1024 * 1024) {
+        return { error: 'That script is larger than 5 MB.' };
+      }
+      return { name: path.basename(filePath), text: await fs.promises.readFile(filePath, 'utf8') };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   ipcMain.on('screener:window', (event, action) => {
     if (event.sender !== mainWindow?.webContents) return;
     if (!mainWindow) return;

@@ -121,6 +121,7 @@ src/
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
+    indicatorPicker.ts            picker entries, relevance filter, favorites/recents
     luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
@@ -193,9 +194,21 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   `IndicatorWindow`, opened by a topbar action registered under the built-in
   `'indicators'` slot. Vela still owns the button, `/` and mobile stop, but never
   constructs its picker.
-- The `LuxAlgo` tab of `IndicatorWindow` reads the bundled catalog
-  (`src/data/luxalgoCatalog.json`, 845 indicators, refresh with
-  `npm run library:catalog`). It renders preview cards through Vela's public
+- `IndicatorWindow` is a three-pane picker modelled on Vela Pro: left sources
+  and families, center results, right details. `lib/indicatorPicker.ts` builds
+  one entry list from `IndicatorRow` and the bundled catalog, filters it with a
+  name/family/description relevance order, and keeps `Favorites`/`Recent` in
+  `screener.indicators.picker.v1`. Native `On chart` is matched by `nativeType`
+  because the chart legend title can differ from the picker name (Connors RSI
+  shows as CRSI). `Add` closes the window; `Ctrl/⌘+Enter` keeps it open;
+  `↑/↓`, `F`, and `Esc` work from the search field. `Bring a script` opens
+  Electron's native dialog with `Pine Script` / `Text files` / `All files`
+  filters (the browser fallback is a file input), imports through
+  `importLibraryFile` and closes. There is no Concepts source
+  and no Ask AI action.
+- The `Discover` / `All scripts` views of `IndicatorWindow` read the bundled
+  catalog (`src/data/luxalgoCatalog.json`, 845 indicators, refresh with
+  `npm run library:catalog`). They render preview cards through Vela's public
   image-resizing proxy. `Add` fetches the full Pine source through the sidecar
   (`/library/source`, 24 h in-memory cache), stores it in the local library with
   the canonical Library URL in notes, and attaches it as its own external
@@ -387,7 +400,10 @@ bridge into `App`, which renders `IndicatorWindow`. The window reads the active
 cell's `libraryRows()`/`onChartRows()` (mapped to `IndicatorRow`) and adds via
 `addFromLibrary(index)`. Do not build the native picker a second time, and keep
 the original row indices: `libraryRows()` is the index space `addFromLibrary`
-expects.
+expects. Native `On chart` is derived from `onChartRows()[].nativeType`, not the
+name: the legend title can differ from the picker row (Connors RSI → CRSI).
+Indicator add/remove events call `ws.context().stateChanged()` so native and
+external changes reach the workspace document before the next reload.
 
 **LuxAlgo Library imports keep their licence.** The source comes verbatim from
 the same public endpoint Vela's picker uses, including its header (MPL 2.0 or
@@ -685,6 +701,16 @@ Useful browser probes:
   under `My scripts`; adding it there changes the on-chart count, and both the
   library and the applied entry survive a reload. The native `Indicators` button
   opens this window, not Vela's picker; `/` opens it too.
+- The `Indicators` window is a three-pane picker: `Yours` / `Built-in` /
+  `Library` on the left, results in the middle, details on the right. Searching
+  `rsi` lists `My scripts` and built-ins before Library cards; `Discover` shows
+  new releases and families, and `All scripts` counts the bundled catalog. A
+  native row shows `On chart` after add even when its legend title differs
+  (Connors RSI → CRSI); remove it from the legend, reload, and it stays gone.
+- `Favorites` and `Recent` persist at `screener.indicators.picker.v1`; `F`
+  toggles the selected favorite, `Enter` adds and closes, `Ctrl/⌘+Enter` adds
+  and keeps the window open, `Esc` closes. `Bring a script` imports a `.pine`
+  and the script appears under `My scripts`.
 - The Pine panel's top row holds `Apply` and `All`. Applying a script that is
   already on the chart updates the same legend row and keeps its inputs and
   props; a new plot in the edited source appears, and a broken source reports

@@ -9,6 +9,10 @@ declare global {
       toggleMaximize: () => void;
       close: () => void;
       quit: () => void;
+      /** Native open dialog with Pine/TXT/All filters; returns the selected text. */
+      pickScript: () => Promise<
+        { name: string; text: string } | { error: string } | null
+      >;
     };
   }
 }

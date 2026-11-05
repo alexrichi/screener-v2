@@ -33,6 +33,9 @@ const FAMILY_LABELS: Record<string, string> = {
 
 export const LIBRARY_ITEMS: LibraryItem[] = catalog.items;
 
+/** The curated family order the Library uses (Pro's picker follows it too). */
+export const FAMILY_ORDER: string[] = Object.keys(FAMILY_LABELS);
+
 export function familyLabel(family: string): string {
   return FAMILY_LABELS[family] ?? family;
 }
