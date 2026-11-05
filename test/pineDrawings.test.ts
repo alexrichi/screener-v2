@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { pineDrawings } from '../src/lib/pineVela/drawings';
-import type { PineDrawings, PineRunResult, PineTable } from '@screener/pine-engine';
+import type { PineDrawings, PineRunResult, PineShapePoint, PineTable } from '@screener/pine-engine';
 
 const EMPTY: PineDrawings = { lines: [], boxes: [], labels: [], backgrounds: [] };
 
-function resultOf(drawings: Partial<PineDrawings>, tables: PineTable[] = []): PineRunResult {
+function resultOf(
+  drawings: Partial<PineDrawings>,
+  tables: PineTable[] = [],
+  shapes: PineShapePoint[] = [],
+): PineRunResult {
   return {
     ok: true,
     name: 'Test',
@@ -12,6 +16,7 @@ function resultOf(drawings: Partial<PineDrawings>, tables: PineTable[] = []): Pi
     plots: [],
     drawings: { ...EMPTY, ...drawings },
     tables,
+    shapes,
     inputs: [],
     missingStd: [],
     warnings: [],
@@ -185,6 +190,50 @@ describe('pineDrawings', () => {
       bold: true,
       width: 25,
       height: 10,
+    });
+  });
+
+  it('maps plotshape markers to labels', () => {
+    const drawings = pineDrawings('inst', resultOf({}, [], [
+      {
+        group: 0,
+        title: 'Buy',
+        time: 1_000,
+        value: 1,
+        text: 'B',
+        style: 'triangleup',
+        location: 'belowbar',
+        color: '#4CAF50',
+        size: 'small',
+      },
+      {
+        group: 1,
+        title: 'Sell',
+        time: 2_000,
+        value: -1,
+        style: 'arrowdown',
+        location: 'abovebar',
+        color: '#FF5252',
+        size: 'normal',
+      },
+    ]));
+
+    expect(drawings.labels).toHaveLength(2);
+    expect(drawings.labels[0]).toMatchObject({
+      id: 'inst:shape:0',
+      xloc: 'bar_time',
+      x: 1_000,
+      yloc: 'belowbar',
+      text: 'B',
+      style: 'triangleup',
+      color: '#4CAF50',
+      size: 'small',
+    });
+    expect(drawings.labels[1]).toMatchObject({
+      id: 'inst:shape:1',
+      style: 'arrowdown',
+      yloc: 'abovebar',
+      color: '#FF5252',
     });
   });
 });

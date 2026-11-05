@@ -900,9 +900,8 @@ Vela re-runs it on every bar notification, and `inputs: true`, so the settings
 dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
 spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
 objects after the run: `set_*` calls are already applied, deleted objects are
-dropped, and `bgcolor` entries are merged into spans. Unknown builtins resolve
-to `na` and are reported through `missingStd`; `plotshape` markers are not
-mapped. `alert()` is a no-op. `request.security` works for the chart's own
+dropped, `bgcolor` entries are merged into spans, and tables are passed to the host. `plotshape`/`plotchar`/`plotarrow` points are returned as shape markers and drawn as label shapes. Unknown builtins resolve
+to `na` and are reported through `missingStd`. `alert()` is a no-op. `request.security` works for the chart's own
 symbol on its own timeframe and, for builtin source expressions, on a higher
 timeframe by resampling the chart's bars; another symbol, a lower timeframe or
 a non-source expression returns `na` and a warning.

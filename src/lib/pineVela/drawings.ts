@@ -82,6 +82,45 @@ function tableCellOf(cell: PineTableCell): DrawingTable['cells'][number][number]
   };
 }
 
+const LABEL_STYLES = new Set<LabelStyle>([
+  'label_up', 'label_down', 'label_left', 'label_right', 'label_center',
+  'label_lower_left', 'label_lower_right', 'label_upper_left', 'label_upper_right',
+  'circle', 'square', 'diamond', 'flag', 'arrowup', 'arrowdown',
+  'triangleup', 'triangledown', 'cross', 'xcross', 'text_outline', 'none',
+]);
+
+function shapeStyle(value: string): LabelStyle {
+  const normalized = value === 'labelup' ? 'label_up' : value === 'labeldown' ? 'label_down' : value;
+  return LABEL_STYLES.has(normalized as LabelStyle) ? (normalized as LabelStyle) : 'circle';
+}
+
+function shapeYLoc(value: string): LabelYLoc {
+  if (value === 'abovebar') return 'abovebar';
+  if (value === 'belowbar') return 'belowbar';
+  if (value === 'top') return 'top';
+  if (value === 'bottom') return 'bottom';
+  return 'price';
+}
+
+function shapeLabels(instanceId: string, result: PineRunResult): DrawingLabel[] {
+  return result.shapes.map((shape, index) => ({
+    id: `${instanceId}:shape:${index}`,
+    paneId: '',
+    xloc: 'bar_time',
+    x: shape.time,
+    y: shape.value ?? 0,
+    yloc: shapeYLoc(shape.location),
+    text: shape.text || undefined,
+    style: shapeStyle(shape.style),
+    color: shape.color || undefined,
+    textColor: shape.color || undefined,
+    size: textSize(shape.size),
+    textAlign: 'center',
+    fontFamily: 'default' as const,
+    noFill: !shape.color,
+  }));
+}
+
 function tableOf(instanceId: string, table: PineTable): DrawingTable {
   return {
     id: `${instanceId}:table:${table.id}`,
@@ -147,23 +186,26 @@ export function pineDrawings(instanceId: string, result: PineRunResult): VelaDra
       bold: false,
       italic: false,
     })),
-    labels: drawings.labels.map((label) => ({
-      id: `${instanceId}:label:${label.id}`,
-      paneId: '',
-      xloc: label.xloc,
-      x: label.x,
-      y: label.y,
-      yloc: labelYLoc(label.yloc),
-      text: label.text || undefined,
-      style: labelStyle(label.style),
-      color: label.color || undefined,
-      textColor: label.textColor || undefined,
-      size: textSize(label.size),
-      textAlign: hAlign(label.textAlign),
-      tooltip: label.tooltip || undefined,
-      fontFamily: 'default',
-      noFill: label.color.length === 0,
-    })),
+    labels: [
+      ...drawings.labels.map((label): DrawingLabel => ({
+        id: `${instanceId}:label:${label.id}`,
+        paneId: '',
+        xloc: label.xloc,
+        x: label.x,
+        y: label.y,
+        yloc: labelYLoc(label.yloc),
+        text: label.text || undefined,
+        style: labelStyle(label.style),
+        color: label.color || undefined,
+        textColor: label.textColor || undefined,
+        size: textSize(label.size),
+        textAlign: hAlign(label.textAlign),
+        tooltip: label.tooltip || undefined,
+        fontFamily: 'default',
+        noFill: label.color.length === 0,
+      })),
+      ...shapeLabels(instanceId, result),
+    ],
     backgrounds: drawings.backgrounds.map((background, index) => ({
       id: `${instanceId}:bg:${index}`,
       paneId: '',
