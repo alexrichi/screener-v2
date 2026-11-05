@@ -71,7 +71,13 @@ function inputsSchema(program: PineProgram): InputSchema[] {
     title: input.name || input.id,
     type: INPUT_TYPES[input.type] ?? 'float',
     defval: input.defval,
-    ...(input.type === 'integer' ? { step: 1 } : {}),
+    ...(input.options ? { options: input.options } : {}),
+    ...(input.group ? { group: input.group } : {}),
+    ...(input.inline ? { inline: input.inline } : {}),
+    ...(input.tooltip ? { tooltip: input.tooltip } : {}),
+    ...(input.min !== undefined ? { min: input.min } : {}),
+    ...(input.max !== undefined ? { max: input.max } : {}),
+    ...(input.type === 'integer' ? { step: input.step ?? 1 } : input.step !== undefined ? { step: input.step } : {}),
   }));
 }
 
