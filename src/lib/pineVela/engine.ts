@@ -73,7 +73,7 @@ function modelOf(
   const { instanceId, program } = token;
   const series: LineLikeSeries[] = [];
   const ordinalByKey = new Map<string, number>();
-  const drawings = pineDrawings(instanceId, run, bars);
+  const drawings = pineDrawings(instanceId, run);
 
   for (const plot of run.plots) {
     const kind = SERIES_KINDS[plot.type] ?? 'line';
@@ -128,10 +128,9 @@ export interface PineEngineOptions {
 /**
  * Pine Script engine for Vela, backed by the MIT `pine-engine` package.
  *
- * Plots only for now: drawings (`line.new` and friends), `bgcolor`, alerts and
- * `request.security` arrive as the engine reports them. No streaming context —
- * Vela re-runs this engine on every bar notification, which is what the old
- * worker engine did too.
+ * Plots, drawings (`line`/`box`/`label`) and `bgcolor` come from the engine.
+ * `request.security` is limited to the chart's own symbol and timeframe.
+ * No streaming context: Vela re-runs this engine on every bar notification.
  */
 export class PineEngine implements ScriptingEngine {
   readonly language = 'pine';

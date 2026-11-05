@@ -9,18 +9,20 @@ TypeScript app; there is no private backend and no API key.
 - Vite 8, React 19, TypeScript, Tailwind CSS v4
 - Base UI, Lucide, Sonner, Geist Sans / Geist Mono
 - `@luxalgo/vela` workspace; data comes from the venue sidecar
-- `@luxalgo/vela-pinets` + `pinets` for Pine Script indicators and the scanner
-- CodeMirror 6 (`@uiw/react-codemirror`) with a Pine language mode from the
-  local Vela-pinets `editor` entry
+- `@screener/pine-engine` (local MIT compiler and runtime) for Pine Script
+  indicators and the scanner; `pinets` survives only in the AI debug runner
+- CodeMirror 6 (`@uiw/react-codemirror`) with the local
+  `@screener/pine-editor` Pine language
 - Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,
   Hyperliquid, and Coinbase through their public APIs, normalized by
   `VenueAdapter`
 - Electron shell for the desktop build: the bundled sidecar runs as a child
   process, and the app uses a custom title bar with an application menu.
 
-The app resolves `@luxalgo/vela` and `@luxalgo/vela-pinets` (engine and editor) to
-the local `../Vela` and `../Vela-pinets` checkouts, so chart, engine and editor
-changes run live. A small Vite plugin inlines the Pine worker from source.
+The app resolves `@luxalgo/vela`, `@screener/pine-engine` and
+`@screener/pine-editor` to the local `../Vela`, `../pine-engine` and
+`../pine-editor` checkouts, so chart, engine and editor changes run live. A
+small Vite plugin inlines the Pine worker from source.
 
 ## Run
 

@@ -879,11 +879,12 @@ patch or fork Vela from this repo.
 
 The scanner runs `@screener/pine-engine`, a local MIT checkout at
 `../pine-engine` resolved through `vite.config.ts` and `tsconfig.json` paths the
-same way Vela is. It wraps the MIT `@opus-aether-ai/pine-transpiler` and backs
-its standard library with MIT OakScriptJS, so no AGPL code is involved. Edit the
-engine there and the app picks it up without a rebuild. The engine owns the
-compile-once/run-many API the scan worker needs; the app keeps only the venue
-fetching and the table mapping.
+same way Vela is. It owns the Pine lexer, parser, code generator and bar-by-bar
+runtime; no third-party transpiler runs at runtime. MIT `oakscriptjs` is a
+devDependency used only by the differential RSI test, so no AGPL code is
+involved. Edit the engine there and the app picks it up without a rebuild. The
+engine owns the compile-once/run-many API the scan worker needs; the app keeps
+only the venue fetching and the table mapping.
 
 `@screener/pine-editor` (`../pine-editor`) owns the editor's Pine language:
 a stream tokenizer, a CSS-variable theme, completions from the MIT
@@ -896,21 +897,22 @@ neither is in the initial bundle.
 `ScriptingEngine` port over `pine-engine`, registered as
 `engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
 Vela re-runs it on every bar notification, and `inputs: true`, so the settings
-dialog works. It emits plots plus `line.new`/`box.new`/`label.new` drawings and
-`bgcolor` spans (`lib/pineVela/drawings.ts`). Drawings are built from the
-transpiler's live handle for each object, not from the creation arguments: a
-`set_*` event carries the same object the transpiler mutates in place, so the
-handle already holds the final geometry and a deleted object is dropped. Object
-mutations the transpiler's registry does not implement (`line.set_y1`,
-`line.set_y2`, `line.set_width`, …) still throw inside the generated script; the
-registry only ships `set_x2`, `set_xy1`, `set_xy2`, `set_color` for lines and the
-`set_left/right/top/bottom` family for boxes. `plotshape` markers are not mapped.
-`alert()` is not emitted by the transpiler at all. `na()` returns false for any
-object, so `if not na(box)` guards work. It waits for
-`historyState: 'complete'` instead of running on a partial backfill. Series ids
-come from `stableSeriesId` so value patches hit the same series across runs. The
-old `PineWorkerEngine` and the `@luxalgo/vela-pinets` dependency are gone;
-`pinets` survives only in `ai/debug.worker.ts`.
+dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
+spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
+objects after the run: `set_*` calls are already applied, deleted objects are
+dropped, and `bgcolor` entries are merged into spans. Unknown builtins resolve
+to `na` and are reported through `missingStd`; `plotshape` markers are not
+mapped. `alert()` is a no-op. `request.security` works only for the chart's own
+symbol and timeframe; another symbol or timeframe returns `na` and a warning.
+`na` is `NaN`, so warm-up arithmetic and comparisons behave like Pine, and
+`if not na(box)` guards still work because a drawing handle is an object. Each
+TA call site keeps its own state and source series, so two EMAs and chained
+`ta.ema(fast, 9)` do not interfere, and a scan run does not inherit the previous
+instrument's state. `var` initializes on the first bar from that bar's data. It
+waits for `historyState: 'complete'` instead of running on a partial backfill.
+Series ids come from `stableSeriesId` so value patches hit the same series
+across runs. The old `PineWorkerEngine` and the `@luxalgo/vela-pinets`
+dependency are gone; `pinets` survives only in `ai/debug.worker.ts`.
 
 ### PineTS documentation
 

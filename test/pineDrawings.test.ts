@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { pineDrawings } from '../src/lib/pineVela/drawings';
-import type { PineRunResult, PineVisualEvent } from '@screener/pine-engine';
+import type { PineDrawings, PineRunResult } from '@screener/pine-engine';
 
-const bars = Array.from({ length: 5 }, (_, index) => ({ time: 1_000 + index * 100 }));
+const EMPTY: PineDrawings = { lines: [], boxes: [], labels: [], backgrounds: [] };
 
-function resultOf(visuals: PineVisualEvent[]): PineRunResult {
+function resultOf(drawings: Partial<PineDrawings>): PineRunResult {
   return {
     ok: true,
     name: 'Test',
     overlay: true,
     plots: [],
-    visuals,
+    drawings: { ...EMPTY, ...drawings },
     inputs: [],
     missingStd: [],
     warnings: [],
@@ -18,21 +18,27 @@ function resultOf(visuals: PineVisualEvent[]): PineRunResult {
 }
 
 describe('pineDrawings', () => {
-  it('maps line.new with its style, color and width', () => {
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([
+  it('maps a line with its style, color and width', () => {
+    const drawings = pineDrawings('inst', resultOf({
+      lines: [
         {
-          call: 'line.new',
-          args: [1, 10, 3, 20, null, 'right', '#FF5252', 'dashed', 2],
-          barIndex: 3,
+          id: 7,
+          x1: 1,
+          y1: 10,
+          x2: 3,
+          y2: 20,
+          xloc: 'bar_index',
+          extend: 'right',
+          color: '#FF5252',
+          style: 'dashed',
+          width: 2,
         },
-      ]),
-      bars,
-    );
+      ],
+    }));
 
     expect(drawings.lines).toHaveLength(1);
     expect(drawings.lines[0]).toMatchObject({
+      id: 'inst:line:7',
       xloc: 'bar_index',
       x1: 1,
       y1: 10,
@@ -45,23 +51,35 @@ describe('pineDrawings', () => {
     });
   });
 
-  it('maps box.new including fill, border and text', () => {
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([
+  it('maps a box including fill, border and text', () => {
+    const drawings = pineDrawings('inst', resultOf({
+      boxes: [
         {
-          call: 'box.new',
-          args: [1, 20, 3, 10, '#2962FF', 1, 'solid', null, null, 'rgba(41, 98, 255, 0.2)', 'FVG'],
-          barIndex: 3,
+          id: 3,
+          left: 1,
+          top: 20,
+          right: 8,
+          bottom: 10,
+          xloc: 'bar_index',
+          extend: 'none',
+          backgroundColor: 'rgba(41, 98, 255, 0.2)',
+          borderColor: '#2962FF',
+          borderWidth: 1,
+          borderStyle: 'solid',
+          text: 'FVG',
+          textColor: '#FFFFFF',
+          textSize: 'normal',
+          hAlign: 'center',
+          vAlign: 'center',
         },
-      ]),
-      bars,
-    );
+      ],
+    }));
 
     expect(drawings.boxes[0]).toMatchObject({
+      id: 'inst:box:3',
       left: 1,
       top: 20,
-      right: 3,
+      right: 8,
       bottom: 10,
       borderColor: '#2962FF',
       bgColor: 'rgba(41, 98, 255, 0.2)',
@@ -70,54 +88,28 @@ describe('pineDrawings', () => {
     });
   });
 
-  it('uses the handle state after mutations', () => {
-    const handle = { __id: 1, __deleted: false, left: 1, top: 20, right: 9, bottom: 10, bgcolor: 'rgba(41, 98, 255, 0.2)' };
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([
+  it('maps a label with its style and text color', () => {
+    const drawings = pineDrawings('inst', resultOf({
+      labels: [
         {
-          call: 'box.new',
-          args: [1, 20, 3, 10, '#2962FF', 1, 'solid', null, null, 'rgba(41, 98, 255, 0.2)', 'FVG'],
-          barIndex: 1,
-          pineHandleId: 1,
+          id: 2,
+          x: 2,
+          y: 15,
+          xloc: 'bar_index',
+          yloc: 'abovebar',
+          text: 'HH',
+          tooltip: 'swing high',
+          color: '#4CAF50',
+          textColor: '#FFFFFF',
+          style: 'label_down',
+          size: 'small',
+          textAlign: 'center',
         },
-        { call: 'box.set_right', args: [handle, 9], barIndex: 4, pineHandleId: 1 },
-      ]),
-      bars,
-    );
-
-    expect(drawings.boxes).toHaveLength(1);
-    expect(drawings.boxes[0]).toMatchObject({ left: 1, right: 9, text: 'FVG' });
-  });
-
-  it('drops a drawing deleted by the end of the run', () => {
-    const handle = { __id: 2, __deleted: true, left: 1, top: 20, right: 3, bottom: 10 };
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([
-        { call: 'box.new', args: [1, 20, 3, 10], barIndex: 1, pineHandleId: 2 },
-        { call: 'box.delete', args: [handle], barIndex: 3, pineHandleId: 2 },
-      ]),
-      bars,
-    );
-
-    expect(drawings.boxes).toEqual([]);
-  });
-
-  it('maps label.new with its style and text color', () => {
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([
-        {
-          call: 'label.new',
-          args: [2, 15, 'HH', null, 'abovebar', '#4CAF50', 'label_down', '#FFFFFF', 'small'],
-          barIndex: 2,
-        },
-      ]),
-      bars,
-    );
+      ],
+    }));
 
     expect(drawings.labels[0]).toMatchObject({
+      id: 'inst:label:2',
       x: 2,
       y: 15,
       yloc: 'abovebar',
@@ -126,31 +118,17 @@ describe('pineDrawings', () => {
       color: '#4CAF50',
       textColor: '#FFFFFF',
       size: 'small',
+      tooltip: 'swing high',
     });
   });
 
-  it('merges consecutive bgcolor bars into one span', () => {
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([
-        { call: 'Std.bgcolor', args: ['rgba(76, 175, 80, 0.1)'], barIndex: 0 },
-        { call: 'Std.bgcolor', args: ['rgba(76, 175, 80, 0.1)'], barIndex: 1 },
-        { call: 'Std.bgcolor', args: ['rgba(242, 54, 69, 0.1)'], barIndex: 2 },
-      ]),
-      bars,
-    );
+  it('maps background spans', () => {
+    const drawings = pineDrawings('inst', resultOf({
+      backgrounds: [{ from: 1_000, to: 2_000, color: '#FF5252' }],
+    }));
 
-    expect(drawings.backgrounds).toHaveLength(2);
-    expect(drawings.backgrounds[0]).toMatchObject({ from: 1_000, to: 1_200 });
-    expect(drawings.backgrounds[1]).toMatchObject({ from: 1_200, to: 1_300 });
-  });
-
-  it('drops a drawing whose coordinates are na', () => {
-    const drawings = pineDrawings(
-      'inst',
-      resultOf([{ call: 'line.new', args: [null, 10, 3, 20], barIndex: 1 }]),
-      bars,
-    );
-    expect(drawings.lines).toEqual([]);
+    expect(drawings.backgrounds).toEqual([
+      { id: 'inst:bg:0', paneId: '', from: 1_000, to: 2_000, color: '#FF5252' },
+    ]);
   });
 });
