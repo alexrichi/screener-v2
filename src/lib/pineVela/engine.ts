@@ -15,7 +15,10 @@ import type {
 } from '@luxalgo/vela/plugin';
 import { ACCENT, CATEGORICAL, stableSeriesId } from '@luxalgo/vela/plugin';
 import {
+  canonicalTimeframe,
   compilePine,
+  timeframeMs,
+  type PineBar,
   type PineFillAnchor,
   type PineProgram,
   type PineRunResult,
@@ -282,24 +285,18 @@ export class PineEngine implements ScriptingEngine {
     };
     let stopped = false;
     let snapshot: EngineContextSnapshot | null = null;
+    let generation = 0;
+    let running = false;
+    let pending = false;
+    // ponytail: a 15 s lower-timeframe cache; intrabar precision on forming bars
+    // trails by at most that long. Shorter needs a per-bar subscription.
+    const LOWER_TTL_MS = 15_000;
+    const lowerCache = new Map<string, { bars: PineBar[]; at: number }>();
 
-    const run = (): void => {
-      if (stopped) return;
-      const bars = req.getBars?.() ?? req.bars;
-      if (bars.length === 0) return;
-      const result = token.program.run({
-        bars: bars.map((bar) => ({
-          time: bar.time,
-          open: bar.open,
-          high: bar.high,
-          low: bar.low,
-          close: bar.close,
-          volume: bar.volume ?? 0,
-        })),
-        timeframe: req.market.timeframe,
-        symbol: req.market.symbol,
-        inputs: values,
-      });
+    const reportResult = (
+      result: PineRunResult,
+      bars: readonly PineBar[],
+    ): void => {
       if (!result.ok) {
         handlers.onError?.(new Error(result.error ?? 'The script failed'));
         return;
@@ -335,9 +332,101 @@ export class PineEngine implements ScriptingEngine {
       handlers.onDone?.();
     };
 
+    const run = async (): Promise<void> => {
+      if (stopped) return;
+      if (running) {
+        pending = true;
+        return;
+      }
+      running = true;
+      const runGeneration = generation;
+      try {
+        const chartBars = req.getBars?.() ?? req.bars;
+        if (chartBars.length === 0) return;
+        const pineBars = chartBars.map((bar) => ({
+          time: bar.time,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          volume: bar.volume ?? 0,
+        }));
+
+        const requested = new Map<string, { symbol: string; timeframe: string }>();
+        const executeOnce = () =>
+          token.program.run({
+            bars: pineBars,
+            timeframe: req.market.timeframe,
+            symbol: req.market.symbol,
+            inputs: values,
+            lowerBars: Object.fromEntries(
+              [...lowerCache].map(([key, entry]) => [key, entry.bars]),
+            ),
+            onLowerTimeframe: (symbol, timeframe) => {
+              const tf = canonicalTimeframe(timeframe);
+              requested.set(`${symbol}@${tf}`, { symbol, timeframe: tf });
+            },
+          });
+
+        let result = executeOnce();
+        const missing = [...requested].filter(([key]) => {
+          const entry = lowerCache.get(key);
+          return !entry || Date.now() - entry.at >= LOWER_TTL_MS;
+        });
+
+        if (missing.length > 0 && req.fetchSeries) {
+          const last = pineBars[pineBars.length - 1]!;
+          const chartMs = timeframeMs(req.market.timeframe) || 1;
+          const from = pineBars[0]?.time ?? last.time;
+          await Promise.all(
+            missing.map(async ([key, request]) => {
+              const lowerMs = timeframeMs(request.timeframe) || 1;
+              const limit = Math.min(
+                100_000,
+                Math.max(500, Math.ceil((pineBars.length * chartMs * 1.1) / lowerMs) + 20),
+              );
+              try {
+                const series = await req.fetchSeries!(request.symbol, request.timeframe, {
+                  from,
+                  to: last.time + chartMs,
+                  limit,
+                });
+                lowerCache.set(key, {
+                  bars: series
+                    .map((bar) => ({
+                      time: bar.time,
+                      open: bar.open,
+                      high: bar.high,
+                      low: bar.low,
+                      close: bar.close,
+                      volume: bar.volume ?? 0,
+                    }))
+                    .sort((a, b) => a.time - b.time),
+                  at: Date.now(),
+                });
+              } catch {
+                lowerCache.set(key, { bars: [], at: Date.now() });
+              }
+            }),
+          );
+          if (stopped || runGeneration !== generation) return;
+          result = executeOnce();
+        }
+
+        if (stopped || runGeneration !== generation) return;
+        reportResult(result, pineBars);
+      } finally {
+        running = false;
+        if (pending && !stopped) {
+          pending = false;
+          void run();
+        }
+      }
+    };
+
     // Watch mode starts during the history backfill: running on a partial prefix
     // would compute every series twice at full cost. Wait for the complete signal.
-    if (req.historyState !== 'backfill') run();
+    if (req.historyState !== 'backfill') void run();
 
     return {
       getContext: (select) => {
@@ -348,15 +437,16 @@ export class PineEngine implements ScriptingEngine {
       },
       stop: () => {
         stopped = true;
+        generation += 1;
       },
       update: (next) => {
         Object.assign(values, next);
-        run();
+        void run();
       },
       setVisibleRange: () => {},
       notifyBars: (reason) => {
         if (reason === 'backfill') return;
-        run();
+        void run();
       },
     };
   }

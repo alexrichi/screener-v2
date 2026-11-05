@@ -125,6 +125,7 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   workspace; an on-chart script updates in place and keeps its inputs and
   settings. Scripts can draw plots, hlines, fills, markers, lines, boxes,
   labels, tables and candles, and recolor chart candles with `barcolor`.
+  `request.security` reads higher timeframes and lower intrabar data.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
   duplicate, and import or export JSON. Updating a saved layout asks before
