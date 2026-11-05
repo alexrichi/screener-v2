@@ -3,6 +3,7 @@ import type {
   ExecutionHandlers,
   ExecutionRequest,
   ExecutionSession,
+  Fill,
   InputSchema,
   InputValue,
   IndicatorModel,
@@ -13,7 +14,12 @@ import type {
   SeriesSpec,
 } from '@luxalgo/vela/plugin';
 import { ACCENT, CATEGORICAL, stableSeriesId } from '@luxalgo/vela/plugin';
-import { compilePine, type PineProgram, type PineRunResult } from '@screener/pine-engine';
+import {
+  compilePine,
+  type PineFillAnchor,
+  type PineProgram,
+  type PineRunResult,
+} from '@screener/pine-engine';
 import { pineDrawings } from './drawings';
 
 const INPUT_TYPES: Record<string, InputSchema['type']> = {
@@ -66,7 +72,7 @@ function inputsSchema(program: PineProgram): InputSchema[] {
   }));
 }
 
-function modelOf(
+export function modelOf(
   token: PineToken,
   run: PineRunResult,
   bars: readonly { time: number }[],
@@ -76,14 +82,17 @@ function modelOf(
   const { instanceId, program } = token;
   const series: SeriesSpec[] = [];
   const ordinalByKey = new Map<string, number>();
+  const plotSeriesId = new Map<string, string>();
   const drawings = pineDrawings(instanceId, run);
 
   for (const plot of run.plots) {
     const kind = SERIES_KINDS[plot.type] ?? 'line';
     const ordinal = ordinalByKey.get(`${kind}:${plot.title}`) ?? 0;
     ordinalByKey.set(`${kind}:${plot.title}`, ordinal + 1);
+    const id = stableSeriesId({ instanceId, kind, title: plot.title, ordinal });
+    plotSeriesId.set(plot.id, id);
     series.push({
-      id: stableSeriesId({ instanceId, kind, title: plot.title, ordinal }),
+      id,
       title: plot.title,
       paneId: '',
       kind,
@@ -128,9 +137,70 @@ function modelOf(
             borderDown: candle.borderColor,
           }
         : undefined,
-      barColors: candle.kind === 'bar'
-        ? candle.bars.map(() => ({ color: candle.color }))
-        : undefined,
+      barColors: candle.barColors?.map((color) => color
+        ? { color: color.color, wickColor: color.wickColor, borderColor: color.borderColor }
+        : null),
+    });
+  }
+
+  const priceLines = run.priceLines.map((line) => ({
+    id: `${instanceId}:hline:${line.id}`,
+    paneId: '',
+    price: line.price,
+    color: line.color,
+    width: line.width,
+    lineStyle: line.style,
+    title: line.title,
+  }));
+
+  const hlineByIndex = new Map(run.priceLines.map((line) => [line.id, line]));
+  const hlineAnchors = new Map<number, string>();
+  // Vela keeps a hidden constant series for fills, but a fill stops at the last
+  // anchor point. Pad the anchor into the chart's right whitespace so an hline
+  // band reaches the chart edge instead of ending on the last bar.
+  // ponytail: fixed 1000-bar right padding; raise it if the view can scroll further.
+  const FILL_EXTEND_BARS = 1000;
+  const lastBar = bars[bars.length - 1];
+  const barStep = bars.length > 1 ? bars[bars.length - 1]!.time - bars[bars.length - 2]!.time : 0;
+  const anchorId = (anchor: PineFillAnchor): string | null => {
+    if (anchor.kind === 'plot') return plotSeriesId.get(`plot_${anchor.index}`) ?? null;
+    const line = hlineByIndex.get(anchor.index);
+    if (!line) return null;
+    const existing = hlineAnchors.get(anchor.index);
+    if (existing) return existing;
+    const id = stableSeriesId({ instanceId, kind: 'line', title: `hline_${anchor.index}`, ordinal: 0 });
+    const points = bars.map((bar) => ({ time: bar.time, value: line.price }));
+    if (lastBar && barStep > 0) {
+      for (let index = 1; index <= FILL_EXTEND_BARS; index += 1) {
+        points.push({ time: lastBar.time + barStep * index, value: line.price });
+      }
+    }
+    series.push({
+      id,
+      title: `hline ${anchor.index}`,
+      paneId: '',
+      kind: 'line',
+      points,
+      style: { color: 'transparent', width: 1, lineStyle: 'solid' },
+      visible: false,
+      display: { pane: false, priceScale: false, legend: false, dataWindow: false },
+    });
+    hlineAnchors.set(anchor.index, id);
+    return id;
+  };
+
+  const fills: Fill[] = [];
+  for (const fill of run.fills) {
+    const fromSeriesId = anchorId(fill.from);
+    const toSeriesId = anchorId(fill.to);
+    if (!fromSeriesId || !toSeriesId) continue;
+    fills.push({
+      id: `${instanceId}:fill:${fill.id}`,
+      paneId: '',
+      fromSeriesId,
+      toSeriesId,
+      color: fill.color,
+      colors: fill.colors,
     });
   }
 
@@ -144,9 +214,10 @@ function modelOf(
     overlay: program.meta.overlay,
     paneHint: program.meta.overlay ? 'price' : 'new',
     series,
-    fills: [],
+    fills,
     backgrounds: drawings.backgrounds,
-    priceLines: [],
+    priceLines,
+    barColors: run.barColors.length > 0 ? run.barColors : undefined,
     lines: drawings.lines,
     boxes: drawings.boxes,
     labels: drawings.labels,

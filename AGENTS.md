@@ -900,7 +900,7 @@ Vela re-runs it on every bar notification, and `inputs: true`, so the settings
 dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
 spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
 objects after the run: `set_*` calls are already applied, deleted objects are
-dropped, `bgcolor` entries are merged into spans, and tables are passed to the host. `plotshape`/`plotchar`/`plotarrow` points are returned as shape markers and drawn as label shapes. Unknown builtins resolve
+dropped, `bgcolor` entries are merged into spans, and tables are passed to the host. `plotshape`/`plotchar`/`plotarrow` points are returned as shape markers and drawn as label shapes. `hline()` becomes a `PriceLine`, `fill()` a band between two plot series (an hline anchor becomes a hidden constant series so it stays out of the scale), and `barcolor()` recolors the chart candles through `barColors`. `plotcandle`/`plotbar` keep per-bar colors on the candle series. Unknown builtins resolve
 to `na` and are reported through `missingStd`. `alert()` is a no-op. `request.security` works for the chart's own
 symbol on its own timeframe and, for builtin source expressions, on a higher
 timeframe by resampling the chart's bars; another symbol, a lower timeframe or

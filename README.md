@@ -123,7 +123,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
 - Pine editor with presets and CodeMirror highlighting, completions, folding,
   search, and lint. Apply a script to the active chart or all charts in the
   workspace; an on-chart script updates in place and keeps its inputs and
-  settings.
+  settings. Scripts can draw plots, hlines, fills, markers, lines, boxes,
+  labels, tables and candles, and recolor chart candles with `barcolor`.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
   duplicate, and import or export JSON. Updating a saved layout asks before
