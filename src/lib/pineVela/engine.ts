@@ -27,6 +27,8 @@ const INPUT_TYPES: Record<string, InputSchema['type']> = {
   session: 'session',
   timeframe: 'timeframe',
   symbol: 'symbol',
+  time: 'int',
+  enum: 'string',
 };
 
 const SERIES_KINDS: Record<string, LineLikeKind> = {

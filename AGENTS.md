@@ -902,8 +902,10 @@ spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
 objects after the run: `set_*` calls are already applied, deleted objects are
 dropped, and `bgcolor` entries are merged into spans. Unknown builtins resolve
 to `na` and are reported through `missingStd`; `plotshape` markers are not
-mapped. `alert()` is a no-op. `request.security` works only for the chart's own
-symbol and timeframe; another symbol or timeframe returns `na` and a warning.
+mapped. `alert()` is a no-op. `request.security` works for the chart's own
+symbol on its own timeframe and, for builtin source expressions, on a higher
+timeframe by resampling the chart's bars; another symbol, a lower timeframe or
+a non-source expression returns `na` and a warning.
 `na` is `NaN`, so warm-up arithmetic and comparisons behave like Pine, and
 `if not na(box)` guards still work because a drawing handle is an object. Each
 TA call site keeps its own state and source series, so two EMAs and chained
