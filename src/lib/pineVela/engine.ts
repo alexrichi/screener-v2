@@ -302,7 +302,7 @@ export interface PineEngineOptions {
  */
 export class PineEngine implements ScriptingEngine {
   readonly language = 'pine';
-  readonly capabilities = { streaming: false, visibleRange: false, inputs: true };
+  readonly capabilities = { streaming: false, visibleRange: true, inputs: true };
   private readonly reported = new Set<string>();
 
   constructor(private readonly options: PineEngineOptions = {}) {}
@@ -327,7 +327,7 @@ export class PineEngine implements ScriptingEngine {
         shorttitle: program.meta.shortName,
         overlay: program.meta.overlay,
       },
-      reactsToViewport: false,
+      reactsToViewport: /chart\.(?:left|right)_visible_bar_time/.test(source),
       token: { program, instanceId } satisfies PineToken,
     });
   }
@@ -344,6 +344,7 @@ export class PineEngine implements ScriptingEngine {
     let generation = 0;
     let running = false;
     let pending = false;
+    let visibleRange = req.visibleRange;
     // ponytail: a 60 s lower-timeframe cache; intrabar precision on forming bars
     // trails by at most that long. Shorter needs a per-bar subscription.
     const LOWER_TTL_MS = 60_000;
@@ -420,6 +421,7 @@ export class PineEngine implements ScriptingEngine {
             symbol: req.market.symbol,
             symbolInfo: req.market.symbolInfo as Record<string, unknown> | undefined,
             live: req.mode === 'live',
+            visibleRange,
             inputs: values,
             lowerBars: Object.fromEntries(
               [...lowerCache].map(([key, entry]) => [key, entry.bars]),
@@ -516,7 +518,10 @@ export class PineEngine implements ScriptingEngine {
         Object.assign(values, next);
         void run();
       },
-      setVisibleRange: () => {},
+      setVisibleRange: (range) => {
+        visibleRange = range;
+        void run();
+      },
       notifyBars: (reason) => {
         if (reason === 'backfill') return;
         if (reason === undefined && busyGesture()) {
