@@ -871,9 +871,16 @@ reaching into `node_modules` or the peer `../Vela` checkout:
 The docs page exposes "View as Markdown"; the LLM index is
 <https://docs.luxalgo.com/llms.mdx/vela/content.md>. Vite and `tsconfig` resolve
 `@luxalgo/vela` to the local `../Vela/src` checkout; `package.json` keeps the npm
-pin as a fallback. The checkout's branch is the runtime version: `main` is
-0.9.3, `dev` is the unreleased shell (currently used for `sidebar: true`). Do not
-patch or fork Vela from this repo.
+pin as a fallback and must name the same minor: `^0.10.1`.
+
+The checkout must be Vela 0.10.1 or newer. Since 0.10.1 Vela imports
+`@luxalgo/vela-ui` in its chrome, and the app resolves that kit from
+`../Vela/packages/vela-ui/src` — the `vela-ui-source` plugin in `vite.config.ts`
+maps the package and each subpath (`components/*.ts`, `lib/*.ts`), with matching
+`tsconfig` paths. The local `dist` is not built and is not needed. Switching the
+checkout back to `main` (0.9.3) removes `packages/vela-ui` and breaks the build;
+run `npm run typecheck` after any Vela branch change. Do not patch or fork Vela
+from this repo.
 
 ### Pine engine
 
