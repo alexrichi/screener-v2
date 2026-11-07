@@ -56,6 +56,19 @@ describe('layout store', () => {
     expect(isLayoutLibrary({ version: 1, items: [item({ state: { version: 2 } as never })] })).toBe(
       false,
     );
+    const pine = {
+      script: '//@version=6\nindicator("X")',
+      name: 'X',
+      all: false,
+      inputs: { Length: 20, Show: true, Mode: 'EMA' },
+    };
+    expect(isLayoutLibrary({ version: 1, items: [item({ pine })] })).toBe(true);
+    expect(
+      isLayoutLibrary({
+        version: 1,
+        items: [item({ pine: { ...pine, inputs: { bad: { nested: 1 } } } as never })],
+      }),
+    ).toBe(false);
   });
 
   it('names layouts case-insensitively and leaves the renamed item alone', () => {

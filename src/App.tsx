@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type {
   IndicatorRow,
+  PineInputValues,
   PlotColumn,
   ScanProgress,
   ScanResult,
@@ -130,6 +131,14 @@ function isSettings(value: unknown): value is Settings {
   );
 }
 
+function isPineInputs(value: unknown): value is PineInputValues {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every(
+    (item) =>
+      typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean',
+  );
+}
+
 function isWorkspaceTab(value: unknown): value is WorkspaceTab {
   const tab = value as Partial<WorkspaceTab>;
   return (
@@ -143,6 +152,7 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
     (tab.pineScript === undefined || isString(tab.pineScript)) &&
     (tab.pineName === undefined || isString(tab.pineName)) &&
     (tab.pineAll === undefined || isBoolean(tab.pineAll)) &&
+    (tab.pineInputs === undefined || isPineInputs(tab.pineInputs)) &&
     (tab.layoutId === undefined || isString(tab.layoutId))
   );
 }
@@ -175,6 +185,7 @@ function tabPine(tab: WorkspaceTab): LayoutPine | undefined {
     script: tab.pineScript,
     name: tab.pineName ?? 'Screener Pine',
     all: tab.pineAll ?? false,
+    ...(tab.pineInputs ? { inputs: tab.pineInputs } : {}),
   };
 }
 
@@ -839,7 +850,13 @@ export default function App() {
         setTabs((prev) =>
           prev.map((tab) =>
             tab.id === activeTab?.id
-              ? { ...tab, pineScript: source, pineName: name, pineAll: allCells }
+              ? {
+                  ...tab,
+                  pineScript: source,
+                  pineName: name,
+                  pineAll: allCells,
+                  pineInputs: report.inputs,
+                }
               : tab,
           ),
         );
@@ -1092,8 +1109,9 @@ export default function App() {
                       pineScript: item.pine.script,
                       pineName: item.pine.name,
                       pineAll: item.pine.all,
+                      pineInputs: item.pine.inputs,
                     }
-                  : { pineScript: undefined, pineName: undefined, pineAll: undefined }),
+                  : { pineScript: undefined, pineName: undefined, pineAll: undefined, pineInputs: undefined }),
               }
             : candidate,
         ),
@@ -1115,7 +1133,12 @@ export default function App() {
         altSymbol: item.altSymbol || altFor(item.symbol),
         layoutId: item.id,
         ...(item.pine
-          ? { pineScript: item.pine.script, pineName: item.pine.name, pineAll: item.pine.all }
+          ? {
+              pineScript: item.pine.script,
+              pineName: item.pine.name,
+              pineAll: item.pine.all,
+              pineInputs: item.pine.inputs,
+            }
           : {}),
       };
       setTabs((prev) => [...prev, tab]);
@@ -1670,6 +1693,13 @@ export default function App() {
                   }
                   onShowSource={showSource}
                   onIndicatorsChange={refreshIndicatorRows}
+                  onPineInputs={(inputs) =>
+                    setTabs((prev) =>
+                      prev.map((item) =>
+                        item.id === tab.id ? { ...item, pineInputs: inputs } : item,
+                      ),
+                    )
+                  }
                   onPineRemoved={clearTabPine}
                   onMarketChange={handleMarketChange}
                 />

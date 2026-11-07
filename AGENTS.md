@@ -285,9 +285,10 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   by `instrument.key` plus progress with the current venue. A venue failure or
   rate limit does not stop the remaining venues. The main thread only merges
   results and derives plot columns.
-- The applied Pine script is stored on the tab as `pineScript` / `pineAll`. Vela's
+- The applied Pine script is stored on the tab as `pineScript` / `pineAll`, with its
+  input values in `pineInputs` (kept current by `indicator:inputs`). Vela's
   external indicators are not persisted by the workspace document, so the host
-  reapplies the stored script on mount.
+  reapplies the stored script and inputs on mount.
 - Scan results are session-only. Tabs, table view, settings, theme, the open Vela
   side panel, and the applied Pine script persist; scan rows and plot columns do not.
 - The AI sidebar is a sibling of the Vela section, not a Vela panel, so it stays
@@ -306,7 +307,7 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
 - Named layouts live at `screener.layouts.v1` (`{ version: 1, items }`). A layout
   is a full `ws.getState()` snapshot (grid, cells, markets, indicators, drawings,
-  dock) plus the app-owned applied Pine script. New tabs from a layout boot from
+  dock) plus the app-owned applied Pine script and its inputs. New tabs from a layout boot from
   a seeded `VelaStorage` only while they have no document of their own. The
   `Layouts` topbar action (`lib/velaLayouts.ts`) manages them; import/export is
   one JSON file and no candle data is stored. Saving is explicit; the tab itself
@@ -364,8 +365,9 @@ open with the alt cell active while the tab label says the main symbol.
 `handle.updateCode(source)`: same handle, same legend row, and the inputs and
 props survive; Vela restores the previous code when the new one fails. Only a
 missing indicator is added. The host returns `{ count, errors }` per chart, and
-the panel reports the first error. Store `pineScript`, `pineName`, and `pineAll`
-on the tab and reapply on mount. `lastAppliedRef` prevents a double apply when
+the panel reports the first error. Store `pineScript`, `pineName`, `pineAll`, and
+the applied script's input values `pineInputs` on the tab and reapply them on
+mount. `lastAppliedRef` prevents a double apply when
 the tab state update and the imperative Apply happen together. The script is
 TAB state, not chart state: removing `screener-pine` from the legend (or the
 object tree) clears those tab fields through `onPineRemoved`, and the host
@@ -760,6 +762,10 @@ Useful browser probes:
   it, and switching layouts does not bring it back. The Pine developer AI calls
   `edit_code` then `apply_live` and reports
   the live result; `Chart analyst` gets none of the three editing tools.
+- Change a setting of the applied Pine script (for example `Show MA lines`),
+  reload: the value survives and the script reopens with it. The tab stores the
+  applied inputs in `pineInputs`; a layout saved after the change restores the
+  same script settings.
 - The `Layouts` toolbar action sits right after Maximize and shows the active
   tab's linked layout name (or `Layouts`). Saving a 2×2 workspace creates an item in
   `screener.layouts.v1` and renames the action. A row click loads the layout into
@@ -827,7 +833,7 @@ Useful browser probes:
 - Toggling the theme updates both the app tokens and the native title-bar
   overlay colors.
 - Reloading restores tabs, layout, active cell, theme, open side panel, and the applied Pine
-  script.
+  script with its settings.
 
 When Binance is unavailable, report the environmental failure and verify against
 the offline/test seams instead of inventing mock data in the app.

@@ -126,7 +126,8 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   settings. Scripts can draw plots, hlines, fills, markers, lines, boxes,
   labels, tables and candles, and recolor chart candles with `barcolor`.
   `request.security` reads higher timeframes, lower intrabar data, and foreign
-  instruments such as an SMT pair.
+  instruments such as an SMT pair. An applied script reopens with its saved
+  settings after a reload.
 - Strategies: `strategy.entry`, `order`, `exit`, and `close` run as a backtest
   with trade markers on the chart and a Strategy panel showing net P&L, equity,
   win rate, profit factor, max drawdown, the open position, and the trade

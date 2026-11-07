@@ -4,6 +4,8 @@
  * documents; import/export uses one JSON file.
  */
 
+import type { PineInputValues } from '../types';
+
 export const LAYOUTS_KEY = 'screener.layouts.v1';
 export const LAYOUTS_VERSION = 1;
 /** A second write of one large snapshot per save, so keep the list bounded. */
@@ -15,6 +17,8 @@ export interface LayoutPine {
   script: string;
   name: string;
   all: boolean;
+  /** Input overrides of the applied script, restored with the layout. */
+  inputs?: PineInputValues;
 }
 
 export interface LayoutItem {
@@ -86,7 +90,16 @@ function isLayoutPine(value: unknown): value is LayoutPine {
     isRecord(value) &&
     typeof value.script === 'string' &&
     typeof value.name === 'string' &&
-    typeof value.all === 'boolean'
+    typeof value.all === 'boolean' &&
+    (value.inputs === undefined || isInputValues(value.inputs))
+  );
+}
+
+function isInputValues(value: unknown): value is PineInputValues {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(
+    (item) =>
+      typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean',
   );
 }
 

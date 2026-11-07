@@ -44,9 +44,14 @@ export interface WorkspaceTab {
   pineName?: string;
   /** Whether that script was applied to every cell. */
   pineAll?: boolean;
+  /** Input overrides of the applied script, restored with it on remount. */
+  pineInputs?: PineInputValues;
   /** Saved layout this tab was opened from or last linked to. */
   layoutId?: string;
 }
+
+/** JSON-safe input overrides for a script's settings dialog. */
+export type PineInputValues = Record<string, string | number | boolean>;
 
 /** The active cell's chart, as reported to the AI sidebar. */
 export interface ChartContext {
