@@ -8,7 +8,7 @@ import {
 } from '@luxalgo/vela/plugin';
 import { alertsFor, subscribeAlerts } from './alerts';
 
-export type VelaPanelId = 'screener' | 'pine' | 'library' | 'strategy' | 'alerts';
+export type VelaPanelId = 'screener' | 'pine' | 'library' | 'alerts';
 
 interface PanelMount {
   tabId: string;
@@ -113,11 +113,6 @@ registerIcon(
   'library-panel',
   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg>',
 );
-registerIcon(
-  'strategy-panel',
-  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/></svg>',
-);
-
 registerSidePanel({
   id: 'screener',
   title: 'Screener',
@@ -172,19 +167,6 @@ registerSidePanel({
   maxWidth: 620,
   maximizable: true,
   mount: (ctx, body) => ({ destroy: mountPanel('library', ctx, body) }),
-});
-
-registerSidePanel({
-  id: 'strategy',
-  title: 'Strategy',
-  icon: 'strategy-panel',
-  order: 65,
-  width: 340,
-  resizable: true,
-  minWidth: 280,
-  maxWidth: 560,
-  maximizable: true,
-  mount: (ctx, body) => ({ destroy: mountPanel('strategy', ctx, body) }),
 });
 
 registerSidePanel({

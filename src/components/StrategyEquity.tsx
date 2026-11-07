@@ -52,6 +52,7 @@ export function StrategyEquity({ points, initialCapital, className, heightClass 
       zeroY: ((max - 0) / (max - min)) * 100,
       min: rawMin,
       max: rawMax,
+      positive: values[values.length - 1]! >= 0,
       start: usable[0]!.time,
       end: usable[usable.length - 1]!.time,
     };
@@ -67,7 +68,11 @@ export function StrategyEquity({ points, initialCapital, className, heightClass 
         preserveAspectRatio="none"
         role="img"
         aria-label="Strategy equity curve"
-        className={cn('w-full text-emerald-500', heightClass)}
+        className={cn(
+          'w-full',
+          chart.positive ? 'text-emerald-500' : 'text-red-500',
+          heightClass,
+        )}
       >
         <line
           x1="0"

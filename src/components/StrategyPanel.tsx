@@ -1,5 +1,5 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
-import { Activity, Maximize2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Activity, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
 import { formatPrice } from '../lib/format';
 import { cn } from '../lib/utils';
 import {
@@ -13,11 +13,18 @@ import { Segmented } from '../ui/primitives';
 import { StrategyEquity } from './StrategyEquity';
 
 interface Props {
-  /** Workspace tab whose strategies the panel shows. */
+  /** Workspace tab whose strategies the dock shows. */
   tabId: string;
+  /** Persisted expanded height, in px. */
+  height: number;
+  collapsed: boolean;
+  onHeightChange: (height: number) => void;
+  onCollapsedChange: (collapsed: boolean) => void;
 }
 
-const TRADE_ROWS = 30;
+const MIN_HEIGHT = 160;
+const MAX_HEIGHT = 560;
+const COLLAPSED_HEIGHT = 36;
 
 function money(value: number): string {
   return formatPrice(value, 2);
@@ -38,6 +45,17 @@ function tradeTime(ms: number): string {
   });
 }
 
+function shortDay(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
+}
+
+function dateRange(run: StrategyRunState): string | null {
+  const first = run.equityCurve[0]?.time;
+  const last = run.equityCurve[run.equityCurve.length - 1]?.time;
+  if (!first || !last) return null;
+  return `${shortDay(first)} – ${shortDay(last)}`;
+}
+
 function winRateOf(state: StrategyRunState['state']): number | null {
   const decided = state.wins + state.losses + state.even;
   return decided > 0 ? (state.wins / decided) * 100 : null;
@@ -49,6 +67,10 @@ function profitFactorOf(state: StrategyRunState['state']): number | null {
     : state.grossProfit > 0
       ? Number.POSITIVE_INFINITY
       : null;
+}
+
+function runKey(run: StrategyRunState): string {
+  return `${run.cellId}:${run.id}`;
 }
 
 function SideBadge({ side }: { side: 'long' | 'short' }) {
@@ -66,67 +88,6 @@ function SideBadge({ side }: { side: 'long' | 'short' }) {
   );
 }
 
-function Value({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'up' | 'down';
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 px-2 py-[3px]">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span
-        className={cn(
-          'font-mono text-[11px] tabular-nums',
-          tone === 'up'
-            ? 'text-emerald-500'
-            : tone === 'down'
-              ? 'text-red-500'
-              : 'text-foreground',
-        )}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function TradeRow({ trade }: { trade: StrategyTrade }) {
-  return (
-    <li className="px-2 py-1.5">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="flex items-center gap-1.5">
-          <SideBadge side={trade.side} />
-          <span className="font-mono text-[10px] text-muted-foreground">
-            {trade.qty} @ {money(trade.entry.price)}
-          </span>
-        </span>
-        {trade.open ? (
-          <span className="rounded border border-border px-1 text-[9px] uppercase text-muted-foreground">
-            open
-          </span>
-        ) : (
-          <span
-            className={cn(
-              'font-mono text-[11px] tabular-nums',
-              (trade.pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500',
-            )}
-          >
-            {signedMoney(trade.pnl ?? 0)}
-          </span>
-        )}
-      </div>
-      <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-        <span>{tradeTime(trade.entry.time)}</span>
-        {trade.exit ? <span>exit {money(trade.exit.price)}</span> : null}
-      </div>
-    </li>
-  );
-}
-
 function ViewerMetric({
   label,
   value,
@@ -137,8 +98,8 @@ function ViewerMetric({
   tone?: 'up' | 'down';
 }) {
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span className="truncate text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
       <span
@@ -231,9 +192,7 @@ function TradesLog({ run }: { run: StrategyRunState }) {
   }, [run.trades]);
 
   if (rows.length === 0) {
-    return (
-      <p className="py-10 text-center text-[11px] text-muted-foreground">No trades.</p>
-    );
+    return <p className="py-10 text-center text-[11px] text-muted-foreground">No trades.</p>;
   }
 
   return (
@@ -253,9 +212,7 @@ function TradesLog({ run }: { run: StrategyRunState }) {
         <tbody>
           {rows.map(({ trade, index, cumulative }) => (
             <tr key={trade.id} className="border-t border-border/40">
-              <td className="px-2 py-1.5 font-mono tabular-nums text-muted-foreground">
-                {index}
-              </td>
+              <td className="px-2 py-1.5 font-mono tabular-nums text-muted-foreground">{index}</td>
               <td className="px-2 py-1.5">
                 <SideBadge side={trade.side} />
               </td>
@@ -306,17 +263,15 @@ function TradesLog({ run }: { run: StrategyRunState }) {
 
 function StrategyViewer({
   run,
-  open,
   onOpenChange,
 }: {
   run: StrategyRunState;
-  open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const [tab, setTab] = useState<'performance' | 'trades'>('performance');
   return (
     <Modal
-      open={open}
+      open
       onOpenChange={onOpenChange}
       title={run.title}
       description="Strategy backtest"
@@ -342,120 +297,260 @@ function StrategyViewer({
   );
 }
 
-function StrategySection({ run }: { run: StrategyRunState }) {
+function DockMetrics({ run }: { run: StrategyRunState }) {
   const state = run.state;
-  const [viewerOpen, setViewerOpen] = useState(false);
   const decided = state.wins + state.losses + state.even;
   const winRate = winRateOf(state);
   const profitFactor = profitFactorOf(state);
-  const position = state.position !== 0;
-  const trades = [...run.trades].reverse().slice(0, TRADE_ROWS);
-
   return (
-    <div className="border-b border-border/60">
-      <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-        <span className="min-w-0 truncate text-[12px] font-medium text-foreground" title={run.title}>
-          {run.title}
-        </span>
-        <span className="flex shrink-0 items-center gap-1">
-          <span
-            className={cn(
-              'font-mono text-[11px] tabular-nums',
-              state.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500',
-            )}
-          >
-            {signedMoney(state.netPnl)}
-          </span>
-          <button
-            type="button"
-            aria-label="Open strategy viewer"
-            title="Open strategy viewer"
-            onClick={() => setViewerOpen(true)}
-            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Maximize2 className="size-3.5" />
-          </button>
-        </span>
-      </div>
-      <Value label="Equity" value={money(state.equity)} />
-      <Value
-        label="Win rate"
-        value={winRate === null ? '—' : `${winRate.toFixed(1)}%`}
+    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-5">
+      <ViewerMetric
+        label="Net Profit"
+        value={signedMoney(state.netPnl)}
+        tone={state.netPnl >= 0 ? 'up' : 'down'}
       />
-      <Value
+      <ViewerMetric
         label="Trades"
-        value={`${decided}${position ? ' + open' : ''}`}
+        value={`${decided}${state.position !== 0 ? ' + open' : ''}`}
       />
-      <Value
-        label="Profit factor"
+      <ViewerMetric label="Win Rate" value={winRate === null ? '—' : `${winRate.toFixed(2)}%`} />
+      <ViewerMetric label="Max Drawdown" value={money(state.maxDrawdown)} tone="down" />
+      <ViewerMetric
+        label="Profit Factor"
         value={
           profitFactor === null
             ? '—'
             : Number.isFinite(profitFactor)
-              ? profitFactor.toFixed(2)
+              ? profitFactor.toFixed(3)
               : '∞'
         }
         tone={profitFactor !== null && profitFactor >= 1 ? 'up' : 'down'}
       />
-      <Value label="Max drawdown" value={money(state.maxDrawdown)} tone="down" />
-      {position ? (
-        <Value
-          label="Position"
-          value={`${state.position > 0 ? 'long' : 'short'} ${Math.abs(state.position)} @ ${money(state.avgPrice)}`}
-          tone={state.openPnl >= 0 ? 'up' : 'down'}
-        />
-      ) : null}
-      {run.equityCurve.length > 1 ? (
-        <div className="border-t border-border/40 px-2 py-1.5">
-          <StrategyEquity
-            points={run.equityCurve}
-            initialCapital={state.initialCapital}
-          />
-        </div>
-      ) : null}
-      {trades.length > 0 ? (
-        <ul className="divide-y divide-border/40 border-t border-border/40">
-          {trades.map((trade) => (
-            <TradeRow key={trade.id} trade={trade} />
-          ))}
-        </ul>
-      ) : (
-        <p className="px-2 py-2 text-[11px] text-muted-foreground">
-          {run.tradesLoaded ? 'No closed trades.' : 'Loading trades…'}
-        </p>
-      )}
-      {run.trades.length > TRADE_ROWS ? (
-        <p className="px-2 py-1 text-[10px] text-muted-foreground">
-          Latest {TRADE_ROWS} of {run.trades.length} trades.
-        </p>
-      ) : null}
-      <StrategyViewer run={run} open={viewerOpen} onOpenChange={setViewerOpen} />
     </div>
   );
 }
 
-/** Backtest summary and trade ledger for the tab's strategy scripts. */
-export function StrategyPanel({ tabId }: Props) {
+/** App-owned strategy dock under the chart: metrics, equity curve and viewer. */
+export function StrategyPanel({
+  tabId,
+  height,
+  collapsed,
+  onHeightChange,
+  onCollapsedChange,
+}: Props) {
   const runs = useSyncExternalStore(
     subscribeStrategyRuns,
     () => strategyRunsFor(tabId),
     () => strategyRunsFor(tabId),
   );
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [viewerKey, setViewerKey] = useState<string | null>(null);
+  const drag = useRef<{ startY: number; startHeight: number } | null>(null);
+  const dragHeightRef = useRef<number | null>(null);
+  const onHeightChangeRef = useRef(onHeightChange);
+  onHeightChangeRef.current = onHeightChange;
+
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (event: PointerEvent) => {
+      const start = drag.current;
+      if (!start) return;
+      const next = Math.min(
+        MAX_HEIGHT,
+        Math.max(MIN_HEIGHT, start.startHeight + start.startY - event.clientY),
+      );
+      dragHeightRef.current = next;
+      setDragHeight(next);
+    };
+    const finish = () => {
+      setDragging(false);
+      const next = dragHeightRef.current;
+      dragHeightRef.current = null;
+      drag.current = null;
+      setDragHeight(null);
+      if (next !== null) onHeightChangeRef.current(next);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, [dragging]);
+
+  if (runs.length === 0) return null;
+
+  const first = runs[0]!;
+  const multiple = runs.length > 1;
+  const net = multiple
+    ? runs.reduce((sum, run) => sum + run.state.netPnl, 0)
+    : first.state.netPnl;
+  const title = multiple ? `${runs.length} strategies` : first.title;
+  const range = multiple ? null : dateRange(first);
+  const viewerRun = viewerKey
+    ? (runs.find((run) => runKey(run) === viewerKey) ?? null)
+    : null;
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (collapsed) return;
+    event.preventDefault();
+    const startHeight = dragHeight ?? height;
+    drag.current = { startY: event.clientY, startHeight };
+    dragHeightRef.current = startHeight;
+    setDragging(true);
+  };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {runs.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground">
-            <Activity className="size-6 opacity-40" />
-            <p className="text-[12px]">
-              No strategy on this chart. Apply a script with `strategy()` in Pine.
-            </p>
+    <div
+      data-strategy-dock={collapsed ? 'collapsed' : 'open'}
+      className="flex shrink-0 flex-col border-t border-border bg-card"
+      style={{ height: collapsed ? COLLAPSED_HEIGHT : (dragHeight ?? height) }}
+    >
+      {!collapsed ? (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize strategy panel"
+          onPointerDown={onPointerDown}
+          className={cn(
+            'group flex h-2 shrink-0 cursor-row-resize touch-none items-start justify-center',
+            dragging && 'bg-primary/10',
+          )}
+        >
+          <div
+            className={cn(
+              'mt-0.5 h-1 w-8 rounded-full bg-border transition-colors group-hover:bg-primary',
+              dragging && 'bg-primary',
+            )}
+          />
+        </div>
+      ) : null}
+      <div className="flex h-9 shrink-0 items-center justify-between gap-3 px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Activity className="size-3.5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="truncate text-[12px] font-semibold text-foreground" title={title}>
+              {title}
+            </div>
+            {range ? (
+              <div className="truncate text-[10px] text-muted-foreground">{range}</div>
+            ) : null}
           </div>
-        ) : (
-          runs.map((run) => <StrategySection key={`${run.cellId}:${run.id}`} run={run} />)
-        )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <span
+            className={cn(
+              'font-mono text-[11px] tabular-nums',
+              net >= 0 ? 'text-emerald-500' : 'text-red-500',
+            )}
+          >
+            {signedMoney(net)}
+          </span>
+          {!multiple ? (
+            <button
+              type="button"
+              aria-label="Open strategy viewer"
+              title="Open strategy viewer"
+              onClick={() => setViewerKey(runKey(first))}
+              className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Maximize2 className="size-3.5" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label={collapsed ? 'Expand strategy panel' : 'Collapse strategy panel'}
+            title={collapsed ? 'Expand strategy panel' : 'Collapse strategy panel'}
+            onClick={() => onCollapsedChange(!collapsed)}
+            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {collapsed ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </button>
+        </div>
       </div>
+      {!collapsed ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {multiple ? (
+            runs.map((run) => (
+              <div
+                key={runKey(run)}
+                className="border-b border-border/40 px-3 py-2 last:border-b-0"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span
+                      className="truncate text-[12px] font-medium text-foreground"
+                      title={run.title}
+                    >
+                      {run.title}
+                    </span>
+                    {dateRange(run) ? (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {dateRange(run)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <span
+                      className={cn(
+                        'font-mono text-[11px] tabular-nums',
+                        run.state.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500',
+                      )}
+                    >
+                      {signedMoney(run.state.netPnl)}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Open strategy viewer"
+                      title="Open strategy viewer"
+                      onClick={() => setViewerKey(runKey(run))}
+                      className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    >
+                      <Maximize2 className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-1.5">
+                  <DockMetrics run={run} />
+                </div>
+                {run.equityCurve.length > 1 ? (
+                  <div className="mt-1">
+                    <StrategyEquity
+                      points={run.equityCurve}
+                      initialCapital={run.state.initialCapital}
+                      heightClass="h-20"
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ))
+          ) : (
+            <div className="px-3 pb-2">
+              <DockMetrics run={first} />
+              {first.equityCurve.length > 1 ? (
+                <div className="mt-1.5">
+                  <StrategyEquity
+                    points={first.equityCurve}
+                    initialCapital={first.state.initialCapital}
+                    heightClass="h-24"
+                  />
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+      {viewerRun ? (
+        <StrategyViewer
+          run={viewerRun}
+          onOpenChange={(open) => {
+            if (!open) setViewerKey(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

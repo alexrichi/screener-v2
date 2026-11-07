@@ -115,9 +115,11 @@ JSON result, and exits non-zero if the table stays empty.
   toolbar's right group maximizes the selected chart over the widget and restores
   the grid on a second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
-  reorderable columns, and per-row actions. Screener, Pine, Library, Strategy,
-  and Alerts open as Vela side panels from the chart's right sidebar; the open
-  panel and width persist, and script alerts are session-only.
+  reorderable columns, and per-row actions. Screener, Pine, Library, and Alerts
+  open as Vela side panels from the chart's right sidebar; the open panel and
+  width persist, and script alerts are session-only. The strategy dock sits under
+  the chart, resizes with a drag handle, collapses to its header, and keeps its
+  state across reloads.
 - Favorites: named lists managed from the star popover in the screener toolbar.
   `Default` is the default list; star a symbol to add it to the active list.
   Lists are stored at `screener.favorites.v2` per instrument
@@ -135,12 +137,11 @@ JSON result, and exits non-zero if the table stays empty.
   instruments such as an SMT pair. An applied script reopens with its saved
   settings after a reload.
 - Strategies: `strategy.entry`, `order`, `exit`, and `close` run as a backtest
-  with trade markers on the chart and a Strategy panel showing net P&L, equity,
-  win rate, profit factor, max drawdown, the open position, the equity curve and
-  the trade ledger. The viewer opens `Performance` (five metrics and a large
-  equity curve) and `Trades Log` (entry, exit, size, net and cumulative P&L).
-  Alerts from `alert()` and `alertcondition()` land in the Alerts panel once per
-  bar per call site.
+  with trade markers on the chart and a dock under it showing net P&L, the five
+  summary metrics and the equity curve. The viewer opens `Performance` (five
+  metrics and a large equity curve) and `Trades Log` (entry, exit, size, net and
+  cumulative P&L). Alerts from `alert()` and `alertcondition()` land in the
+  Alerts panel once per bar per call site.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
   duplicate, and import or export JSON. Updating a saved layout asks before

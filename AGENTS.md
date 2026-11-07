@@ -98,7 +98,7 @@ src/
     AiModelPicker.tsx             composer model catalog and reasoning level
     AlertsPanel.tsx               per-tab script alerts in the right rail
     StrategyEquity.tsx            strategy net P&L curve (zero line, downsample)
-    StrategyPanel.tsx             strategy metrics, curve, ledger and viewer in the right rail
+    StrategyPanel.tsx             app-owned strategy dock under the chart
     AssistantUiThread.tsx         assistant-ui chat over the same tools
     assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
     ui/                           shadcn shims used by the registry kit (Base UI)
@@ -542,12 +542,12 @@ key (OpenCode Go publishes it at `/inference/go/v1/models`, not under
 model with `reasoning: 'none'`.
 
 **The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
-registers `Screener`, `Pine`, `Library`, `Strategy`, and `Alerts` with
+registers `Screener`, `Pine`, `Library`, and `Alerts` with
 `registerSidePanel` at import time and portals the React content into the
 bodies Vela hands `mount`. Mounts are keyed `<tabId>:<panelId>`;
 `openVelaPanel` targets the active tab and the portals render only into its
 bodies. The shell runs with
-`sidebar: { top: ['screener', 'pine', 'library', 'strategy', '|', 'alerts'] }`
+`sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] }`
 (Vela dev): on desktop the panel toggles live in the right sidebar and the
 topbar keeps Maximize, Layouts and the screenshot button; mobile keeps the
 panel rows in its menu. `sidebar` does not exist in main/0.9.3, so drop it when
@@ -555,6 +555,16 @@ the checkout returns to main before the next release. The dock's open panel and
 width live in the Vela workspace document, not in `screener.dock.*`. Do not
 reach into panel internals. `screener.panels.welcomed` only controls the
 one-time Screener default.
+
+**The strategy dock is app-owned and sits under the chart.** Each tab renders
+`StrategyPanel` below the Vela host in a flex column, so the chart shrinks and
+Vela resizes; the dock returns `null` when the tab has no strategy runs. It
+defaults to 280 px, resizes with its drag handle (160–560), collapses to a
+36 px header, and persists `{ height, collapsed }` at
+`screener.strategy.dock`. The dock shows the five metrics, the equity curve and
+the viewer action; the full ledger lives in `Performance` / `Trades Log`, not in
+the dock. Do not register it as a Vela side panel again.
+
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
 maximized Pine editor keeps the pointer. Keep that override. Vela also inserts
@@ -735,22 +745,23 @@ Useful browser probes:
 - Zoom a cell to its scale floor, maximize it: the host loads enough history to
   fill the wider window at the same `barSpacing` (no click, resize or refit), and
   the left edge shows candles instead of empty space.
-- The right sidebar's panel buttons open `Screener`, `Pine`, `Library`,
-  `Strategy`, and `Alerts` as one Vela side panel at a time; the topbar keeps
-  Maximize, Layouts and the screenshot button. The open panel and width survive
-  reload. The legend source action opens the Pine panel.
+- The right sidebar's panel buttons open `Screener`, `Pine`, `Library`, and
+  `Alerts` as one Vela side panel at a time; the topbar keeps Maximize, Layouts
+  and the screenshot button. The open panel and width survive reload. The legend
+  source action opens the Pine panel.
 - A script with `alert()` on the active chart fills the `Alerts` rail panel with
   the symbol, timeframe, message and indicator; the topbar has no bell, and the
   rail button carries the alert count. Clearing empties the list and the count,
   and a reload starts empty.
-- A strategy script shows its fill arrows and labels on the price pane and fills
-  the `Strategy` rail panel with net P&L, equity, win rate, profit factor, max
-  drawdown, the open position, the equity curve and the round-trip ledger.
-  `Open strategy viewer` shows `Performance` (five metrics, large curve) and
-  `Trades Log` (entry/exit, size, net and cumulative P&L); scripts that reuse one
-  `strategy.exit` call still list every round trip separately. Editing the
-  script under the same indicator id replaces the ledger instead of mixing two
-  backtests; deleting the indicator empties the panel.
+- A strategy script shows its fill arrows and labels on the price pane and opens
+  the bottom strategy dock with net P&L, the five metrics and the equity curve.
+  The chart shrinks by the dock height; dragging the handle and collapsing to the
+  header resize it live, and both survive a reload. `Open strategy viewer` shows
+  `Performance` (five metrics, large curve) and `Trades Log` (entry/exit, size,
+  net and cumulative P&L); scripts that reuse one `strategy.exit` call still list
+  every round trip separately. Editing the script under the same indicator id
+  replaces the ledger instead of mixing two backtests; deleting the indicator
+  hides the dock.
 - Creating a workspace with `+` immediately requests its klines and renders candles;
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label; the

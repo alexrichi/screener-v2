@@ -727,7 +727,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               ? { storage: seededStorage(persistKey, layoutSeed) }
               : {}),
             drawingToolbar: true,
-            sidebar: { top: ['screener', 'pine', 'library', 'strategy', '|', 'alerts'] },
+            sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] },
             maxWebglCells,
           });
         } finally {
