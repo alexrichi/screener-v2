@@ -6,6 +6,7 @@ import {
 } from 'react';
 import { sanitizeState, VelaWorkspace } from '@luxalgo/vela/workspace';
 import type { ChartCell, WorkspaceStorage } from '@luxalgo/vela/workspace';
+import type { ScriptRun } from '@luxalgo/vela/plugin';
 import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
 import { PineEngine } from '../lib/pineVela/engine';
 import type {
@@ -19,6 +20,7 @@ import { chartSymbol, spotSymbol } from '../lib/binance';
 import { toast } from 'sonner';
 import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
 import { pushAlert, type ChartAlertInput } from '../lib/alerts';
+import { pushStrategyRun, removeStrategyRun } from '../lib/strategyRuns';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab } from '../lib/velaPanels';
@@ -368,6 +370,7 @@ function attachHistoryScroll(
   onIndicatorsChange: () => void,
   onAlert: (alert: ChartAlertInput) => void,
   onPineRemoved: () => void,
+  onStrategyRun: (cellId: string, id: string, run: ScriptRun | null) => void,
 ): () => void {
   const cells = new Map<string, CellHistory>();
   const cleanups = new Map<string, () => void>();
@@ -477,6 +480,10 @@ function attachHistoryScroll(
         onIndicatorsChange();
         ws.context().stateChanged();
         if (id === PINE_ID) onPineRemoved();
+        onStrategyRun(cell.id, id, null);
+      }),
+      chart.on('script:run', (run) => {
+        onStrategyRun(cell.id, run.id, run.kind === 'strategy' ? run : null);
       }),
       chart.on('alert', (alert) =>
         onAlert({
@@ -636,7 +643,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               ? { storage: seededStorage(persistKey, layoutSeed) }
               : {}),
             drawingToolbar: true,
-            sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] },
+            sidebar: { top: ['screener', 'pine', 'library', 'strategy', '|', 'alerts'] },
             maxWebglCells,
           });
         } finally {
@@ -649,6 +656,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         () => onIndicatorsChangeRef.current?.(),
         (alert) => pushAlert({ tabId: tab.id, ...alert }),
         dropStoredPine,
+        (cellId, id, run) => {
+          if (run) pushStrategyRun(tab.id, cellId, run);
+          else removeStrategyRun(tab.id, cellId, id);
+        },
       );
       const wantedSymbol = chartSymbol(tab.symbol);
       const matchingCell = ws.cells().find((cell) => cell.symbol === wantedSymbol);

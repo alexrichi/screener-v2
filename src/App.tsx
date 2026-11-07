@@ -16,6 +16,7 @@ import { SettingsTemplateHost } from './components/SettingsTemplateHost';
 import { IndicatorWindow } from './components/IndicatorWindow';
 import { LibraryPanel } from './components/LibraryPanel';
 import { AlertsPanel } from './components/AlertsPanel';
+import { StrategyPanel } from './components/StrategyPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -47,6 +48,7 @@ import {
   type VelaWorkspaceHandle,
 } from './components/VelaWorkspaceHost';
 import { openVelaPanel, setActiveVelaTab, VelaPanelPortals } from './lib/velaPanels';
+import { clearStrategyRuns } from './lib/strategyRuns';
 import { setIndicatorWindowBridge } from './lib/velaIndicators';
 import {
   fetchLibrarySource,
@@ -720,6 +722,7 @@ export default function App() {
 
   const closeTab = useCallback(
     (id: string) => {
+      clearStrategyRuns(id);
       setTabs((prev) => {
         if (prev.length <= 1) return prev;
         const index = prev.findIndex((tab) => tab.id === id);
@@ -1759,6 +1762,7 @@ export default function App() {
               />
             ),
             alerts: <AlertsPanel tabId={activeTabId} />,
+            strategy: <StrategyPanel tabId={activeTabId} />,
           }}
         />
       </main>

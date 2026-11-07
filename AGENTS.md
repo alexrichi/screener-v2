@@ -97,6 +97,7 @@ src/
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
     AlertsPanel.tsx               per-tab script alerts in the right rail
+    StrategyPanel.tsx             strategy backtest metrics and trade ledger in the right rail
     AssistantUiThread.tsx         assistant-ui chat over the same tools
     assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
     ui/                           shadcn shims used by the registry kit (Base UI)
@@ -136,6 +137,7 @@ src/
     usePersistedState.ts          localStorage-backed state with runtime validation
     view.ts                       default screener view and its validator
     velaTheme.ts                  dark/light Vela theme matching the app tokens
+    strategyRuns.ts               per-tab strategy runs fed by chart.on('script:run')
   scan/
     extractPlots.ts               last finite plot value for the scan table and debug run
     scan.worker.ts                Pine engine scan worker
@@ -524,18 +526,19 @@ key (OpenCode Go publishes it at `/inference/go/v1/models`, not under
 model with `reasoning: 'none'`.
 
 **The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
-registers `Screener`, `Pine`, `Library`, and `Alerts` with `registerSidePanel` at
-import time and portals the React content into the bodies Vela hands `mount`.
-Mounts are keyed `<tabId>:<panelId>`; `openVelaPanel` targets the active tab and
-the portals render only into its bodies. The shell runs with
-`sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] }` (Vela dev):
-on desktop the panel toggles live in the right sidebar and the topbar keeps
-Maximize, Layouts and the screenshot button; mobile keeps the panel rows in its
-menu. `sidebar` does not exist in main/0.9.3, so drop it when the checkout
-returns to main before the next release. The dock's open panel and width live in
-the Vela workspace document, not in `screener.dock.*`. Do not reach into panel
-internals. `screener.panels.welcomed` only controls the one-time Screener
-default.
+registers `Screener`, `Pine`, `Library`, `Strategy`, and `Alerts` with
+`registerSidePanel` at import time and portals the React content into the
+bodies Vela hands `mount`. Mounts are keyed `<tabId>:<panelId>`;
+`openVelaPanel` targets the active tab and the portals render only into its
+bodies. The shell runs with
+`sidebar: { top: ['screener', 'pine', 'library', 'strategy', '|', 'alerts'] }`
+(Vela dev): on desktop the panel toggles live in the right sidebar and the
+topbar keeps Maximize, Layouts and the screenshot button; mobile keeps the
+panel rows in its menu. `sidebar` does not exist in main/0.9.3, so drop it when
+the checkout returns to main before the next release. The dock's open panel and
+width live in the Vela workspace document, not in `screener.dock.*`. Do not
+reach into panel internals. `screener.panels.welcomed` only controls the
+one-time Screener default.
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
 maximized Pine editor keeps the pointer. Keep that override.
@@ -554,6 +557,21 @@ mount also keeps its rail button's count in sync through
 background tabs are collected too, and each tab's panel shows its own list.
 Nothing is persisted: a reload starts empty, exactly like Vela's bell. Do not
 read Vela's private alert list or add a second bell.
+
+**Strategies are engine runs surfaced by the app.** `pine-engine` executes
+`strategy.entry/order/exit/close` with next-bar market fills, bracket exits
+queued before their entry, one `closedtrades` ledger, and the declared
+`initial_capital`. `lib/pineVela/strategy.ts` maps the result to Vela's
+`StrategyState`, `StrategyTrade[]`, and `TradeExecution[]`; the adapter puts the
+fills on `IndicatorModel.trades` (price-pane markers) and the state and trades
+on the context snapshot. `lib/strategyRuns.ts` keeps the per-tab runs fed by
+`chart.on('script:run')` and pulls the unbounded ledger only off the tick path,
+so a live tick updates the metrics without re-reading the ledger. `StrategyPanel`
+shows net P&L, equity, win rate, profit factor, max drawdown, the open position,
+and the newest 30 round trips. The panel is session-only; a reload replays the
+script and rebuilds the ledger. The engine's strategy model is intentionally
+simple: no commission, slippage, pyramiding limit, trailing stop, OCA group, or
+intrabar fill ordering. `strategy.closedtrades.<field>(n)` reads the ledger.
 
 **Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
 `Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,

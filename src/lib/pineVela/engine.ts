@@ -24,6 +24,7 @@ import {
   type PineRunResult,
 } from '@screener/pine-engine';
 import { pineDrawings } from './drawings';
+import { strategyStateOf, strategyTradesOf, tradeExecutionsOf } from './strategy';
 
 /**
  * A live tick re-runs a non-streaming engine over the whole series. While the
@@ -285,6 +286,7 @@ export function modelOf(
     linefills: drawings.linefills,
     inputs,
     inputValues: values,
+    ...(run.strategy ? { trades: tradeExecutionsOf(run.strategy) } : {}),
   };
 }
 
@@ -431,6 +433,12 @@ export class PineEngine implements ScriptingEngine {
           ]),
         ),
         variables: { ...values },
+        ...(result.strategy
+          ? {
+              strategy: strategyStateOf(result.strategy),
+              trades: strategyTradesOf(result.strategy),
+            }
+          : {}),
         warnings: [],
       };
       handlers.onModel(model);
