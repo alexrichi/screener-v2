@@ -350,6 +350,25 @@ export class PineEngine implements ScriptingEngine {
     const LOWER_TTL_MS = 60_000;
     const LOWER_FETCH_TIMEOUT_MS = 20_000;
     const lowerCache = new Map<string, { bars: PineBar[]; at: number }>();
+    // The probe captures the whole script on HTF/LTF bars; it is expensive and
+    // only changes when the inputs or the cached lower series change. Keep it
+    // across ticks in this session and clear it on either.
+    const probeCache = new Map<string, unknown[]>();
+    let probeSignature = '';
+    const syncProbeCache = (): void => {
+      const lowerSignature = Object.entries(lowerCache)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => {
+          const last = entry.bars.at(-1);
+          return `${key}:${entry.bars.length}:${last?.time ?? 0}:${last?.close ?? 0}:${last?.high ?? 0}:${last?.low ?? 0}:${last?.volume ?? 0}`;
+        })
+        .join('|');
+      const signature = `${JSON.stringify(values)}|${lowerSignature}`;
+      if (signature !== probeSignature) {
+        probeCache.clear();
+        probeSignature = signature;
+      }
+    };
 
     const reportResult = (
       result: PineRunResult,
@@ -414,14 +433,16 @@ export class PineEngine implements ScriptingEngine {
         }));
 
         const requested = new Map<string, { symbol: string; timeframe: string }>();
-        const executeOnce = () =>
-          token.program.run({
+        const executeOnce = () => {
+          syncProbeCache();
+          return token.program.run({
             bars: pineBars,
             timeframe: req.market.timeframe,
             symbol: req.market.symbol,
             symbolInfo: req.market.symbolInfo as Record<string, unknown> | undefined,
             live: req.mode === 'live',
             visibleRange,
+            securityProbeCache: probeCache,
             inputs: values,
             lowerBars: Object.fromEntries(
               [...lowerCache].map(([key, entry]) => [key, entry.bars]),
@@ -431,6 +452,7 @@ export class PineEngine implements ScriptingEngine {
               requested.set(`${symbol}@${tf}`, { symbol, timeframe: tf });
             },
           });
+        };
 
         let result = executeOnce();
         const missing = [...requested].filter(([key]) => {
