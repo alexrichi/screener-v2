@@ -156,6 +156,7 @@ export class SidecarVelaProvider implements DataProvider {
   async getSymbolInfo(ticker: string): Promise<SymbolInfo | undefined> {
     const instrument = await this.findInstrument(ticker);
     const scale = 10 ** instrument.pricePrecision;
+    const mintick = instrument.tickSize && instrument.tickSize > 0 ? instrument.tickSize : 1 / scale;
     const prefix = this.venue.toUpperCase();
     return {
       ticker,
@@ -167,8 +168,8 @@ export class SidecarVelaProvider implements DataProvider {
       type: instrument.kind === 'perp' ? 'futures' : 'crypto',
       basecurrency: instrument.base,
       currency: instrument.quote,
-      mintick: 1 / scale,
-      pricescale: scale,
+      mintick,
+      pricescale: Math.round(1 / mintick),
       timezone: 'Etc/UTC',
       session: '24x7',
     };

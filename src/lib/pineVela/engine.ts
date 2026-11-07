@@ -368,6 +368,8 @@ export class PineEngine implements ScriptingEngine {
             bars: pineBars,
             timeframe: req.market.timeframe,
             symbol: req.market.symbol,
+            symbolInfo: req.market.symbolInfo as Record<string, unknown> | undefined,
+            live: req.mode === 'live',
             inputs: values,
             lowerBars: Object.fromEntries(
               [...lowerCache].map(([key, entry]) => [key, entry.bars]),

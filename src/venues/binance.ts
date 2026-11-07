@@ -85,6 +85,7 @@ export class BinanceVenueAdapter implements VenueAdapter {
               kind: 'perp',
               velaSymbol: `BINANCE:${row.symbol}.P`,
               pricePrecision: row.pricePrecision,
+              tickSize: row.tickSize,
             }),
           ),
         )

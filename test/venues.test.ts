@@ -39,6 +39,20 @@ describe('instrument naming', () => {
     expect(perp.velaSymbol).toBe('BINANCE:BTCUSDT.P');
   });
 
+  it('keeps the venue tick size for syminfo.mintick', () => {
+    const perp = makeInstrument({
+      venue: 'binance',
+      nativeId: 'BTCUSDT',
+      base: 'BTC',
+      quote: 'USDT',
+      kind: 'perp',
+      velaSymbol: 'BINANCE:BTCUSDT.P',
+      pricePrecision: 2,
+      tickSize: 0.1,
+    });
+    expect(perp.tickSize).toBe(0.1);
+  });
+
   it('compares bare, prefixed and perp chart symbols', () => {
     expect(sameVelaSymbol('BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(true);
     expect(sameVelaSymbol('binance:BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(true);

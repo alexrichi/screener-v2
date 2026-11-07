@@ -18,6 +18,8 @@ export interface Instrument {
   kind: MarketKind;
   /** Price decimals used by the table, from the venue's tick size. */
   pricePrecision: number;
+  /** Actual price step (e.g. 0.1), when the venue exposes it. */
+  tickSize?: number;
 }
 
 export interface VenueBar {

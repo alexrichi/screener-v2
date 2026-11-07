@@ -10,6 +10,8 @@ export interface InstrumentInput {
   display?: string;
   /** Price decimals from the venue's tick size. */
   pricePrecision?: number;
+  /** Actual price step (e.g. 0.1), when the venue exposes it. */
+  tickSize?: number;
   /** Required: only the adapter knows the symbol Vela's provider expects. */
   velaSymbol: string;
 }
@@ -71,5 +73,6 @@ export function makeInstrument(input: InstrumentInput): Instrument {
     quote: input.quote,
     kind: input.kind,
     pricePrecision: input.pricePrecision ?? 2,
+    tickSize: input.tickSize,
   };
 }

@@ -10,6 +10,7 @@ interface BinanceExchangeSymbol {
   quoteAsset: string;
   pricePrecision?: number;
   tickSize?: string;
+  filters?: { filterType?: string; tickSize?: string }[];
 }
 
 interface BinanceExchangeInfo {
@@ -55,6 +56,8 @@ interface SymbolMeta {
   base: string;
   quote: string;
   pricePrecision: number;
+  /** Actual price step from PRICE_FILTER.tickSize, e.g. 0.1 for BTCUSDT.P. */
+  tickSize?: number;
 }
 
 let metaCache: { at: number; rows: SymbolMeta[] } | null = null;
@@ -87,6 +90,13 @@ function decimalsFromTickSize(tickSize: string | undefined): number {
   const dot = text.indexOf('.');
   if (dot < 0) return 0;
   return Math.min(8, text.length - dot - 1);
+}
+
+/** Numeric tick size from the venue's string, or undefined when absent/invalid. */
+function numberFromTickSize(tickSize: string | undefined): number | undefined {
+  if (!tickSize) return undefined;
+  const value = Number(tickSize);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -174,6 +184,9 @@ export async function fetchSymbolMeta(signal?: AbortSignal): Promise<SymbolMeta[
         typeof s.pricePrecision === 'number'
           ? Math.max(0, Math.min(8, s.pricePrecision))
           : decimalsFromTickSize(s.tickSize),
+      tickSize: numberFromTickSize(
+        s.tickSize ?? s.filters?.find((f) => f.filterType === 'PRICE_FILTER')?.tickSize,
+      ),
     }));
   metaCache = { at: Date.now(), rows };
   return rows;
@@ -190,6 +203,7 @@ export interface BinanceMarketRow {
   funding: number | null;
   nextFunding: number | null;
   pricePrecision: number;
+  tickSize?: number;
 }
 
 export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarketRow[]> {
@@ -217,6 +231,7 @@ export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarket
       funding: numberOrNull(funding?.lastFundingRate),
       nextFunding: nextFunding && nextFunding > 0 ? nextFunding : null,
       pricePrecision: m.pricePrecision,
+      tickSize: m.tickSize,
     };
   });
 
