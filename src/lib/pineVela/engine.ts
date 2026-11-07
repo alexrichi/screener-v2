@@ -118,7 +118,7 @@ function withTransparency(color: string, transparency = 0): string {
 function inputsSchema(program: PineProgram): InputSchema[] {
   return program.meta.inputs.map((input) => ({
     key: input.id,
-    title: input.name || input.id,
+    title: input.name,
     type: INPUT_TYPES[input.type] ?? 'float',
     defval: input.defval,
     ...(input.options ? { options: input.options } : {}),
