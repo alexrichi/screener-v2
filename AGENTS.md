@@ -702,14 +702,19 @@ Useful browser probes:
 - Zoom a cell to its scale floor, maximize it: the host loads enough history to
   fill the wider window at the same `barSpacing` (no click, resize or refit), and
   the left edge shows candles instead of empty space.
-- The right sidebar's panel buttons open `Screener`, `Pine`, `Library`, and
-  `Alerts` as one Vela side panel at a time; the topbar keeps Maximize, Layouts
-  and the screenshot button. The open panel and width survive reload. The legend
-  source action opens the Pine panel.
+- The right sidebar's panel buttons open `Screener`, `Pine`, `Library`,
+  `Strategy`, and `Alerts` as one Vela side panel at a time; the topbar keeps
+  Maximize, Layouts and the screenshot button. The open panel and width survive
+  reload. The legend source action opens the Pine panel.
 - A script with `alert()` on the active chart fills the `Alerts` rail panel with
   the symbol, timeframe, message and indicator; the topbar has no bell, and the
   rail button carries the alert count. Clearing empties the list and the count,
   and a reload starts empty.
+- A strategy script shows its fill arrows and labels on the price pane and fills
+  the `Strategy` rail panel with net P&L, equity, win rate, profit factor, max
+  drawdown, the open position, and the round-trip ledger. Editing the script
+  under the same indicator id replaces the ledger instead of mixing two
+  backtests; deleting the indicator empties the panel.
 - Creating a workspace with `+` immediately requests its klines and renders candles;
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label; the
@@ -931,7 +936,9 @@ so the settings dialog works. It emits plots plus `line`/`box`/`label` drawings 
 spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
 objects after the run: `set_*` calls are already applied, deleted objects are
 dropped, `bgcolor` entries are merged into spans, and tables are passed to the host. `plotshape`/`plotchar`/`plotarrow` points are returned as shape markers and drawn as label shapes. `hline()` becomes a `PriceLine`, `fill()` a band between two plot series (an hline anchor becomes a hidden constant series so it stays out of the scale), and `barcolor()` recolors the chart candles through `barColors`. `plotcandle`/`plotbar` keep per-bar colors on the candle series. Unknown builtins resolve
-to `na` and are reported through `missingStd`. `alert()` is a no-op. `request.security` works for the chart's own symbol on its own timeframe and, on a higher timeframe, by resampling the chart's bars: builtin source expressions take the fast spec path, while arrays, UDT tuples and other expressions run a nested HTF probe (the script executes once on the resampled bars, snapshots the expression per HTF bar, and the chart bar reads the snapshot the gaps/lookahead contract selects; one probe per call site and timeframe, and a probe the script's own guards reject falls back to `na`; the chart adapter caches probe results for its session and invalidates them when the inputs or the cached lower series change). Lower timeframes read intrabar bars the host fetches through Vela's `fetchSeries` (60 s cache; the local pass paints first, and a 20 s fetch timeout prevents a stuck chart): simple sources read the last lower bar per chart bar, while an array/UDT expression probes the host's lower series and reads its last bar inside the chart bar; `request.security_lower_tf` returns the lower bars inside each chart bar and `source[n]` offsets count lower bars. `ta.atr(...)` inside a security tuple is evaluated over those lower bars. A foreign symbol without a feed and an unbounded expression inside a security tuple return `na` with a warning.
+to `na` and are reported through `missingStd`. `alert()` and `alertcondition()`
+raise one alert per bar per call site, and `strategy.*` orders run the backtest
+in `lib/pineVela/strategy.ts`. `request.security` works for the chart's own symbol on its own timeframe and, on a higher timeframe, by resampling the chart's bars: builtin source expressions take the fast spec path, while arrays, UDT tuples and other expressions run a nested HTF probe (the script executes once on the resampled bars, snapshots the expression per HTF bar, and the chart bar reads the snapshot the gaps/lookahead contract selects; one probe per call site and timeframe, and a probe the script's own guards reject falls back to `na`; the chart adapter caches probe results for its session and invalidates them when the inputs or the cached lower series change). Lower timeframes read intrabar bars the host fetches through Vela's `fetchSeries` (60 s cache; the local pass paints first, and a 20 s fetch timeout prevents a stuck chart): simple sources read the last lower bar per chart bar, while an array/UDT expression probes the host's lower series and reads its last bar inside the chart bar; `request.security_lower_tf` returns the lower bars inside each chart bar and `source[n]` offsets count lower bars. `ta.atr(...)` inside a security tuple is evaluated over those lower bars. A foreign symbol without a feed and an unbounded expression inside a security tuple return `na` with a warning.
 `na` is `NaN`, so warm-up arithmetic and comparisons behave like Pine, and
 `if not na(box)` guards still work because a drawing handle is an object. Each
 TA call site keeps its own state and source series, so two EMAs and chained
