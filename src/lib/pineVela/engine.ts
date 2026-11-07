@@ -535,7 +535,8 @@ export class PineEngine implements ScriptingEngine {
             ),
             onLowerTimeframe: (symbol, timeframe) => {
               const tf = canonicalTimeframe(timeframe);
-              requested.set(`${symbol}@${tf}`, { symbol, timeframe: tf });
+              const normalized = normalizeForeign(symbol);
+              requested.set(`${normalized}@${tf}`, { symbol: normalized, timeframe: tf });
             },
             onForeignSymbol: (symbol, timeframe) => {
               const tf = canonicalTimeframe(timeframe);
@@ -544,6 +545,48 @@ export class PineEngine implements ScriptingEngine {
             },
           });
           return computed;
+        };
+
+        // The venue caps one bars request at ~1500; a 15m lower series for a
+        // 500-bar 1h chart needs two pages. Page backwards until the chart's
+        // first bar is covered, so the oldest lower-TF features have data.
+        const fetchSeries = req.fetchSeries;
+        const fetchPaged = async (
+          symbol: string,
+          timeframe: string,
+          range: { from: number; to: number; limit?: number },
+        ) => {
+          if (!fetchSeries) return [];
+          const target = range.limit ?? 500;
+          const byTime = new Map<number, {
+            time: number;
+            open: number;
+            high: number;
+            low: number;
+            close: number;
+            volume?: number;
+          }>();
+          let to = range.to;
+          for (let page = 0; page < 16 && byTime.size < target; page += 1) {
+            const take = Math.min(1500, target - byTime.size);
+            if (take <= 0) break;
+            const batch = await fetchSeries(symbol, timeframe, {
+              from: range.from,
+              to,
+              limit: take,
+            });
+            if (batch.length === 0) break;
+            let oldest = Number.POSITIVE_INFINITY;
+            for (const bar of batch) {
+              byTime.set(bar.time, bar);
+              if (bar.time < oldest) oldest = bar.time;
+            }
+            if (oldest <= range.from) break;
+            const nextTo = oldest - 1;
+            if (!Number.isFinite(nextTo) || nextTo >= to) break;
+            to = nextTo;
+          }
+          return [...byTime.values()].sort((a, b) => a.time - b.time);
         };
 
         let result = executeOnce();
@@ -561,7 +604,6 @@ export class PineEngine implements ScriptingEngine {
           const last = pineBars[pineBars.length - 1]!;
           const chartMs = timeframeMs(req.market.timeframe) || 1;
           const from = pineBars[0]?.time ?? last.time;
-          const fetchSeries = req.fetchSeries;
           await Promise.all(
             missing.map(async ([key, request]) => {
               const lowerMs = timeframeMs(request.timeframe) || 1;
@@ -571,7 +613,7 @@ export class PineEngine implements ScriptingEngine {
               );
               try {
                 const series = await Promise.race([
-                  fetchSeries(request.symbol, request.timeframe, {
+                  fetchPaged(request.symbol, request.timeframe, {
                     from,
                     to: last.time + chartMs,
                     limit,
@@ -609,7 +651,6 @@ export class PineEngine implements ScriptingEngine {
         if (missingForeign.length > 0 && req.fetchSeries) {
           const last = pineBars[pineBars.length - 1]!;
           const chartMs = timeframeMs(req.market.timeframe) || 1;
-          const fetchSeries = req.fetchSeries;
           await Promise.all(
             missingForeign.map(async ([key, request]) => {
               const requestedMs = timeframeMs(request.timeframe) || chartMs;
@@ -619,7 +660,7 @@ export class PineEngine implements ScriptingEngine {
               );
               try {
                 const series = await Promise.race([
-                  fetchSeries(request.symbol, request.timeframe, {
+                  fetchPaged(request.symbol, request.timeframe, {
                     from: pineBars[0]?.time ?? last.time,
                     to: last.time + chartMs,
                     limit,
