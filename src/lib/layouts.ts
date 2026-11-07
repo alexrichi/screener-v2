@@ -19,6 +19,8 @@ export interface LayoutPine {
   all: boolean;
   /** Input overrides of the applied script, restored with the layout. */
   inputs?: PineInputValues;
+  /** Property overrides of the applied script, restored with the layout. */
+  props?: PineInputValues;
 }
 
 export interface LayoutItem {
@@ -91,7 +93,8 @@ function isLayoutPine(value: unknown): value is LayoutPine {
     typeof value.script === 'string' &&
     typeof value.name === 'string' &&
     typeof value.all === 'boolean' &&
-    (value.inputs === undefined || isInputValues(value.inputs))
+    (value.inputs === undefined || isInputValues(value.inputs)) &&
+    (value.props === undefined || isInputValues(value.props))
   );
 }
 

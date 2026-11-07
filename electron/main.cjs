@@ -1,8 +1,14 @@
-const { app, BrowserWindow, dialog, Menu, ipcMain, session } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain, screen, session } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const {
+  captureWindowState,
+  fitBounds,
+  readWindowState,
+  saveWindowState,
+} = require('./window-state.cjs');
 
 const SIDECAR_PORT = 8787;
 const SMOKE = process.argv.includes('--smoke');
@@ -299,9 +305,13 @@ async function createWindow() {
   const windowIcon = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
     : path.join(__dirname, '..', 'build', 'icon.png');
+  const windowStateFile = path.join(app.getPath('userData'), 'window.json');
+  const { maximized: restoreMaximized, ...restoreBounds } = fitBounds(
+    readWindowState(windowStateFile),
+    screen.getAllDisplays(),
+  );
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    ...restoreBounds,
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#0b0f17',
@@ -326,6 +336,30 @@ async function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  if (restoreMaximized) mainWindow.maximize();
+  if (!SMOKE) {
+    let stateTimer = null;
+    const persistWindow = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const state = captureWindowState(mainWindow);
+      if (state) saveWindowState(windowStateFile, state);
+    };
+    const scheduleWindowSave = () => {
+      if (stateTimer !== null) clearTimeout(stateTimer);
+      stateTimer = setTimeout(() => {
+        stateTimer = null;
+        persistWindow();
+      }, 400);
+    };
+    for (const event of ['resize', 'move', 'maximize', 'unmaximize']) {
+      mainWindow.on(event, scheduleWindowSave);
+    }
+    mainWindow.on('close', () => {
+      if (stateTimer !== null) clearTimeout(stateTimer);
+      stateTimer = null;
+      persistWindow();
+    });
+  }
   mainWindow.on('closed', () => {
     mainWindow = null;
   });

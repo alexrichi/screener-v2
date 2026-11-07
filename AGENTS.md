@@ -136,6 +136,8 @@ src/
     velaScripts.ts                per-cell persistence for external script indicators
     usePersistedState.ts          localStorage-backed state with runtime validation
     view.ts                       default screener view and its validator
+    scaleState.ts                 zoom payload validation and cache rules
+    velaScale.ts                  cell-scope persisted zoom level
     velaTheme.ts                  dark/light Vela theme matching the app tokens
     strategyRuns.ts               per-tab strategy runs fed by chart.on('script:run')
   scan/
@@ -286,9 +288,20 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   rate limit does not stop the remaining venues. The main thread only merges
   results and derives plot columns.
 - The applied Pine script is stored on the tab as `pineScript` / `pineAll`, with its
-  input values in `pineInputs` (kept current by `indicator:inputs`). Vela's
-  external indicators are not persisted by the workspace document, so the host
-  reapplies the stored script and inputs on mount.
+  input values in `pineInputs` and declaration-property overrides in `pineProps`
+  (both kept current by `indicator:inputs`, which Vela emits for input and prop
+  changes). Vela's external indicators are not persisted by the workspace
+  document, so the host reapplies the stored script, inputs and props on mount.
+- The visible time position is session-only: a reload frames the latest bars at
+  the document's depth. The zoom level (visible bar count) persists per cell in
+  `ext['screener.scale']` (`{ symbol, timeframe, bars }`) and is re-applied
+  against the newest bar with the renderer's configured right margin
+  (`margins.right`, in bars) added back, so a reload opens at the current time
+  at the same zoom with the same right whitespace. Panning alone does not dirty
+  the document; only a change in the visible bar count (zoom or cell resize)
+  does. The
+  restored `activeCellId` stays authoritative: the host only calls
+  `setActiveCell` by symbol when that cell shows a different symbol.
 - Scan results are session-only. Tabs, table view, settings, theme, the open Vela
   side panel, and the applied Pine script persist; scan rows and plot columns do not.
 - The AI sidebar is a sibling of the Vela section, not a Vela panel, so it stays
@@ -365,14 +378,14 @@ open with the alt cell active while the tab label says the main symbol.
 `handle.updateCode(source)`: same handle, same legend row, and the inputs and
 props survive; Vela restores the previous code when the new one fails. Only a
 missing indicator is added. The host returns `{ count, errors }` per chart, and
-the panel reports the first error. Store `pineScript`, `pineName`, `pineAll`, and
-the applied script's input values `pineInputs` on the tab and reapply them on
-mount. `lastAppliedRef` prevents a double apply when
-the tab state update and the imperative Apply happen together. The script is
-TAB state, not chart state: removing `screener-pine` from the legend (or the
-object tree) clears those tab fields through `onPineRemoved`, and the host
-removes its siblings on other cells; otherwise a reload, an `Update layout`
-(`tabPine(tab)`) or a layout switch applies it again. `applyLayout` sets
+the panel reports the first error. Store `pineScript`, `pineName`, `pineAll`,
+the applied script's input values `pineInputs` and property overrides
+`pineProps` on the tab and reapply them on mount. `lastAppliedRef` prevents a
+double apply when the tab state update and the imperative Apply happen together.
+The script is TAB state, not chart state: removing `screener-pine` from the
+legend (or the object tree) clears those tab fields through `onPineRemoved`, and
+the host removes its siblings on other cells; otherwise a reload, an `Update
+layout` (`tabPine(tab)`) or a layout switch applies it again. `applyLayout` sets
 `pineSwapRef` while it swaps the old script for the snapshot's one, so the swap
 is not mistaken for a user delete.
 
@@ -635,8 +648,12 @@ title bar: `app-titlebar` is the drag region, interactive children are
 `no-drag`, and `padding-right` reserves the native window controls. The
 hamburger menu is Base UI `Menu` and drives existing React actions. Keep
 `electron/preload.cjs` as the only main/renderer bridge; it exposes title-bar
-theme and window actions, never `ipcRenderer` itself. The smoke result includes
-`titlebar.bridge`, `paddingRight`, and `appRegion`.
+theme and window actions, never `ipcRenderer` itself. The main process keeps the
+window bounds and maximized flag in `window.json` under `userData`
+(`electron/window-state.cjs`), restores them only when they still land on a
+connected display, clamps the size to that display's work area and keeps the
+title bar on screen, and saves on resize/move/maximize plus close. The smoke
+result includes `titlebar.bridge`, `paddingRight`, and `appRegion`.
 
 **Theme changes touch two files.** App tokens live in `src/index.css`; the Vela
 theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will drift
@@ -764,8 +781,17 @@ Useful browser probes:
   the live result; `Chart analyst` gets none of the three editing tools.
 - Change a setting of the applied Pine script (for example `Show MA lines`),
   reload: the value survives and the script reopens with it. The tab stores the
-  applied inputs in `pineInputs`; a layout saved after the change restores the
-  same script settings.
+  applied inputs in `pineInputs` and property overrides in `pineProps`; a layout
+  saved after the change restores the same script settings. The MIT engine does
+  not declare props yet, so its settings dialog currently shows inputs only.
+- Zoom in, reload: the same number of bars comes back with the right edge on the
+  latest bar and the same whitespace after it (Settings → Margins → Right = 10
+  gives 10 bars). Pan only, reload: the chart opens at the latest bar, not at the
+  panned window. Older `screener.viewport` keys stay inert; the zoom lives under
+  `screener.scale`.
+- With two cells on the same symbol, activate the second cell and reload: the
+  document's `activeCellId` stays active instead of the host switching to the
+  first matching symbol.
 - The `Layouts` toolbar action sits right after Maximize and shows the active
   tab's linked layout name (or `Layouts`). Saving a 2×2 workspace creates an item in
   `screener.layouts.v1` and renames the action. A row click loads the layout into
@@ -829,7 +855,11 @@ Useful browser probes:
   the app modal.
 - The Electron title bar has `titlebar.bridge=true`, a non-zero
   `paddingRight`, and `appRegion=drag` in the smoke result; the native window
-  controls do not overlap the header buttons.
+  controls do not overlap the header buttons. Resize the window, quit and
+  relaunch: the size and position come back; a monitor that is no longer
+  connected falls back to the default 1440×900, an oversized saved window clamps
+  to the display work area, a negative `y` keeps the title bar on screen, and a
+  1366×768 primary caps the default size.
 - Toggling the theme updates both the app tokens and the native title-bar
   overlay colors.
 - Reloading restores tabs, layout, active cell, theme, open side panel, and the applied Pine

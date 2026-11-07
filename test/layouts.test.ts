@@ -61,12 +61,19 @@ describe('layout store', () => {
       name: 'X',
       all: false,
       inputs: { Length: 20, Show: true, Mode: 'EMA' },
+      props: { overlay: true },
     };
     expect(isLayoutLibrary({ version: 1, items: [item({ pine })] })).toBe(true);
     expect(
       isLayoutLibrary({
         version: 1,
         items: [item({ pine: { ...pine, inputs: { bad: { nested: 1 } } } as never })],
+      }),
+    ).toBe(false);
+    expect(
+      isLayoutLibrary({
+        version: 1,
+        items: [item({ pine: { ...pine, props: { bad: [1] } } as never })],
       }),
     ).toBe(false);
   });

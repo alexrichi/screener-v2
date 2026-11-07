@@ -46,6 +46,8 @@ export interface WorkspaceTab {
   pineAll?: boolean;
   /** Input overrides of the applied script, restored with it on remount. */
   pineInputs?: PineInputValues;
+  /** Property overrides of the applied script, restored with it on remount. */
+  pineProps?: PineInputValues;
   /** Saved layout this tab was opened from or last linked to. */
   layoutId?: string;
 }

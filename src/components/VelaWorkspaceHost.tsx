@@ -26,6 +26,7 @@ import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab } from '../lib/velaPanels';
 import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
+import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 import { VENUE_CATALOG } from '../venues/catalog';
 import { SidecarVelaProvider } from '../venues/vela';
@@ -43,6 +44,8 @@ export interface ScriptApplyReport {
   errors: string[];
   /** The applied script's input values, ready to persist with the tab. */
   inputs?: PineInputValues;
+  /** The applied script's property overrides, ready to persist with the tab. */
+  props?: PineInputValues;
 }
 
 export interface VelaWorkspaceHandle {
@@ -81,7 +84,10 @@ interface Props {
   onShowSource: (source: string) => void;
   onIndicatorsChange?: () => void;
   /** The applied script's settings changed; persist them with the tab. */
-  onPineInputs?: (inputs: PineInputValues) => void;
+  onPineSettings?: (settings: {
+    inputs?: PineInputValues;
+    props?: PineInputValues;
+  }) => void;
   /** The applied Pine script left a chart on its own (legend ✕, object tree). */
   onPineRemoved: (tabId: string) => void;
   onMarketChange: (
@@ -175,15 +181,31 @@ const EXTRA_SYMBOLS = [
   'LTCUSDT',
 ];
 
-function appliedInputsOf(handle: { inputValues(): Record<string, unknown> } | null | undefined): PineInputValues | undefined {
-  if (!handle) return undefined;
-  const values: PineInputValues = {};
-  for (const [key, value] of Object.entries(handle.inputValues())) {
+function primitiveValuesOf(
+  values: Record<string, unknown> | undefined,
+): PineInputValues | undefined {
+  if (!values) return undefined;
+  const out: PineInputValues = {};
+  for (const [key, value] of Object.entries(values)) {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      values[key] = value;
+      out[key] = value;
     }
   }
-  return Object.keys(values).length > 0 ? values : undefined;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The applied script's inputs and props, ready to persist with the tab. */
+function appliedSettingsOf(
+  handle:
+    | { inputValues(): Record<string, unknown>; propValues(): Record<string, unknown> }
+    | null
+    | undefined,
+): { inputs?: PineInputValues; props?: PineInputValues } | undefined {
+  if (!handle) return undefined;
+  const inputs = primitiveValuesOf(handle.inputValues());
+  const props = primitiveValuesOf(handle.propValues());
+  if (!inputs && !props) return undefined;
+  return { ...(inputs ? { inputs } : {}), ...(props ? { props } : {}) };
 }
 
 async function applyToCells(
@@ -192,10 +214,11 @@ async function applyToCells(
   name: string,
   allCells: boolean,
   inputs?: PineInputValues,
+  props?: PineInputValues,
 ): Promise<ScriptApplyReport> {
   const cells = allCells ? ws.cells() : [ws.active];
   let count = 0;
-  let appliedInputs: PineInputValues | undefined;
+  let applied: { inputs?: PineInputValues; props?: PineInputValues } | undefined;
   const errors: string[] = [];
   for (const cell of cells) {
     try {
@@ -206,7 +229,8 @@ async function applyToCells(
         const result = await existing.handle.updateCode(script);
         if (result.ok) {
           if (inputs) existing.handle.setInputs(inputs);
-          appliedInputs = appliedInputsOf(existing.handle) ?? appliedInputs;
+          if (props) existing.handle.setProps(props);
+          applied = appliedSettingsOf(existing.handle) ?? applied;
           count += 1;
         } else errors.push(result.error?.message ?? 'The chart rejected the script');
       } else {
@@ -216,16 +240,18 @@ async function applyToCells(
           script,
           language: 'pine',
           ...(inputs ? { inputs } : {}),
+          ...(props ? { props } : {}),
         });
-        const added = cell.instances.find((item) => item.id === PINE_ID)?.handle;
-        appliedInputs = appliedInputsOf(added) ?? appliedInputs;
+        applied =
+          appliedSettingsOf(cell.instances.find((item) => item.id === PINE_ID)?.handle) ??
+          applied;
         count += 1;
       }
     } catch (cause) {
       errors.push(cause instanceof Error ? cause.message : String(cause));
     }
   }
-  return { count, errors, ...(appliedInputs ? { inputs: appliedInputs } : {}) };
+  return { count, errors, ...(applied ?? {}) };
 }
 
 /** Model-facing vars: primitives only, bounded. Objects and arrays stay out. */
@@ -255,6 +281,8 @@ interface CellHistory {
   exhausted: boolean;
   busy: boolean;
   pendingDepth: number;
+  /** Visible bar count, so only a zoom change marks the workspace dirty. */
+  scale: number | null;
   status: HTMLElement;
   cancelWait: (() => void) | null;
   errorTimer: ReturnType<typeof setTimeout> | null;
@@ -400,7 +428,10 @@ function attachHistoryScroll(
   onAlert: (alert: ChartAlertInput) => void,
   onPineRemoved: () => void,
   onStrategyRun: (cellId: string, id: string, run: ScriptRun | null) => void,
-  onPineInputs: (inputs: PineInputValues) => void,
+  onPineSettings: (settings: {
+    inputs?: PineInputValues;
+    props?: PineInputValues;
+  }) => void,
 ): () => void {
   const cells = new Map<string, CellHistory>();
   const cleanups = new Map<string, () => void>();
@@ -419,6 +450,7 @@ function attachHistoryScroll(
       exhausted: false,
       busy: false,
       pendingDepth: 0,
+      scale: null,
       status,
       cancelWait: null,
       errorTimer: null,
@@ -494,8 +526,19 @@ function attachHistoryScroll(
         // series too short to fill the zoomed-out window.
       }),
       chart.on('viewport:changed', ({ from }) => {
-        if (state.exhausted || state.busy) return;
+        // Only a zoom change is persisted: panning keeps the same bar count and
+        // must not rewrite the whole workspace document.
+        const range = chart.getVisibleRange();
         const barMs = barMsOf(chart);
+        if (range && barMs > 0) {
+          const bars = Math.max(1, Math.round((range.to - range.from) / barMs) + 1);
+          if (state.scale === null) state.scale = bars;
+          else if (bars !== state.scale) {
+            state.scale = bars;
+            ws.context().stateChanged();
+          }
+        }
+        if (state.exhausted || state.busy) return;
         const first = chart.replay.bounds?.first;
         if (first == null || from > first + barMs * HISTORY_EDGE_BARS) return;
         extendHistory(chart, state);
@@ -514,10 +557,9 @@ function attachHistoryScroll(
       }),
       chart.on('indicator:inputs', ({ id }) => {
         if (id !== PINE_ID) return;
-        const values = appliedInputsOf(
-          cell.instances.find((item) => item.id === PINE_ID)?.handle,
+        onPineSettings(
+          appliedSettingsOf(cell.instances.find((item) => item.id === PINE_ID)?.handle) ?? {},
         );
-        if (values) onPineInputs(values);
       }),
       chart.on('script:run', (run) => {
         onStrategyRun(cell.id, run.id, run.kind === 'strategy' ? run : null);
@@ -577,7 +619,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       layoutSeed,
       onShowSource,
       onIndicatorsChange,
-      onPineInputs,
+      onPineSettings,
       onPineRemoved,
       onMarketChange,
     },
@@ -593,10 +635,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     onShowSourceRef.current = onShowSource;
     const onIndicatorsChangeRef = useRef(onIndicatorsChange);
     onIndicatorsChangeRef.current = onIndicatorsChange;
-    const onPineInputsRef = useRef(onPineInputs);
-    onPineInputsRef.current = onPineInputs;
-    const pineInputsRef = useRef(tab.pineInputs);
-    pineInputsRef.current = tab.pineInputs;
+    const onPineSettingsRef = useRef(onPineSettings);
+    onPineSettingsRef.current = onPineSettings;
+    const pineSettingsRef = useRef({ inputs: tab.pineInputs, props: tab.pineProps });
+    pineSettingsRef.current = { inputs: tab.pineInputs, props: tab.pineProps };
     const onPineRemovedRef = useRef(onPineRemoved);
     onPineRemovedRef.current = onPineRemoved;
     const savedScriptsRef = useRef(savedScripts);
@@ -702,11 +744,15 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           if (run) pushStrategyRun(tab.id, cellId, run);
           else removeStrategyRun(tab.id, cellId, id);
         },
-        (inputs) => onPineInputsRef.current?.(inputs),
+        (settings) => onPineSettingsRef.current?.(settings),
       );
+      // The restored document already carries the user's active cell; only fall
+      // back to the tab's symbol when the document left a different one active.
       const wantedSymbol = chartSymbol(tab.symbol);
-      const matchingCell = ws.cells().find((cell) => cell.symbol === wantedSymbol);
-      if (matchingCell) ws.setActiveCell(matchingCell.id);
+      if (ws.active?.symbol !== wantedSymbol) {
+        const matchingCell = ws.cells().find((cell) => cell.symbol === wantedSymbol);
+        if (matchingCell) ws.setActiveCell(matchingCell.id);
+      }
       if (tab.pineScript) {
         try {
           void applyToCells(
@@ -715,6 +761,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             tab.pineName ?? 'Screener Pine',
             tab.pineAll ?? false,
             tab.pineInputs,
+            tab.pineProps,
           );
           lastAppliedRef.current = tab.pineScript;
         } catch (cause) {
@@ -815,12 +862,14 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       const ws = wsRef.current;
       if (!ws || !tab.pineScript || tab.pineScript === lastAppliedRef.current) return;
       try {
+        const settings = pineSettingsRef.current;
         void applyToCells(
           ws,
           tab.pineScript,
           'Screener Pine',
           tab.pineAll ?? false,
-          pineInputsRef.current,
+          settings.inputs,
+          settings.props,
         );
         lastAppliedRef.current = tab.pineScript;
       } catch (cause) {
@@ -903,6 +952,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               layout.pine.name,
               layout.pine.all,
               layout.pine.inputs,
+              layout.pine.props,
             );
             if (report.count > 0) lastAppliedRef.current = layout.pine.script;
             pineError = report.errors[0] ?? null;

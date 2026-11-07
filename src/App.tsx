@@ -153,6 +153,7 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
     (tab.pineName === undefined || isString(tab.pineName)) &&
     (tab.pineAll === undefined || isBoolean(tab.pineAll)) &&
     (tab.pineInputs === undefined || isPineInputs(tab.pineInputs)) &&
+    (tab.pineProps === undefined || isPineInputs(tab.pineProps)) &&
     (tab.layoutId === undefined || isString(tab.layoutId))
   );
 }
@@ -186,6 +187,7 @@ function tabPine(tab: WorkspaceTab): LayoutPine | undefined {
     name: tab.pineName ?? 'Screener Pine',
     all: tab.pineAll ?? false,
     ...(tab.pineInputs ? { inputs: tab.pineInputs } : {}),
+    ...(tab.pineProps ? { props: tab.pineProps } : {}),
   };
 }
 
@@ -690,6 +692,8 @@ export default function App() {
                 pineScript: undefined,
                 pineName: undefined,
                 pineAll: undefined,
+                pineInputs: undefined,
+                pineProps: undefined,
               }
             : tab,
         ),
@@ -856,6 +860,7 @@ export default function App() {
                   pineName: name,
                   pineAll: allCells,
                   pineInputs: report.inputs,
+                  pineProps: report.props,
                 }
               : tab,
           ),
@@ -1110,8 +1115,15 @@ export default function App() {
                       pineName: item.pine.name,
                       pineAll: item.pine.all,
                       pineInputs: item.pine.inputs,
+                      pineProps: item.pine.props,
                     }
-                  : { pineScript: undefined, pineName: undefined, pineAll: undefined, pineInputs: undefined }),
+                  : {
+                      pineScript: undefined,
+                      pineName: undefined,
+                      pineAll: undefined,
+                      pineInputs: undefined,
+                      pineProps: undefined,
+                    }),
               }
             : candidate,
         ),
@@ -1138,6 +1150,7 @@ export default function App() {
               pineName: item.pine.name,
               pineAll: item.pine.all,
               pineInputs: item.pine.inputs,
+              pineProps: item.pine.props,
             }
           : {}),
       };
@@ -1693,10 +1706,12 @@ export default function App() {
                   }
                   onShowSource={showSource}
                   onIndicatorsChange={refreshIndicatorRows}
-                  onPineInputs={(inputs) =>
+                  onPineSettings={({ inputs, props }) =>
                     setTabs((prev) =>
                       prev.map((item) =>
-                        item.id === tab.id ? { ...item, pineInputs: inputs } : item,
+                        item.id === tab.id
+                          ? { ...item, pineInputs: inputs, pineProps: props }
+                          : item,
                       ),
                     )
                   }

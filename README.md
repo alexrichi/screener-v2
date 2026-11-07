@@ -89,9 +89,12 @@ npm run electron:pack    # release/win-unpacked/Screener.exe
 
 The packaged app starts the bundled sidecar as a child process on
 `127.0.0.1:8787` and serves the UI from a stable local port, so tabs, the
-indicator library, and the Vela workspace persist between launches. To run a
-headless check, launch `Screener.exe --smoke`: it loads the app, waits for the
-table, writes a JSON result, and exits non-zero if the table stays empty.
+indicator library, and the Vela workspace persist between launches. The window
+size, position, and maximized state also come back; a geometry from a monitor
+that is no longer connected falls back to the default size, and an oversized
+saved window is clamped to the monitor's work area. To run a headless check,
+launch `Screener.exe --smoke`: it loads the app, waits for the table, writes a
+JSON result, and exits non-zero if the table stays empty.
 
 ## What it does
 
@@ -104,10 +107,13 @@ table, writes a JSON result, and exits non-zero if the table stays empty.
   lists merge. Clicking a column header cycles descending, ascending, and
   unsorted.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
-  own symbol and timeframe. Dragging a chart into the past or zooming out loads
-  older history in 500-bar steps, with a loading badge in the cell. The leftmost
-  button of the chart toolbar's right group maximizes the selected chart over the
-  widget and restores the grid on a second click.
+  own symbol and timeframe, and the active cell survives a reload. Panning is
+  session-only: a reload frames the latest bars at the same zoom level, keeping
+  the chart's configured right margin.
+  Dragging a chart into the past or zooming out loads older history in 500-bar
+  steps, with a loading badge in the cell. The leftmost button of the chart
+  toolbar's right group maximizes the selected chart over the widget and restores
+  the grid on a second click.
 - Screener table with search, gainers/losers filters, sorting, resizable and
   reorderable columns, and per-row actions. Screener, Pine, Library, Strategy,
   and Alerts open as Vela side panels from the chart's right sidebar; the open

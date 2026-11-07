@@ -82,6 +82,7 @@
       "dist/**/*",
       "electron/main.cjs",
       "electron/preload.cjs",
+      "electron/window-state.cjs",
       "package.json",
       "!node_modules/**/*"
     ],
