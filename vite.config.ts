@@ -1,4 +1,5 @@
 ﻿import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import * as esbuild from 'esbuild';
@@ -7,8 +8,27 @@ import tailwindcss from '@tailwindcss/vite';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const velaSrc = path.resolve(root, '../Vela/src');
+const velaUiSrc = path.resolve(root, '../Vela/packages/vela-ui/src');
 const pineEngineSrc = path.resolve(root, '../pine-engine/src/index.ts');
 const pineEditorSrc = path.resolve(root, '../pine-editor/src/index.ts');
+
+/** Resolve the Vela UI kit from its workspace source, as Vela's own playground does. */
+function velaUiSource(): import('vite').Plugin {
+  return {
+    name: 'vela-ui-source',
+    enforce: 'pre',
+    resolveId(id) {
+      if (id === '@luxalgo/vela-ui') return path.join(velaUiSrc, 'index.ts');
+      const match = /^@luxalgo\/vela-ui\/([a-z0-9-]+)$/.exec(id);
+      if (!match) return null;
+      for (const dir of ['components', 'lib']) {
+        const file = path.join(velaUiSrc, dir, `${match[1]}.ts`);
+        if (existsSync(file)) return file;
+      }
+      return null;
+    },
+  };
+}
 
 /** Same `inline-worker:` scheme Vela-pinets uses in its own build and playground. */
 function inlineWorker(): import('vite').Plugin {
@@ -40,7 +60,7 @@ function inlineWorker(): import('vite').Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), inlineWorker()],
+  plugins: [velaUiSource(), react(), tailwindcss(), inlineWorker()],
   resolve: {
     // The Pine editor and the local Vela checkout both pull CodeMirror; keep one
     // copy or production bundles two @codemirror/state instances and fails.
@@ -78,7 +98,7 @@ export default defineConfig({
     ],
   },
   optimizeDeps: {
-    exclude: ['@luxalgo/vela', '@screener/pine-engine', '@screener/pine-editor'],
+    exclude: ['@luxalgo/vela', '@luxalgo/vela-ui', '@screener/pine-engine', '@screener/pine-editor'],
   },
   server: {
     port: 5173,

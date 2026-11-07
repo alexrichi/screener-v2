@@ -10,6 +10,8 @@
     "paths": {
       "@/*": ["src/*"],
       "@luxalgo/vela": ["../Vela/src/index.ts"],
+      "@luxalgo/vela-ui": ["../Vela/packages/vela-ui/src/index.ts"],
+      "@luxalgo/vela-ui/*": ["../Vela/packages/vela-ui/src/components/*", "../Vela/packages/vela-ui/src/lib/*"],
       "@luxalgo/vela/workspace": ["../Vela/src/workspace/index.ts"],
       "@luxalgo/vela/plugin": ["../Vela/src/plugin.ts"],
       "@luxalgo/vela/ui": ["../Vela/src/ui/index.ts"],
