@@ -186,6 +186,7 @@ export function pineDrawings(instanceId: string, result: PineRunResult): VelaDra
       borderWidth: box.borderWidth,
       borderStyle: lineStyle(box.borderStyle),
       text: box.text || undefined,
+      textColor: box.textColor || undefined,
       textSize: textSize(box.textSize),
       hAlign: hAlign(box.hAlign),
       vAlign: vAlign(box.vAlign),
