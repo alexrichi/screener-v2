@@ -25,6 +25,56 @@ import {
 } from '@screener/pine-engine';
 import { pineDrawings } from './drawings';
 
+/**
+ * A live tick re-runs a non-streaming engine over the whole series. While the
+ * user drags or zooms, those runs fight the gesture for the main thread, so
+ * hold them and execute one per pending session once the gesture settles.
+ */
+let pointerHeld = 0;
+let pointerDownAt = 0;
+let wheelQuietUntil = 0;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const deferredLive = new Set<() => Promise<void>>();
+
+function busyGesture(): boolean {
+  const held = pointerHeld > 0 && performance.now() - pointerDownAt < 30_000;
+  return held || (typeof performance !== 'undefined' && performance.now() < wheelQuietUntil);
+}
+
+function scheduleLiveFlush(delay: number): void {
+  if (typeof window === 'undefined') return;
+  if (flushTimer !== null) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    if (busyGesture()) return;
+    const runs = [...deferredLive];
+    deferredLive.clear();
+    for (const run of runs) void run();
+  }, delay);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', () => {
+    pointerHeld += 1;
+    pointerDownAt = performance.now();
+  }, true);
+  const releasePointer = () => {
+    pointerHeld = Math.max(0, pointerHeld - 1);
+    if (pointerHeld === 0 && deferredLive.size > 0) scheduleLiveFlush(120);
+  };
+  window.addEventListener('pointerup', releasePointer, true);
+  window.addEventListener('pointercancel', releasePointer, true);
+  window.addEventListener('wheel', () => {
+    if (typeof performance !== 'undefined') wheelQuietUntil = performance.now() + 250;
+    if (deferredLive.size > 0) scheduleLiveFlush(300);
+  }, { capture: true, passive: true });
+  // A drag released outside the window never sends pointerup.
+  window.addEventListener('blur', () => {
+    pointerHeld = 0;
+    if (deferredLive.size > 0) scheduleLiveFlush(120);
+  });
+}
+
 const INPUT_TYPES: Record<string, InputSchema['type']> = {
   integer: 'int',
   int: 'int',
@@ -469,6 +519,10 @@ export class PineEngine implements ScriptingEngine {
       setVisibleRange: () => {},
       notifyBars: (reason) => {
         if (reason === 'backfill') return;
+        if (reason === undefined && busyGesture()) {
+          deferredLive.add(run);
+          return;
+        }
         void run();
       },
     };
