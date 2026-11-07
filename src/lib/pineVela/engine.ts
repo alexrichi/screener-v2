@@ -28,30 +28,18 @@ import { strategyStateOf, strategyTradesOf, tradeExecutionsOf } from './strategy
 
 /**
  * A live tick re-runs a non-streaming engine over the whole series. While the
- * user drags or zooms, those runs fight the gesture for the main thread, so
- * hold them and execute one per pending session once the gesture settles.
+ * user drags or zooms, those runs fight the gesture for the main thread. Drop
+ * the live tick instead of queueing a catch-up run: executing that run right
+ * after pointer-up is a visible hitch, while the next tick refreshes the
+ * forming bar once the gesture is over.
  */
 let pointerHeld = 0;
 let pointerDownAt = 0;
 let wheelQuietUntil = 0;
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-const deferredLive = new Set<() => Promise<void>>();
 
 function busyGesture(): boolean {
   const held = pointerHeld > 0 && performance.now() - pointerDownAt < 30_000;
   return held || (typeof performance !== 'undefined' && performance.now() < wheelQuietUntil);
-}
-
-function scheduleLiveFlush(delay: number): void {
-  if (typeof window === 'undefined') return;
-  if (flushTimer !== null) clearTimeout(flushTimer);
-  flushTimer = setTimeout(() => {
-    flushTimer = null;
-    if (busyGesture()) return;
-    const runs = [...deferredLive];
-    deferredLive.clear();
-    for (const run of runs) void run();
-  }, delay);
 }
 
 if (typeof window !== 'undefined') {
@@ -61,18 +49,15 @@ if (typeof window !== 'undefined') {
   }, true);
   const releasePointer = () => {
     pointerHeld = Math.max(0, pointerHeld - 1);
-    if (pointerHeld === 0 && deferredLive.size > 0) scheduleLiveFlush(120);
   };
   window.addEventListener('pointerup', releasePointer, true);
   window.addEventListener('pointercancel', releasePointer, true);
   window.addEventListener('wheel', () => {
     if (typeof performance !== 'undefined') wheelQuietUntil = performance.now() + 250;
-    if (deferredLive.size > 0) scheduleLiveFlush(300);
   }, { capture: true, passive: true });
   // A drag released outside the window never sends pointerup.
   window.addEventListener('blur', () => {
     pointerHeld = 0;
-    if (deferredLive.size > 0) scheduleLiveFlush(120);
   });
 }
 
@@ -346,6 +331,12 @@ export class PineEngine implements ScriptingEngine {
     let generation = 0;
     let running = false;
     let pending = false;
+    // A heavy script re-run blocks the UI for its whole duration. Coalesce live
+    // ticks to at most one run per cooldown instead of one per bar notification;
+    // input edits, history completion, and the first paint stay immediate.
+    let lastRunEnd = 0;
+    let lastRunMs = 0;
+    let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
     let visibleRange = req.visibleRange;
     // The engine only alerts on the current bar, but it re-runs that bar on
     // every tick; keep each alert once per bar so the bell does not flood.
@@ -470,13 +461,45 @@ export class PineEngine implements ScriptingEngine {
       if (!provisional) handlers.onDone?.();
     };
 
-    const run = async (): Promise<void> => {
+    const run = async (force = false): Promise<void> => {
       if (stopped) return;
+      if (!force) {
+        if (busyGesture()) {
+          if (cooldownTimer === null) {
+            cooldownTimer = setTimeout(() => {
+              cooldownTimer = null;
+              void run();
+            }, 250);
+          }
+          return;
+        }
+        const now = performance.now();
+        // Scale the pause with the last script cost: a 200 ms run waits ~0.8 s,
+        // a small one stays live. The cap keeps the forming-bar outputs from
+        // ever sitting still for more than two seconds.
+        const cooldown = Math.max(250, Math.min(2000, lastRunMs * 4));
+        const wait = lastRunEnd + cooldown - now;
+        if (wait > 0) {
+          if (cooldownTimer === null) {
+            cooldownTimer = setTimeout(() => {
+              cooldownTimer = null;
+              void run();
+            }, wait);
+          }
+          return;
+        }
+      }
+      if (cooldownTimer !== null) {
+        clearTimeout(cooldownTimer);
+        cooldownTimer = null;
+      }
       if (running) {
         pending = true;
         return;
       }
       running = true;
+      const startedAt = performance.now();
+      let lastComputeStart = 0;
       const runGeneration = generation;
       try {
         const chartBars = req.getBars?.() ?? req.bars;
@@ -493,8 +516,9 @@ export class PineEngine implements ScriptingEngine {
         const requested = new Map<string, { symbol: string; timeframe: string }>();
         const foreignRequested = new Map<string, { symbol: string; timeframe: string }>();
         const executeOnce = () => {
+          lastComputeStart = performance.now();
           syncProbeCache(pineBars);
-          return token.program.run({
+          const computed = token.program.run({
             bars: pineBars,
             timeframe: req.market.timeframe,
             symbol: req.market.symbol,
@@ -519,6 +543,7 @@ export class PineEngine implements ScriptingEngine {
               foreignRequested.set(`${normalized}@${tf}`, { symbol: normalized, timeframe: tf });
             },
           });
+          return computed;
         };
 
         let result = executeOnce();
@@ -639,6 +664,10 @@ export class PineEngine implements ScriptingEngine {
         reportResult(result, pineBars);
       } finally {
         running = false;
+        lastRunEnd = performance.now();
+        // Measure from the last script run through its model handoff; the
+        // fetch/await between runs is not the script's cost.
+        lastRunMs = lastComputeStart > 0 ? lastRunEnd - lastComputeStart : lastRunEnd - startedAt;
         if (pending && !stopped) {
           pending = false;
           void run();
@@ -648,7 +677,7 @@ export class PineEngine implements ScriptingEngine {
 
     // Watch mode starts during the history backfill: running on a partial prefix
     // would compute every series twice at full cost. Wait for the complete signal.
-    if (req.historyState !== 'backfill') void run();
+    if (req.historyState !== 'backfill') void run(true);
 
     return {
       getContext: (select) => {
@@ -660,22 +689,25 @@ export class PineEngine implements ScriptingEngine {
       stop: () => {
         stopped = true;
         generation += 1;
+        if (cooldownTimer !== null) {
+          clearTimeout(cooldownTimer);
+          cooldownTimer = null;
+        }
       },
       update: (next) => {
         Object.assign(values, next);
-        void run();
+        void run(true);
       },
       setVisibleRange: (range) => {
         visibleRange = range;
-        void run();
+        void run(true);
       },
       notifyBars: (reason) => {
         if (reason === 'backfill') return;
-        if (reason === undefined && busyGesture()) {
-          deferredLive.add(run);
-          return;
-        }
-        void run();
+        if (reason === undefined && busyGesture()) return;
+        // A completed backfill is a fresh chart; do not hide it behind the
+        // live-tick cooldown.
+        void run(reason === 'complete');
       },
     };
   }

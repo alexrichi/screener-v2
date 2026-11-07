@@ -942,7 +942,11 @@ neither is in the initial bundle.
 `lib/pineVela/engine.ts` is the chart engine: `PineEngine` implements Vela's
 `ScriptingEngine` port over `pine-engine`, registered as
 `engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
-Vela re-runs it on every bar notification, `visibleRange: true` (scripts using
+Vela re-runs it on every bar notification; the adapter coalesces those runs with
+a cooldown scaled to the previous run (250 ms–2 s) and drops live ticks during a
+pan/zoom gesture, so a 5000-bar script cannot hitch the drag. Forced runs
+(inputs, history completion, first paint) bypass the cooldown. It reports
+`visibleRange: true` (scripts using
 `chart.*_visible_bar_time` re-run through `setVisibleRange`), and `inputs: true`,
 so the settings dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
 spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
