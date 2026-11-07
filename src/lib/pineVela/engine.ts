@@ -355,7 +355,7 @@ export class PineEngine implements ScriptingEngine {
     // across ticks in this session and clear it on either.
     const probeCache = new Map<string, unknown[]>();
     let probeSignature = '';
-    const syncProbeCache = (): void => {
+    const syncProbeCache = (chartBars: readonly PineBar[]): void => {
       const lowerSignature = Object.entries(lowerCache)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([key, entry]) => {
@@ -363,7 +363,11 @@ export class PineEngine implements ScriptingEngine {
           return `${key}:${entry.bars.length}:${last?.time ?? 0}:${last?.close ?? 0}:${last?.high ?? 0}:${last?.low ?? 0}:${last?.volume ?? 0}`;
         })
         .join('|');
-      const signature = `${JSON.stringify(values)}|${lowerSignature}`;
+      // A new chart bar (or backfilled history) can extend the last HTF bucket;
+      // intra-bar price ticks do not invalidate a default lookahead_off probe.
+      const last = chartBars.at(-1);
+      const chartSignature = `${chartBars.length}:${last?.time ?? 0}`;
+      const signature = `${JSON.stringify(values)}|${chartSignature}|${lowerSignature}`;
       if (signature !== probeSignature) {
         probeCache.clear();
         probeSignature = signature;
@@ -434,7 +438,7 @@ export class PineEngine implements ScriptingEngine {
 
         const requested = new Map<string, { symbol: string; timeframe: string }>();
         const executeOnce = () => {
-          syncProbeCache();
+          syncProbeCache(pineBars);
           return token.program.run({
             bars: pineBars,
             timeframe: req.market.timeframe,
