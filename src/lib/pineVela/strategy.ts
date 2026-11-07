@@ -5,8 +5,23 @@ import type {
 } from '@luxalgo/vela/plugin';
 import type { StrategyResult } from '@screener/pine-engine';
 
+/** One per-bar equity point from the engine's backtest. */
+export interface StrategyEquityPoint {
+  time: number;
+  equity: number;
+}
+
+/**
+ * Vela's neutral strategy state plus the engine's per-bar equity curve. The
+ * curve is an app-only extra: Vela's contract has no slot for it, but the run
+ * carries the same object and the app reads it for the panel and viewer.
+ */
+export interface StrategyStateWithCurve extends StrategyState {
+  equityCurve?: StrategyEquityPoint[];
+}
+
 /** The engine's broker ledger mapped to Vela's neutral strategy state. */
-export function strategyStateOf(result: StrategyResult): StrategyState {
+export function strategyStateOf(result: StrategyResult): StrategyStateWithCurve {
   const wins = result.trades.filter((trade) => trade.profit > 0).length;
   const losses = result.trades.filter((trade) => trade.profit < 0).length;
   return {
@@ -27,6 +42,7 @@ export function strategyStateOf(result: StrategyResult): StrategyState {
     maxDrawdown: result.maxDrawdown,
     maxRunup: result.maxRunup,
     initialCapital: result.initialCapital,
+    equityCurve: result.equityCurve,
   };
 }
 

@@ -97,7 +97,8 @@ src/
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
     AlertsPanel.tsx               per-tab script alerts in the right rail
-    StrategyPanel.tsx             strategy backtest metrics and trade ledger in the right rail
+    StrategyEquity.tsx            strategy net P&L curve (zero line, downsample)
+    StrategyPanel.tsx             strategy metrics, curve, ledger and viewer in the right rail
     AssistantUiThread.tsx         assistant-ui chat over the same tools
     assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
     ui/                           shadcn shims used by the registry kit (Base UI)
@@ -585,11 +586,17 @@ queued before their entry, one `closedtrades` ledger, and the declared
 fills on `IndicatorModel.trades` (price-pane markers) and the state and trades
 on the context snapshot. `lib/strategyRuns.ts` keeps the per-tab runs fed by
 `chart.on('script:run')` and pulls the unbounded ledger only off the tick path,
-so a live tick updates the metrics without re-reading the ledger. `StrategyPanel`
-shows net P&L, equity, win rate, profit factor, max drawdown, the open position,
-and the newest 30 round trips. The panel is session-only; a reload replays the
-script and rebuilds the ledger. The engine's strategy model is intentionally
-simple: no commission, slippage, pyramiding limit, trailing stop, OCA group, or
+so a live tick updates the metrics without re-reading the ledger. The engine's
+per-bar equity curve rides the neutral state as an app-only `equityCurve` extra;
+`StrategyPanel` draws it under the metrics and shows the newest 30 round trips,
+while its viewer (`Performance` / `Trades Log`) shows the five Pro-style metrics,
+the full curve and the whole ledger with a cumulative P&L column. Round-trip ids
+compose the engine's exit order id with the entry/exit times: the engine reuses
+the exit order id, so the raw id is not unique for React keys and markers. MFE
+and MAE are absent because the engine's ledger does not expose them. The panel
+is session-only; a reload replays the script and rebuilds the ledger. The
+engine's strategy model is intentionally simple: no commission, slippage,
+pyramiding limit, trailing stop, OCA group, or
 intrabar fill ordering. Limits already through the open and gaps through a stop
 fill at that bar's open, so every fill price stays inside its bar. A marketable
 bracket leg therefore closes at the open, not at its target.
@@ -738,8 +745,11 @@ Useful browser probes:
   and a reload starts empty.
 - A strategy script shows its fill arrows and labels on the price pane and fills
   the `Strategy` rail panel with net P&L, equity, win rate, profit factor, max
-  drawdown, the open position, and the round-trip ledger. Editing the script
-  under the same indicator id replaces the ledger instead of mixing two
+  drawdown, the open position, the equity curve and the round-trip ledger.
+  `Open strategy viewer` shows `Performance` (five metrics, large curve) and
+  `Trades Log` (entry/exit, size, net and cumulative P&L); scripts that reuse one
+  `strategy.exit` call still list every round trip separately. Editing the
+  script under the same indicator id replaces the ledger instead of mixing two
   backtests; deleting the indicator empties the panel.
 - Creating a workspace with `+` immediately requests its klines and renders candles;
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.

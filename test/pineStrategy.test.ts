@@ -73,6 +73,7 @@ describe('pineVela strategy mapping', () => {
       maxDrawdown: 9,
       maxRunup: 30,
       initialCapital: 1_000,
+      equityCurve: [],
     });
   });
 

@@ -136,9 +136,11 @@ JSON result, and exits non-zero if the table stays empty.
   settings after a reload.
 - Strategies: `strategy.entry`, `order`, `exit`, and `close` run as a backtest
   with trade markers on the chart and a Strategy panel showing net P&L, equity,
-  win rate, profit factor, max drawdown, the open position, and the trade
-  ledger. Alerts from `alert()` and `alertcondition()` land in the Alerts panel
-  once per bar per call site.
+  win rate, profit factor, max drawdown, the open position, the equity curve and
+  the trade ledger. The viewer opens `Performance` (five metrics and a large
+  equity curve) and `Trades Log` (entry, exit, size, net and cumulative P&L).
+  Alerts from `alert()` and `alertcondition()` land in the Alerts panel once per
+  bar per call site.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
   duplicate, and import or export JSON. Updating a saved layout asks before

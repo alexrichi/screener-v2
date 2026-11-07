@@ -1,4 +1,8 @@
 import type { ScriptRun, StrategyState, StrategyTrade } from '@luxalgo/vela/plugin';
+import type {
+  StrategyEquityPoint,
+  StrategyStateWithCurve,
+} from './pineVela/strategy';
 
 /** One strategy script running on a chart cell, as the Strategy panel shows it. */
 export interface StrategyRunState {
@@ -6,6 +10,8 @@ export interface StrategyRunState {
   cellId: string;
   title: string;
   state: StrategyState;
+  /** Per-bar equity from the engine, for the panel and viewer chart. */
+  equityCurve: readonly StrategyEquityPoint[];
   trades: readonly StrategyTrade[];
   /** The async ledger has landed at least once. */
   tradesLoaded: boolean;
@@ -36,11 +42,13 @@ export function pushStrategyRun(tabId: string, cellId: string, run: ScriptRun): 
   // A new script under the same indicator id keeps the old ledger until the
   // fresh one lands; drop it instead of showing another strategy's trades.
   const changedScript = previous !== undefined && previous.title !== run.title;
+  const state = run.strategy as StrategyStateWithCurve;
   const entry: StrategyRunState = {
     id: run.id,
     cellId,
     title: run.title,
-    state: run.strategy,
+    state,
+    equityCurve: state.equityCurve ?? [],
     trades: changedScript ? [] : (previous?.trades ?? []),
     tradesLoaded: changedScript ? false : (previous?.tradesLoaded ?? false),
     bar: run.bar,
