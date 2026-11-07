@@ -541,7 +541,11 @@ reach into panel internals. `screener.panels.welcomed` only controls the
 one-time Screener default.
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
-maximized Pine editor keeps the pointer. Keep that override.
+maximized Pine editor keeps the pointer. Keep that override. Vela also inserts
+its floating menu/popover layers before `.vela-ws-main` and leaves the positioner
+at `z-index: auto` (the list inside carries the token z-index), so the chart
+paints over an open timeframe dropdown. `index.css` lifts the workspace's
+non-dialog `.vela-ui-layer` children to 50. Keep that override too.
 
 **Alerts are app-owned and session-only.** `lib/velaPanels.tsx` hides Vela's
 topbar bell (`ctx.topbar.setVisible('alerts', false)` through a widget

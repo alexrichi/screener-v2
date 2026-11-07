@@ -219,6 +219,15 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   z-index: 20 !important;
 }
 
+/* Vela builds its floating menu/popover layers before the chart area and leaves
+   the positioner at z-index auto (the list inside carries the token z-index), so
+   the chart paints over an open timeframe dropdown. Lift the workspace's
+   floating layers above the chart, its topbar and the side panels; dialog
+   layers keep their own stacking. */
+.vela-workspace > .vela-ui-layer:not(.vela-dialog-backdrop):not(.vela-dialog-positioner) {
+  z-index: 50;
+}
+
 /* The AI toggle sits at the top of Vela's shared drawing toolbar; the widget
    attachment keeps it in place when the toolbar is rebuilt. */
 .screener-ai-rail {
