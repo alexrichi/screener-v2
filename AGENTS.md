@@ -542,14 +542,18 @@ maximized Pine editor keeps the pointer. Keep that override.
 
 **Alerts are app-owned and session-only.** `lib/velaPanels.tsx` hides Vela's
 topbar bell (`ctx.topbar.setVisible('alerts', false)` through a widget
-attachment) and the rail's `Alerts` panel replaces it. The host forwards every
-cell's `chart.on('alert')` to `lib/alerts.ts`, which keeps the newest 50 per
-tab; the panel subscribes with `useSyncExternalStore` and shows the active
-tab's list. Each workspace's panel mount also keeps its rail button's count in
-sync through `ctx.sidebar.setBadge('alerts', n)`, so background tabs badge too.
-Alerts from background tabs are collected too, and each tab's panel shows its
-own list. Nothing is persisted: a reload starts empty, exactly like Vela's
-bell. Do not read Vela's private alert list or add a second bell.
+attachment) and the rail's `Alerts` panel replaces it. `pine-engine` raises
+`alert()` and `alertcondition()` on the current bar only; the chart adapter
+passes them to `handlers.onAlert` once per bar per call site (the compiler
+embeds a site id) so live ticks do not flood the list, and `freq_all` keeps the
+message in the id. The host forwards every cell's `chart.on('alert')` to
+`lib/alerts.ts`, which keeps the newest 50 per tab; the panel subscribes with
+`useSyncExternalStore` and shows the active tab's list. Each workspace's panel
+mount also keeps its rail button's count in sync through
+`ctx.sidebar.setBadge('alerts', n)`, so background tabs badge too. Alerts from
+background tabs are collected too, and each tab's panel shows its own list.
+Nothing is persisted: a reload starts empty, exactly like Vela's bell. Do not
+read Vela's private alert list or add a second bell.
 
 **Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
 `Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,

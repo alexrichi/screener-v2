@@ -58,6 +58,7 @@ function runResult(): PineRunResult {
       { time: 3_000, color: '#FF5252' },
     ],
     inputs: [],
+    alerts: [],
     warnings: [],
     missingStd: [],
   };

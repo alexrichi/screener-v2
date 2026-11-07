@@ -22,6 +22,7 @@ function resultOf(
     fills: [],
     barColors: [],
     inputs: [],
+    alerts: [],
     missingStd: [],
     warnings: [],
   };

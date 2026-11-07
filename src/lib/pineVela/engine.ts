@@ -345,6 +345,9 @@ export class PineEngine implements ScriptingEngine {
     let running = false;
     let pending = false;
     let visibleRange = req.visibleRange;
+    // The engine only alerts on the current bar, but it re-runs that bar on
+    // every tick; keep each alert once per bar so the bell does not flood.
+    const alerted = new Set<string>();
     // ponytail: a 60 s lower-timeframe cache; intrabar precision on forming bars
     // trails by at most that long. Shorter needs a per-bar subscription.
     const LOWER_TTL_MS = 60_000;
@@ -392,6 +395,24 @@ export class PineEngine implements ScriptingEngine {
         for (const warning of result.warnings) {
           this.report(warning);
           handlers.onWarning?.({ message: warning, bar: bars.length - 1 });
+        }
+        for (const alert of result.alerts) {
+          // `freq_all` asks for every tick; the default and alertcondition fire
+          // once per bar per call site, so a live re-run does not repeat them.
+          const id =
+            alert.site !== undefined && alert.freq !== 'freq_all'
+              ? `${alert.time}:${alert.site}`
+              : `${alert.time}:${alert.title ?? ''}:${alert.message}`;
+          if (alerted.has(id)) continue;
+          alerted.add(id);
+          handlers.onAlert?.({
+            id,
+            message: alert.message,
+            ...(alert.title !== undefined ? { title: alert.title } : {}),
+            time: alert.time,
+            barIndex: alert.barIndex,
+            ...(alert.freq !== undefined ? { freq: alert.freq } : {}),
+          });
         }
       }
       const model = modelOf(token, result, bars, inputs, values);
