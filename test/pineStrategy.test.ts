@@ -80,7 +80,7 @@ describe('pineVela strategy mapping', () => {
     const trades = strategyTradesOf(result);
     expect(trades).toHaveLength(3);
     expect(trades[0]).toMatchObject({
-      id: 'Long Exit',
+      id: 'Long Exit:1000:3000',
       side: 'long',
       qty: 2,
       entry: { id: 'Long', time: 1_000, price: 100 },
@@ -97,6 +97,26 @@ describe('pineVela strategy mapping', () => {
     expect(trades[2]?.exit).toBeUndefined();
   });
 
+  it('keeps round-trip ids unique when the script reuses one exit order id', () => {
+    const repeated: StrategyResult = {
+      ...result,
+      position: null,
+      trades: [
+        result.trades[0]!,
+        { ...result.trades[0]!, entryTime: 1_500, exitTime: 3_500, entryBar: 2, exitBar: 4 },
+      ],
+    };
+    expect(strategyTradesOf(repeated).map((trade) => trade.id)).toEqual([
+      'Long Exit:1000:3000',
+      'Long Exit:1500:3500',
+    ]);
+    expect(
+      tradeExecutionsOf(repeated)
+        .filter((fill) => fill.kind === 'exit')
+        .map((fill) => fill.tradeId),
+    ).toEqual(['Long Exit:1000:3000', 'Long Exit:1500:3500']);
+  });
+
   it('paints an entry and an exit marker for every round trip', () => {
     const fills = tradeExecutionsOf(result);
     expect(fills).toHaveLength(5);
@@ -107,7 +127,7 @@ describe('pineVela strategy mapping', () => {
       kind: 'entry',
       label: 'Long',
       qty: 2,
-      tradeId: 'Long Exit',
+      tradeId: 'Long Exit:1000:3000',
     });
     expect(fills[1]).toMatchObject({
       time: 3_000,

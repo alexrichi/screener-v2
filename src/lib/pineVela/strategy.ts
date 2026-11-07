@@ -30,10 +30,19 @@ export function strategyStateOf(result: StrategyResult): StrategyState {
   };
 }
 
+/**
+ * A round trip's stable id. The engine's `ClosedTrade.id` is the exit ORDER id,
+ * which repeats when the script reuses one `strategy.exit(...)` call: React keys
+ * and marker trade ids need the entry/exit times to stay unique.
+ */
+function roundTripId(trade: StrategyResult['trades'][number]): string {
+  return `${trade.id}:${trade.entryTime}:${trade.exitTime}`;
+}
+
 /** Round trips, closed then open, for the Strategy panel's ledger. */
 export function strategyTradesOf(result: StrategyResult): StrategyTrade[] {
   const trades: StrategyTrade[] = result.trades.map((trade) => ({
-    id: trade.id,
+    id: roundTripId(trade),
     side: trade.direction,
     qty: trade.qty,
     entry: {
@@ -83,8 +92,9 @@ export function tradeExecutionsOf(result: StrategyResult): TradeExecution[] {
   for (const trade of result.trades) {
     const entrySide = trade.direction === 'long' ? 'buy' : 'sell';
     const exitSide = trade.direction === 'long' ? 'sell' : 'buy';
-    fill(trade.entryTime, trade.entryPrice, entrySide, 'entry', trade.entryId, trade.qty, trade.id);
-    fill(trade.exitTime, trade.exitPrice, exitSide, 'exit', trade.id, trade.qty, trade.id);
+    const tradeId = roundTripId(trade);
+    fill(trade.entryTime, trade.entryPrice, entrySide, 'entry', trade.entryId, trade.qty, tradeId);
+    fill(trade.exitTime, trade.exitPrice, exitSide, 'exit', trade.id, trade.qty, tradeId);
   }
   const position = result.position;
   if (position) {
