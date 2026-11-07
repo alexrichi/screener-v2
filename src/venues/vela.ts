@@ -191,9 +191,34 @@ export class SidecarVelaProvider implements DataProvider {
     const instrument = instruments.find(
       (item) => tickerOf(item).toUpperCase() === wanted,
     );
-    if (!instrument) {
-      throw new Error(`Sidecar has no ${this.venue} instrument "${ticker}"`);
+    if (instrument) return instrument;
+    // A script's bare `ETHUSDT` means the perpetual on a futures venue.
+    if (!wanted.endsWith('.P')) {
+      const perp = instruments.find(
+        (item) => tickerOf(item).toUpperCase() === `${wanted}.P`,
+      );
+      if (perp) return perp;
     }
-    return instrument;
+    // Venues with different ticker shapes (OKX, Bybit, Bitget) still resolve
+    // a bare base/quote pair such as ETHUSDT.
+    const quote = ['USDT', 'USDC', 'FDUSD', 'BUSD', 'USD', 'BTC', 'ETH', 'EUR']
+      .find((suffix) => wanted.endsWith(suffix));
+    if (quote) {
+      const base = wanted.slice(0, -quote.length);
+      const pair =
+        instruments.find(
+          (item) =>
+            item.base.toUpperCase() === base &&
+            item.quote.toUpperCase() === quote &&
+            item.kind === 'perp',
+        ) ??
+        instruments.find(
+          (item) =>
+            item.base.toUpperCase() === base &&
+            item.quote.toUpperCase() === quote,
+        );
+      if (pair) return pair;
+    }
+    throw new Error(`Sidecar has no ${this.venue} instrument "${ticker}"`);
   }
 }

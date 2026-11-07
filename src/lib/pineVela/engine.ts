@@ -355,6 +355,18 @@ export class PineEngine implements ScriptingEngine {
     const LOWER_TTL_MS = 60_000;
     const LOWER_FETCH_TIMEOUT_MS = 20_000;
     const lowerCache = new Map<string, { bars: PineBar[]; at: number }>();
+    // Foreign `request.security` symbols come from the host's own venue feed.
+    const foreignCache = new Map<string, { bars: PineBar[]; at: number }>();
+    const warnedForeign = new Set<string>();
+    let foreignChartSignature = '';
+    const prefix = (req.market.symbolInfo as { prefix?: unknown } | undefined)?.prefix;
+    const normalizeForeign = (symbol: string): string => {
+      const at = symbol.indexOf(':');
+      if (at > 0 && typeof prefix === 'string' && symbol.slice(0, at).toUpperCase() === prefix.toUpperCase()) {
+        return symbol.slice(at + 1);
+      }
+      return symbol;
+    };
     // The probe captures the whole script on HTF/LTF bars; it is expensive and
     // only changes when the inputs or the cached lower series change. Keep it
     // across ticks in this session and clear it on either.
@@ -372,7 +384,20 @@ export class PineEngine implements ScriptingEngine {
       // intra-bar price ticks do not invalidate a default lookahead_off probe.
       const last = chartBars.at(-1);
       const chartSignature = `${chartBars.length}:${last?.time ?? 0}`;
-      const signature = `${JSON.stringify(values)}|${chartSignature}|${lowerSignature}`;
+      // Foreign HTF bars close on their own schedule; refresh them with the
+      // chart bar instead of keeping yesterday's daily bar for the session.
+      if (chartSignature !== foreignChartSignature) {
+        foreignChartSignature = chartSignature;
+        foreignCache.clear();
+      }
+      const foreignSignature = Object.entries(foreignCache)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => {
+          const tail = entry.bars.at(-1);
+          return `${key}:${entry.bars.length}:${tail?.time ?? 0}:${tail?.close ?? 0}`;
+        })
+        .join('|');
+      const signature = `${JSON.stringify(values)}|${chartSignature}|${lowerSignature}|${foreignSignature}`;
       if (signature !== probeSignature) {
         probeCache.clear();
         probeSignature = signature;
@@ -466,6 +491,7 @@ export class PineEngine implements ScriptingEngine {
         }));
 
         const requested = new Map<string, { symbol: string; timeframe: string }>();
+        const foreignRequested = new Map<string, { symbol: string; timeframe: string }>();
         const executeOnce = () => {
           syncProbeCache(pineBars);
           return token.program.run({
@@ -480,9 +506,17 @@ export class PineEngine implements ScriptingEngine {
             lowerBars: Object.fromEntries(
               [...lowerCache].map(([key, entry]) => [key, entry.bars]),
             ),
+            foreignBars: Object.fromEntries(
+              [...foreignCache].map(([key, entry]) => [key, entry.bars]),
+            ),
             onLowerTimeframe: (symbol, timeframe) => {
               const tf = canonicalTimeframe(timeframe);
               requested.set(`${symbol}@${tf}`, { symbol, timeframe: tf });
+            },
+            onForeignSymbol: (symbol, timeframe) => {
+              const tf = canonicalTimeframe(timeframe);
+              const normalized = normalizeForeign(symbol);
+              foreignRequested.set(`${normalized}@${tf}`, { symbol: normalized, timeframe: tf });
             },
           });
         };
@@ -536,6 +570,64 @@ export class PineEngine implements ScriptingEngine {
                 });
               } catch {
                 lowerCache.set(key, { bars: [], at: Date.now() });
+              }
+            }),
+          );
+          if (stopped || runGeneration !== generation) return;
+          result = executeOnce();
+        }
+
+        const missingForeign = [...foreignRequested].filter(([key]) => {
+          const entry = foreignCache.get(key);
+          return !entry || Date.now() - entry.at >= LOWER_TTL_MS;
+        });
+        if (missingForeign.length > 0 && req.fetchSeries) {
+          const last = pineBars[pineBars.length - 1]!;
+          const chartMs = timeframeMs(req.market.timeframe) || 1;
+          const fetchSeries = req.fetchSeries;
+          await Promise.all(
+            missingForeign.map(async ([key, request]) => {
+              const requestedMs = timeframeMs(request.timeframe) || chartMs;
+              const limit = Math.min(
+                100_000,
+                Math.max(50, Math.ceil((pineBars.length * chartMs * 1.1) / requestedMs) + 20),
+              );
+              try {
+                const series = await Promise.race([
+                  fetchSeries(request.symbol, request.timeframe, {
+                    from: pineBars[0]?.time ?? last.time,
+                    to: last.time + chartMs,
+                    limit,
+                  }),
+                  new Promise<never>((_, reject) => {
+                    setTimeout(
+                      () => reject(new Error('foreign symbol fetch timed out')),
+                      LOWER_FETCH_TIMEOUT_MS,
+                    );
+                  }),
+                ]);
+                foreignCache.set(key, {
+                  bars: series
+                    .map((bar) => ({
+                      time: bar.time,
+                      open: bar.open,
+                      high: bar.high,
+                      low: bar.low,
+                      close: bar.close,
+                      volume: bar.volume ?? 0,
+                    }))
+                    .sort((a, b) => a.time - b.time),
+                  at: Date.now(),
+                });
+              } catch {
+                foreignCache.set(key, { bars: [], at: Date.now() });
+                if (!warnedForeign.has(key)) {
+                  warnedForeign.add(key);
+                  handlers.onWarning?.({
+                    message: `request.security(${request.symbol}, ${request.timeframe}): no bars for this instrument`,
+                    bar: pineBars.length - 1,
+                  });
+                }
               }
             }),
           );
