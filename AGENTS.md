@@ -903,12 +903,13 @@ neither is in the initial bundle.
 `lib/pineVela/engine.ts` is the chart engine: `PineEngine` implements Vela's
 `ScriptingEngine` port over `pine-engine`, registered as
 `engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
-Vela re-runs it on every bar notification, and `inputs: true`, so the settings
-dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
+Vela re-runs it on every bar notification, `visibleRange: true` (scripts using
+`chart.*_visible_bar_time` re-run through `setVisibleRange`), and `inputs: true`,
+so the settings dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
 spans (`lib/pineVela/drawings.ts`). The engine returns the final drawing
 objects after the run: `set_*` calls are already applied, deleted objects are
 dropped, `bgcolor` entries are merged into spans, and tables are passed to the host. `plotshape`/`plotchar`/`plotarrow` points are returned as shape markers and drawn as label shapes. `hline()` becomes a `PriceLine`, `fill()` a band between two plot series (an hline anchor becomes a hidden constant series so it stays out of the scale), and `barcolor()` recolors the chart candles through `barColors`. `plotcandle`/`plotbar` keep per-bar colors on the candle series. Unknown builtins resolve
-to `na` and are reported through `missingStd`. `alert()` is a no-op. `request.security` works for the chart's own symbol on its own timeframe and, for builtin source expressions, on a higher timeframe by resampling the chart's bars. Lower timeframes read intrabar bars the host fetches through Vela's `fetchSeries` (60 s cache; the local pass paints first, and a 20 s fetch timeout prevents a stuck chart); `request.security_lower_tf` returns the lower bars inside each chart bar and `source[n]` offsets count lower bars. `ta.atr(...)` inside a security tuple is evaluated over those lower bars. A foreign symbol without a feed and an unbounded expression inside a security tuple return `na` with a warning.
+to `na` and are reported through `missingStd`. `alert()` is a no-op. `request.security` works for the chart's own symbol on its own timeframe and, on a higher timeframe, by resampling the chart's bars: builtin source expressions take the fast spec path, while arrays, UDT tuples and other expressions run a nested HTF probe (the script executes once on the resampled bars, snapshots the expression per HTF bar, and the chart bar reads the snapshot the gaps/lookahead contract selects; one probe per call site and timeframe, and a probe the script's own guards reject falls back to `na`). Lower timeframes read intrabar bars the host fetches through Vela's `fetchSeries` (60 s cache; the local pass paints first, and a 20 s fetch timeout prevents a stuck chart); `request.security_lower_tf` returns the lower bars inside each chart bar and `source[n]` offsets count lower bars. `ta.atr(...)` inside a security tuple is evaluated over those lower bars. A foreign symbol without a feed and an unbounded expression inside a security tuple return `na` with a warning.
 `na` is `NaN`, so warm-up arithmetic and comparisons behave like Pine, and
 `if not na(box)` guards still work because a drawing handle is an object. Each
 TA call site keeps its own state and source series, so two EMAs and chained
