@@ -575,7 +575,10 @@ shows net P&L, equity, win rate, profit factor, max drawdown, the open position,
 and the newest 30 round trips. The panel is session-only; a reload replays the
 script and rebuilds the ledger. The engine's strategy model is intentionally
 simple: no commission, slippage, pyramiding limit, trailing stop, OCA group, or
-intrabar fill ordering. `strategy.closedtrades.<field>(n)` reads the ledger.
+intrabar fill ordering. Limits already through the open and gaps through a stop
+fill at that bar's open, so every fill price stays inside its bar. A marketable
+bracket leg therefore closes at the open, not at its target.
+`strategy.closedtrades.<field>(n)` reads the ledger.
 
 **Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
 `Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,
