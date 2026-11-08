@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Activity, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
 import { formatPrice } from '../lib/format';
+import {
+  STRATEGY_DOCK_MAX,
+  STRATEGY_DOCK_MIN,
+  setStrategyDock,
+  useStrategyDock,
+} from '../lib/strategyDock';
 import { cn } from '../lib/utils';
 import {
   strategyRunsFor,
   subscribeStrategyRuns,
   type StrategyRunState,
 } from '../lib/strategyRuns';
-import type { StrategyTrade } from '@luxalgo/vela/plugin';
 import { Modal } from '../ui/overlays';
 import { Segmented } from '../ui/primitives';
 import { StrategyEquity } from './StrategyEquity';
@@ -15,15 +20,8 @@ import { StrategyEquity } from './StrategyEquity';
 interface Props {
   /** Workspace tab whose strategies the dock shows. */
   tabId: string;
-  /** Persisted expanded height, in px. */
-  height: number;
-  collapsed: boolean;
-  onHeightChange: (height: number) => void;
-  onCollapsedChange: (collapsed: boolean) => void;
 }
 
-const MIN_HEIGHT = 160;
-const MAX_HEIGHT = 560;
 const COLLAPSED_HEIGHT = 36;
 
 function money(value: number): string {
@@ -331,13 +329,8 @@ function DockMetrics({ run }: { run: StrategyRunState }) {
 }
 
 /** App-owned strategy dock under the chart: metrics, equity curve and viewer. */
-export function StrategyPanel({
-  tabId,
-  height,
-  collapsed,
-  onHeightChange,
-  onCollapsedChange,
-}: Props) {
+export function StrategyPanel({ tabId }: Props) {
+  const dock = useStrategyDock();
   const runs = useSyncExternalStore(
     subscribeStrategyRuns,
     () => strategyRunsFor(tabId),
@@ -348,8 +341,7 @@ export function StrategyPanel({
   const [viewerKey, setViewerKey] = useState<string | null>(null);
   const drag = useRef<{ startY: number; startHeight: number } | null>(null);
   const dragHeightRef = useRef<number | null>(null);
-  const onHeightChangeRef = useRef(onHeightChange);
-  onHeightChangeRef.current = onHeightChange;
+  const { height, collapsed } = dock;
 
   useEffect(() => {
     if (!dragging) return;
@@ -357,8 +349,8 @@ export function StrategyPanel({
       const start = drag.current;
       if (!start) return;
       const next = Math.min(
-        MAX_HEIGHT,
-        Math.max(MIN_HEIGHT, start.startHeight + start.startY - event.clientY),
+        STRATEGY_DOCK_MAX,
+        Math.max(STRATEGY_DOCK_MIN, start.startHeight + start.startY - event.clientY),
       );
       dragHeightRef.current = next;
       setDragHeight(next);
@@ -369,7 +361,7 @@ export function StrategyPanel({
       dragHeightRef.current = null;
       drag.current = null;
       setDragHeight(null);
-      if (next !== null) onHeightChangeRef.current(next);
+      if (next !== null) setStrategyDock({ height: next });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);
@@ -464,7 +456,7 @@ export function StrategyPanel({
             type="button"
             aria-label={collapsed ? 'Expand strategy panel' : 'Collapse strategy panel'}
             title={collapsed ? 'Expand strategy panel' : 'Collapse strategy panel'}
-            onClick={() => onCollapsedChange(!collapsed)}
+            onClick={() => setStrategyDock({ collapsed: !collapsed })}
             className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             {collapsed ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}

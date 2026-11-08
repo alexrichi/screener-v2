@@ -117,9 +117,10 @@ JSON result, and exits non-zero if the table stays empty.
 - Screener table with search, gainers/losers filters, sorting, resizable and
   reorderable columns, and per-row actions. Screener, Pine, Library, and Alerts
   open as Vela side panels from the chart's right sidebar; the open panel and
-  width persist, and script alerts are session-only. The strategy dock sits under
-  the chart, resizes with a drag handle, collapses to its header, and keeps its
-  state across reloads.
+  width persist, and script alerts are session-only. The strategy dock sits at
+  the foot of the chart column, under the range presets; the drawing toolbar and
+  the right rail keep their full height. It resizes with a drag handle, collapses
+  to its header, and keeps its state across reloads.
 - Favorites: named lists managed from the star popover in the screener toolbar.
   `Default` is the default list; star a symbol to add it to the active list.
   Lists are stored at `screener.favorites.v2` per instrument

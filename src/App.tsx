@@ -17,7 +17,6 @@ import { SettingsTemplateHost } from './components/SettingsTemplateHost';
 import { IndicatorWindow } from './components/IndicatorWindow';
 import { LibraryPanel } from './components/LibraryPanel';
 import { AlertsPanel } from './components/AlertsPanel';
-import { StrategyPanel } from './components/StrategyPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -49,6 +48,7 @@ import {
   type VelaWorkspaceHandle,
 } from './components/VelaWorkspaceHost';
 import { openVelaPanel, setActiveVelaTab, VelaPanelPortals } from './lib/velaPanels';
+import './lib/velaStrategyDock';
 import { clearStrategyRuns } from './lib/strategyRuns';
 import { setIndicatorWindowBridge } from './lib/velaIndicators';
 import {
@@ -136,23 +136,6 @@ function isPineInputs(value: unknown): value is PineInputValues {
   return Object.values(value).every(
     (item) =>
       typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean',
-  );
-}
-
-interface StrategyDockState {
-  height: number;
-  collapsed: boolean;
-}
-
-function isStrategyDock(value: unknown): value is StrategyDockState {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const dock = value as Partial<StrategyDockState>;
-  return (
-    typeof dock.height === 'number' &&
-    Number.isFinite(dock.height) &&
-    dock.height >= 160 &&
-    dock.height <= 560 &&
-    typeof dock.collapsed === 'boolean'
   );
 }
 
@@ -341,11 +324,6 @@ export default function App() {
     'screener.pine.savedId',
     '',
     isString,
-  );
-  const [strategyDock, setStrategyDock] = usePersistedState<StrategyDockState>(
-    'screener.strategy.dock',
-    { height: 280, collapsed: false },
-    isStrategyDock,
   );
   const [saveDialog, setSaveDialog] = useState<{
     mode: 'saveAs' | 'rename';
@@ -1707,51 +1685,38 @@ export default function App() {
             .map((tab) => (
               <div
                 key={tab.id}
-                className={`absolute inset-0 flex flex-col ${
+                className={`absolute inset-0 ${
                   tab.id === activeTabId ? 'z-10' : 'invisible pointer-events-none z-0'
                 }`}
               >
-                <div className="relative min-h-0 flex-1">
-                  <VelaWorkspaceHost
-                    ref={workspaceRefFor(tab.id)}
-                    tab={tab}
-                    active={tab.id === activeTabId}
-                    theme={theme}
-                    maxWebglCells={Math.max(
-                      1,
-                      Math.floor(8 / Math.max(1, visitedTabs.size)),
-                    )}
-                    savedScripts={library.items}
-                    layoutSeed={
-                      tab.layoutId
-                        ? layouts.items.find((item) => item.id === tab.layoutId)?.state
-                        : undefined
-                    }
-                    onShowSource={showSource}
-                    onIndicatorsChange={refreshIndicatorRows}
-                    onPineSettings={({ inputs, props }) =>
-                      setTabs((prev) =>
-                        prev.map((item) =>
-                          item.id === tab.id
-                            ? { ...item, pineInputs: inputs, pineProps: props }
-                            : item,
-                        ),
-                      )
-                    }
-                    onPineRemoved={clearTabPine}
-                    onMarketChange={handleMarketChange}
-                  />
-                </div>
-                <StrategyPanel
-                  tabId={tab.id}
-                  height={strategyDock.height}
-                  collapsed={strategyDock.collapsed}
-                  onHeightChange={(height) =>
-                    setStrategyDock((prev) => ({ ...prev, height }))
+                <VelaWorkspaceHost
+                  ref={workspaceRefFor(tab.id)}
+                  tab={tab}
+                  active={tab.id === activeTabId}
+                  theme={theme}
+                  maxWebglCells={Math.max(
+                    1,
+                    Math.floor(8 / Math.max(1, visitedTabs.size)),
+                  )}
+                  savedScripts={library.items}
+                  layoutSeed={
+                    tab.layoutId
+                      ? layouts.items.find((item) => item.id === tab.layoutId)?.state
+                      : undefined
                   }
-                  onCollapsedChange={(collapsed) =>
-                    setStrategyDock((prev) => ({ ...prev, collapsed }))
+                  onShowSource={showSource}
+                  onIndicatorsChange={refreshIndicatorRows}
+                  onPineSettings={({ inputs, props }) =>
+                    setTabs((prev) =>
+                      prev.map((item) =>
+                        item.id === tab.id
+                          ? { ...item, pineInputs: inputs, pineProps: props }
+                          : item,
+                      ),
+                    )
                   }
+                  onPineRemoved={clearTabPine}
+                  onMarketChange={handleMarketChange}
                 />
               </div>
             ))}

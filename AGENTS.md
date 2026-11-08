@@ -556,14 +556,18 @@ width live in the Vela workspace document, not in `screener.dock.*`. Do not
 reach into panel internals. `screener.panels.welcomed` only controls the
 one-time Screener default.
 
-**The strategy dock is app-owned and sits under the chart.** Each tab renders
-`StrategyPanel` below the Vela host in a flex column, so the chart shrinks and
-Vela resizes; the dock returns `null` when the tab has no strategy runs. It
-defaults to 280 px, resizes with its drag handle (160–560), collapses to a
-36 px header, and persists `{ height, collapsed }` at
-`screener.strategy.dock`. The dock shows the five metrics, the equity curve and
-the viewer action; the full ledger lives in `Performance` / `Trades Log`, not in
-the dock. Do not register it as a Vela side panel again.
+**The strategy dock is a Vela docked strip.** `lib/velaStrategyDock.tsx`
+registers a widget attachment; `ctx.dockStrip(el, { position: 'below-bottombar' })`
+puts the React `StrategyPanel` at the foot of the chart column, under the range
+presets. The drawing toolbar and the right rail keep their full height and only
+the chart column shrinks; a flex sibling under the whole workspace would run
+beneath those toolbars. The strip returns `null` when the tab has no strategy
+runs. It defaults to 280 px, resizes with its drag handle (160–560), collapses
+to a 36 px header, and the shared `lib/strategyDock.ts` store persists
+`{ height, collapsed }` at `screener.strategy.dock` across tabs. The dock shows
+the five metrics, the equity curve and the viewer action; the full ledger lives
+in `Performance` / `Trades Log`, not in the dock. Do not register it as a Vela
+side panel again.
 
 Vela's workspace splitter strips carry an inline `z-index: 30`, above the
 floating (25) and maximized (26) panels; `index.css` lowers them to 20 so a
@@ -754,9 +758,11 @@ Useful browser probes:
   rail button carries the alert count. Clearing empties the list and the count,
   and a reload starts empty.
 - A strategy script shows its fill arrows and labels on the price pane and opens
-  the bottom strategy dock with net P&L, the five metrics and the equity curve.
-  The chart shrinks by the dock height; dragging the handle and collapsing to the
-  header resize it live, and both survive a reload. `Open strategy viewer` shows
+  the strategy strip at the foot of the chart column, under the range presets,
+  with net P&L, the five metrics and the equity curve. The drawing toolbar and
+  the right rail stay full height; only the chart column shrinks. Dragging the
+  handle and collapsing to the header resize it live, and both survive a reload.
+  `Open strategy viewer` shows
   `Performance` (five metrics, large curve) and `Trades Log` (entry/exit, size,
   net and cumulative P&L); scripts that reuse one `strategy.exit` call still list
   every round trip separately. Editing the script under the same indicator id
