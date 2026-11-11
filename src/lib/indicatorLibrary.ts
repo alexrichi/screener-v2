@@ -62,6 +62,140 @@ export function createIndicator(name: string, source: string, notes?: string): S
   };
 }
 
+/** Skip spaces, newlines and `//` comments between two offsets. */
+function skipTrivia(source: string, from: number, limit: number): number {
+  let index = from;
+  while (index < limit) {
+    const char = source[index];
+    if (char === ' ' || char === '\t' || char === '\r' || char === '\n') {
+      index += 1;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index + 2);
+      index = end < 0 || end > limit ? limit : end + 1;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+/** The index of the closing quote, or -1 when the literal is unterminated. */
+function closingQuote(source: string, start: number, limit: number): number {
+  const quote = source[start];
+  let index = start + 1;
+  while (index < limit) {
+    if (source[index] === '\\') {
+      index += 2;
+      continue;
+    }
+    if (source[index] === quote) return index;
+    index += 1;
+  }
+  return -1;
+}
+
+/** Top-level argument spans of a call whose `(` is at `open`. */
+function argumentSpans(
+  source: string,
+  open: number,
+): Array<{ start: number; end: number }> | null {
+  const spans: Array<{ start: number; end: number }> = [];
+  let start = open + 1;
+  let depth = 0;
+  let index = open + 1;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === '"' || char === "'") {
+      const end = closingQuote(source, index, source.length);
+      if (end < 0) return null;
+      index = end + 1;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index + 2);
+      index = end < 0 ? source.length : end + 1;
+      continue;
+    }
+    if (char === '(' || char === '[' || char === '{') {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ')' && depth === 0) {
+      spans.push({ start, end: index });
+      return spans;
+    }
+    if (char === ')' || char === ']' || char === '}') {
+      depth = Math.max(0, depth - 1);
+      index += 1;
+      continue;
+    }
+    if (char === ',' && depth === 0) {
+      spans.push({ start, end: index });
+      start = index + 1;
+    }
+    index += 1;
+  }
+  return null;
+}
+
+/** Offset of the first code line when it is an indicator/strategy declaration. */
+function declarationOffset(source: string): number {
+  let offset = 0;
+  for (const line of source.split('\n')) {
+    const trimmed = line.trimStart();
+    if (trimmed === '' || trimmed.startsWith('//')) {
+      offset += line.length + 1;
+      continue;
+    }
+    return /^(?:indicator|strategy)\s*\(/.test(trimmed)
+      ? offset + (line.length - trimmed.length)
+      : -1;
+  }
+  return -1;
+}
+
+/**
+ * Rename the title of the top-level `indicator(...)` / `strategy(...)`
+ * declaration. Only a literal title is rewritten; any other expression and
+ * scripts without a declaration stay untouched.
+ */
+export function renameScriptTitle(source: string, title: string): string {
+  const next = title.trim();
+  if (!next) return source;
+  const declaration = declarationOffset(source);
+  if (declaration < 0) return source;
+  const open = source.indexOf('(', declaration);
+  if (open < 0) return source;
+  const spans = argumentSpans(source, open);
+  if (!spans) return source;
+  for (const [index, span] of spans.entries()) {
+    const start = skipTrivia(source, span.start, span.end);
+    if (start >= span.end) continue;
+    const named = /^title\s*=/.exec(source.slice(start, span.end));
+    let valueStart = start;
+    if (named) {
+      valueStart = skipTrivia(source, start + named[0].length, span.end);
+    } else if (index !== 0) {
+      continue;
+    }
+    const quote = source[valueStart];
+    if (quote !== '"' && quote !== "'") continue;
+    const valueEnd = closingQuote(source, valueStart, span.end);
+    if (valueEnd < 0) continue;
+    // Only rewrite a whole literal, not a concatenated expression.
+    if (skipTrivia(source, valueEnd + 1, span.end) < span.end) continue;
+    const escaped = next
+      .replace(/\\/g, '\\\\')
+      .split(quote)
+      .join(`\\${quote}`);
+    return `${source.slice(0, valueStart + 1)}${escaped}${source.slice(valueEnd)}`;
+  }
+  return source;
+}
+
 export function hasName(
   items: SavedIndicator[],
   name: string,

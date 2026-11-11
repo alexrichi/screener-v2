@@ -244,9 +244,13 @@ function LibraryCard({
       />
       <button
         type="button"
-        aria-label={`Add ${entry.name} to the active chart`}
-        title={present ? `${entry.name} is already on the chart` : `Add ${entry.name}`}
-        disabled={present || busy}
+        aria-label={
+          present
+            ? `Add another ${entry.name} to the active chart`
+            : `Add ${entry.name} to the active chart`
+        }
+        title={present ? `Add another ${entry.name}` : `Add ${entry.name}`}
+        disabled={busy}
         onClick={(event) => {
           event.stopPropagation();
           onAdd();
@@ -280,7 +284,6 @@ function EntryRow({
   onSource?: () => void;
   onDelete?: () => void;
 }) {
-  const locked = present && entry.kind !== 'native';
   return (
     <div
       className={cn(
@@ -339,10 +342,11 @@ function EntryRow({
       <button
         type="button"
         aria-label={
-          locked ? `${entry.name} is already on the chart` : `Add ${entry.name} to the active chart`
+          present
+            ? `Add another ${entry.name} to the active chart`
+            : `Add ${entry.name} to the active chart`
         }
-        title={locked ? `${entry.name} is already on the chart` : `Add ${entry.name}`}
-        disabled={locked}
+        title={present ? `Add another ${entry.name}` : `Add ${entry.name}`}
         onClick={onAdd}
         className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
       >
@@ -442,10 +446,10 @@ function DetailsPane({
         <Button
           variant="primary"
           onClick={onAdd}
-          disabled={busy || (present && entry.kind !== 'native')}
+          disabled={busy}
         >
           {busy ? <Spinner className="size-3.5" /> : null}
-          {present && entry.kind !== 'native' ? 'On chart' : 'Add to chart'}
+          {present ? 'Add another to chart' : 'Add to chart'}
         </Button>
         <Button variant="secondary" onClick={onFavorite}>
           <Star className={cn('size-3.5', favorite && 'fill-current text-primary')} />
@@ -640,11 +644,11 @@ export function IndicatorWindow({
       if (entry.index === undefined) return;
       onAdd(entry.index);
     } else if (entry.kind === 'saved') {
-      if (!entry.savedId || presentOf(entry)) return;
+      if (!entry.savedId) return;
       onAddSaved(entry.savedId);
     } else {
       const item = entry.item;
-      if (!item || presentOf(entry) || busy) return;
+      if (!item || busy) return;
       setBusy(item.codeId);
       setErrors((prev) => {
         const next = { ...prev };
@@ -1117,12 +1121,9 @@ export function IndicatorWindow({
                     size="sm"
                     variant="primary"
                     onClick={() => void addEntry(selected, false)}
-                    disabled={
-                      Boolean(selected.item && busy === selected.item.codeId) ||
-                      (presentOf(selected) && selected.kind !== 'native')
-                    }
+                    disabled={Boolean(selected.item && busy === selected.item.codeId)}
                   >
-                    {presentOf(selected) && selected.kind !== 'native' ? 'On chart' : 'Add'}
+                    {presentOf(selected) ? 'Add another' : 'Add'}
                   </Button>
                 </>
               ) : null}

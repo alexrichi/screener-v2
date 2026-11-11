@@ -13,6 +13,24 @@ export interface StoredScript {
   hidden?: boolean;
 }
 
+let savedInstanceSeq = 0;
+
+/**
+ * A new chart handle id for one Add. The library item is a template, so the
+ * same saved script can sit on a chart more than once.
+ */
+export function savedIndicatorInstanceId(libraryId: string): string {
+  savedInstanceSeq += 1;
+  return `saved-${libraryId}:${Date.now().toString(36)}-${savedInstanceSeq.toString(36)}`;
+}
+
+/** Legacy `saved-<id>` or the current `saved-<id>:<instance>` form. */
+export function isSavedIndicatorInstance(instanceId: string, libraryId: string): boolean {
+  return (
+    instanceId === `saved-${libraryId}` || instanceId.startsWith(`saved-${libraryId}:`)
+  );
+}
+
 /**
  * Deltas of a value bag against its schema's declaration defaults. Vela stores
  * the same shape for manifest indicators; a default that changes in the script

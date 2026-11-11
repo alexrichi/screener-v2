@@ -1,11 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { inputDeltas, isStoredScripts } from '../src/lib/indicatorState';
+import {
+  inputDeltas,
+  isSavedIndicatorInstance,
+  isStoredScripts,
+  savedIndicatorInstanceId,
+} from '../src/lib/indicatorState';
 
 const schema = [
   { key: 'length', defval: 14 },
   { key: 'source', defval: 'close' },
   { key: 'show', defval: true },
 ];
+
+describe('saved indicator instances', () => {
+  it('makes a fresh instance id per add and recognizes legacy ids', () => {
+    const first = savedIndicatorInstanceId('test-a');
+    const second = savedIndicatorInstanceId('test-a');
+    expect(first).not.toBe(second);
+    expect(first.startsWith('saved-test-a:')).toBe(true);
+    expect(isSavedIndicatorInstance(first, 'test-a')).toBe(true);
+    expect(isSavedIndicatorInstance('saved-test-a', 'test-a')).toBe(true);
+    expect(isSavedIndicatorInstance(first, 'test-b')).toBe(false);
+  });
+});
 
 describe('inputDeltas', () => {
   it('writes nothing when every value is the declaration default', () => {

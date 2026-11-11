@@ -198,8 +198,12 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   indicator library, and scan results. Persisted keys are `screener.*`; the
   library lives at `screener.indicators.v1`; workspace state is keyed per tab as
   `screener-v2:ws:<tabId>`.
-- The library stores raw `.pine` source only. Saved scripts are app-owned: the
-  host adds them as external indicators under `saved-<id>`, and the custom
+- The library stores raw `.pine` source only. Duplicate appends `copy` to the
+  library name and rewrites the top-level `indicator(...)` / `strategy(...)`
+  title to the same name. Saved scripts are app-owned: the host adds them as
+  external indicators under `saved-<id>:<instance>`, and every Add appends a new
+  handle (the saved item is a template), so the same script can sit on a chart
+  more than once. The custom
   `IndicatorWindow` lists `My scripts` from app state plus `Built-in` from
   `cell.libraryRows()` and opens on `My scripts`; each saved row reveals
   `Source code` and `Delete script` on hover or selection (`Delete` confirms and
@@ -304,7 +308,12 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   for backups and the smoke run. The old single buffer becomes the first tab on
   first load. `New tab` adds a Pine editor tab, not a chart workspace tab;
   closing a dirty tab confirms. The AI `new_script`, save and discard flows and
-  the scan all target the active tab.
+  the scan all target the active tab. Opening a saved script (chart legend
+  source, picker `Source code`, Library edit/scan, import, duplicate) reuses its
+  tab or creates one; it never replaces another tab's buffer. A dirty target
+  asks Save changes / Discard changes / Cancel. Delete drops clean tabs for the
+  deleted item and turns dirty ones into drafts. Add to chart and Library reveal
+  never bind `savedId`.
 - The applied Pine script is stored on the tab as `pineScript` / `pineAll`, with its
   input values in `pineInputs` and declaration-property overrides in `pineProps`
   (both kept current by `indicator:inputs`, which Vela emits for input and prop
@@ -409,8 +418,9 @@ is not mistaken for a user delete.
 
 **Saved indicators are app-owned external scripts.** The library stores raw
 `.pine` source only, never transpiled output. `addSavedIndicator(item)` adds it
-through `cell.addExternalIndicator({ id: 'saved-<id>', name, script })`; the
-custom window lists these from app state and native indicators from
+through `cell.addExternalIndicator` with a fresh `saved-<id>:<instance>` id on
+every Add; the same script can sit on the chart more than once. The custom
+window lists these from app state and native indicators from
 `cell.libraryRows()`. There is no `setIndicators` call and no Vela manifest for
 user scripts. `lib/velaScripts.ts` persists the external scripts per cell (the
 applied `screener-pine` is excluded and restored by the host), together with the
@@ -439,9 +449,11 @@ cell's `libraryRows()`/`onChartRows()` (mapped to `IndicatorRow`) and adds via
 `addFromLibrary(index)`. Do not build the native picker a second time, and keep
 the original row indices: `libraryRows()` is the index space `addFromLibrary`
 expects. The window opens on `My scripts`; a saved row reveals `Source code` and
-`Delete script` on hover or selection. `Source code` opens that item in the Pine
-editor and closes the picker, while `Delete script` confirms, removes the saved
-item, and clears `currentSavedId`; chart handles stay as snapshots. Native `On
+`Delete script` on hover or selection. `Source code` opens that item in its own
+Pine tab (or activates the existing one); a dirty target asks Save changes /
+Discard changes / Cancel, and the picker closes. `Delete script` confirms,
+removes the saved item, drops clean editor tabs and keeps dirty ones as drafts;
+chart handles stay as snapshots. Native `On
 chart` is derived from `onChartRows()[].nativeType`, not the
 name: the legend title can differ from the picker row (Connors RSI → CRSI).
 Indicator add/remove events call `ws.context().stateChanged()` so native and
@@ -841,6 +853,10 @@ Useful browser probes:
   new releases and families, and `All scripts` counts the bundled catalog. A
   native row shows `On chart` after add even when its legend title differs
   (Connors RSI → CRSI); remove it from the legend, reload, and it stays gone.
+- Adding the same saved script twice appends two handles
+  (`saved-<id>:<instance>`) and two legend rows. `On chart` stays visible but
+  Add remains enabled; both copies survive reload and reload restores their
+  names.
 - `Favorites` and `Recent` persist at `screener.indicators.picker.v1`; `F`
   toggles the selected favorite, `Enter` adds and closes, `Ctrl/⌘+Enter` adds
   and keeps the window open, `Esc` closes. `Bring a script` imports a `.pine`
@@ -880,7 +896,8 @@ Useful browser probes:
   save.
 - The `LuxAlgo` tab lists the bundled catalog, search filters it, and `Add`
   loads the full source: the on-chart count grows, the row shows `On chart`, and
-  the script appears in `My scripts` with its Library URL in notes. A large
+  the script appears in `My scripts` with its Library URL in notes. Add can be
+  used again to append another copy. A large
   script (SMC, ~50 KB) adds the same way. After reload the saved source remains
   in the library.
 - Three workspace tabs stay live: add a saved or Library script to each, switch

@@ -161,12 +161,17 @@ the same `build` string.
   overwriting it; `Duplicate…` keeps a copy of the active layout. The `Layouts`
   button sits in the chart toolbar right after Maximize.
 - Saved indicator library stored in localStorage. Save, rename, duplicate, and
-  delete scripts; export or import `.pine` files and the JSON library. Saved
-  scripts also appear in the app's `Indicators` window under `My scripts`, next
-  to `Built-in` and the Library.
+  delete scripts; a duplicate appends `copy` to the library name and the
+  top-level `indicator(...)` / `strategy(...)` title. The same saved script can
+  be added to a chart more than once; `On chart` is informational. Export or import `.pine`
+  files and the JSON library. Saved scripts also appear in the app's `Indicators`
+  window under `My scripts`, next to `Built-in` and the Library.
 - `Indicators` window: a three-pane picker with search across names, families
   and descriptions. It opens on `My scripts`; hovering or selecting a saved
-  script row reveals `Source code` and `Delete script`. `Yours` holds favorites, recent
+  script row reveals `Source code` and `Delete script`. `Source code` opens the
+  script in its own Pine tab or activates the existing one; a dirty target asks
+  whether to save or discard before switching. Delete removes clean editor
+  copies and keeps dirty ones as drafts. `Yours` holds favorites, recent
   items, saved scripts and `Bring a script`; `Built-in` lists the chart engine's indicators; `Library`
   has Discover, all 845 bundled indicators and family filters. Results show
   preview cards, the right pane shows details, and `Add` fetches the full Pine

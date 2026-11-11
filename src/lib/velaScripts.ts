@@ -42,6 +42,7 @@ registerStatePersistence({
   restore(payload, ctx) {
     if (!isStoredScripts(payload)) return;
     for (const item of payload) {
+      names.set(item.id, item.name);
       try {
         ctx.addIndicator({
           id: item.id,

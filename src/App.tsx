@@ -101,6 +101,7 @@ import {
   newIndicatorId,
   parseLibraryJson,
   pineFileName,
+  renameScriptTitle,
   type IndicatorLibrary,
   type SavedIndicator,
 } from './lib/indicatorLibrary';
@@ -111,11 +112,14 @@ import { fetchAiStatus, type AiStatus } from './lib/ai/model';
 import { createAppTools, toolsForAgent, type NewScriptResult } from './lib/ai/tools';
 import { isDraftDirty, NEW_SCRIPT } from './lib/pineDraft';
 import {
+  findPineTabBySource,
   isPineTabs,
   makePineTab,
   PINE_ACTIVE_TAB_KEY,
   PINE_TABS_KEY,
+  planOpenSavedTab,
   readLegacyPineTab,
+  removeSavedPineTabs,
   type PineTab,
 } from './lib/pineTabs';
 import { useScanner } from './scan/useScanner';
@@ -363,6 +367,14 @@ export default function App() {
     },
     [activePineTabId, setPineTabs],
   );
+  const updatePineTab = useCallback(
+    (id: string, patch: Partial<PineTab>) => {
+      setPineTabs((prev) =>
+        prev.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)),
+      );
+    },
+    [setPineTabs],
+  );
 
   useEffect(() => {
     try {
@@ -386,6 +398,9 @@ export default function App() {
     notes: string;
     error?: string;
   } | null>(null);
+  const [pendingOpen, setPendingOpen] = useState<{ tabId: string; savedId: string } | null>(
+    null,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'screener' | 'ai'>('screener');
   const [indicatorOpen, setIndicatorOpen] = useState(false);
@@ -473,13 +488,52 @@ export default function App() {
     [activeWorkspace, refreshIndicatorRows],
   );
 
-  const revealSavedIndicator = useCallback(
-    (id: string) => {
-      setCurrentSavedId(id);
-      setLibraryQuery('');
-      setLibraryReveal({ id, nonce: Date.now() });
+  const revealSavedIndicator = useCallback((id: string) => {
+    setLibraryQuery('');
+    setLibraryReveal({ id, nonce: Date.now() });
+  }, []);
+
+  const openSavedScript = useCallback(
+    (item: SavedIndicator) => {
+      const plan = planOpenSavedTab(pineTabs, item.id, item.source);
+      if (plan.kind === 'prompt') {
+        setPendingOpen({ tabId: plan.tab.id, savedId: item.id });
+        return;
+      }
+      if (plan.kind === 'activate') {
+        setActivePineTabId(plan.tab.id);
+        revealSavedIndicator(item.id);
+        openVelaPanel('pine');
+        return;
+      }
+      const tab = makePineTab(item.source, item.id);
+      setPineTabs((prev) => [...prev, tab]);
+      setActivePineTabId(tab.id);
+      revealSavedIndicator(item.id);
+      openVelaPanel('pine');
     },
-    [setCurrentSavedId],
+    [openVelaPanel, pineTabs, revealSavedIndicator, setActivePineTabId, setPineTabs],
+  );
+
+  const openSourceScript = useCallback(
+    (source: string) => {
+      const saved = library.items.find((item) => item.source === source);
+      if (saved) {
+        openSavedScript(saved);
+        return;
+      }
+      const existing = findPineTabBySource(pineTabs, source);
+      if (existing) {
+        setActivePineTabId(existing.id);
+        openVelaPanel('pine');
+        return;
+      }
+      const tab = makePineTab(source);
+      setPineTabs((prev) => [...prev, tab]);
+      setActivePineTabId(tab.id);
+      openVelaPanel('pine');
+    },
+    [library.items, openSavedScript, openVelaPanel, pineTabs, setActivePineTabId, setPineTabs],
   );
 
   const addLibraryIndicator = useCallback(
@@ -492,7 +546,6 @@ export default function App() {
         setLibrary((prev) => ({ version: 1, items: [...prev.items, saved] }));
       }
       activeWorkspace()?.addSavedIndicator(saved, false);
-      setCurrentSavedId(saved.id);
       revealSavedIndicator(saved.id);
       refreshIndicatorRows();
     },
@@ -506,6 +559,12 @@ export default function App() {
   const currentSaved =
     library.items.find((item) => item.id === currentSavedId) ?? null;
   const dirty = isDraftDirty(script, currentSaved?.source ?? null);
+  const pendingTab =
+    pendingOpen === null ? null : (pineTabs.find((tab) => tab.id === pendingOpen.tabId) ?? null);
+  const pendingItem =
+    pendingOpen === null
+      ? null
+      : (library.items.find((item) => item.id === pendingOpen.savedId) ?? null);
   const pineTabItems = useMemo(
     () =>
       pineTabs.map((tab) => {
@@ -1423,23 +1482,28 @@ export default function App() {
     } else {
       const item = createIndicator(name, script, saveDialog.notes);
       setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
+      setCurrentSavedId(item.id);
       revealSavedIndicator(item.id);
       toast.success(`Saved ${item.name}`);
     }
     setSaveDialog(null);
-  }, [library.items, revealSavedIndicator, saveDialog, script, setLibrary]);
+  }, [
+    library.items,
+    revealSavedIndicator,
+    saveDialog,
+    script,
+    setCurrentSavedId,
+    setLibrary,
+  ]);
 
   const selectSaved = useCallback(
     (id: string): boolean => {
       const item = library.items.find((candidate) => candidate.id === id);
       if (!item) return false;
-      if (dirty && !window.confirm('Discard unsaved changes?')) return false;
-      setScript(item.source);
-      revealSavedIndicator(id);
-      openVelaPanel('pine');
+      openSavedScript(item);
       return true;
     },
-    [dirty, library.items, revealSavedIndicator, setScript],
+    [library.items, openSavedScript],
   );
 
   const openIndicatorSource = useCallback(
@@ -1452,15 +1516,70 @@ export default function App() {
   const showSource = useCallback(
     (source: string) => {
       if (!source.trim()) return;
-      if (dirty && !window.confirm('Discard unsaved changes?')) return;
-      const saved = library.items.find((item) => item.source === source);
-      setScript(source);
-      if (saved) revealSavedIndicator(saved.id);
-      else setCurrentSavedId('');
-      openVelaPanel('pine');
+      openSourceScript(source);
     },
-    [dirty, library.items, revealSavedIndicator, setCurrentSavedId, setScript],
+    [openSourceScript],
   );
+
+  const savePendingChanges = useCallback(() => {
+    if (!pendingOpen || !pendingTab || !pendingItem) {
+      setPendingOpen(null);
+      return;
+    }
+    if (!pendingTab.script.trim()) {
+      toast.error('Pine script is empty');
+      return;
+    }
+    setLibrary((prev) => ({
+      version: 1,
+      items: prev.items.map((item) =>
+        item.id === pendingItem.id
+          ? {
+              ...item,
+              source: pendingTab.script,
+              updatedAt: Date.now(),
+              version: item.version + 1,
+            }
+          : item,
+      ),
+    }));
+    setPendingOpen(null);
+    setActivePineTabId(pendingTab.id);
+    revealSavedIndicator(pendingItem.id);
+    openVelaPanel('pine');
+    toast.success(`Saved ${pendingItem.name}`);
+  }, [
+    openVelaPanel,
+    pendingItem,
+    pendingOpen,
+    pendingTab,
+    revealSavedIndicator,
+    setActivePineTabId,
+    setLibrary,
+  ]);
+
+  const discardPendingChanges = useCallback(() => {
+    if (!pendingOpen || !pendingTab || !pendingItem) {
+      setPendingOpen(null);
+      return;
+    }
+    updatePineTab(pendingTab.id, {
+      script: pendingItem.source,
+      savedId: pendingItem.id,
+    });
+    setPendingOpen(null);
+    setActivePineTabId(pendingTab.id);
+    revealSavedIndicator(pendingItem.id);
+    openVelaPanel('pine');
+  }, [
+    openVelaPanel,
+    pendingItem,
+    pendingOpen,
+    pendingTab,
+    revealSavedIndicator,
+    setActivePineTabId,
+    updatePineTab,
+  ]);
 
   const usePreset = useCallback(
     (source: string) => {
@@ -1522,30 +1641,43 @@ export default function App() {
         ...item,
         id: newIndicatorId(),
         name,
+        source: renameScriptTitle(item.source, name),
         createdAt: Date.now(),
         updatedAt: Date.now(),
         version: 1,
       };
       setLibrary((prev) => ({ version: 1, items: [...prev.items, copy] }));
-      setScript(copy.source);
-      setCurrentSavedId(copy.id);
-      openVelaPanel('pine');
+      openSavedScript(copy);
       toast.success(`Duplicated as ${name}`);
     },
-    [library.items, setCurrentSavedId, setLibrary, setScript],
+    [library.items, openSavedScript, setLibrary],
   );
 
   const deleteIndicator = useCallback(
     (item: SavedIndicator) => {
       if (!window.confirm(`Delete "${item.name}"?`)) return;
+      const cleanup = removeSavedPineTabs(pineTabs, item.id, item.source);
+      const next = cleanup.tabs.length > 0 ? cleanup.tabs : [makePineTab(NEW_SCRIPT)];
+      setPineTabs(next);
+      if (!next.some((tab) => tab.id === activePineTabId)) {
+        const index = pineTabs.findIndex((tab) => tab.id === activePineTabId);
+        const fallback = next[Math.min(Math.max(index, 0), next.length - 1)] ?? next[0]!;
+        setActivePineTabId(fallback.id);
+      }
       setLibrary((prev) => ({
         version: 1,
         items: prev.items.filter((candidate) => candidate.id !== item.id),
       }));
-      if (currentSavedId === item.id) setCurrentSavedId('');
-      toast.success(`Deleted ${item.name}`);
+      if (pendingOpen?.savedId === item.id) setPendingOpen(null);
+      if (cleanup.drafts > 0) {
+        toast.warning(`Deleted ${item.name}`, {
+          description: `${cleanup.drafts} unsaved editor tab${cleanup.drafts === 1 ? '' : 's'} kept as draft${cleanup.drafts === 1 ? '' : 's'}.`,
+        });
+      } else {
+        toast.success(`Deleted ${item.name}`);
+      }
     },
-    [currentSavedId, setCurrentSavedId, setLibrary],
+    [activePineTabId, pendingOpen?.savedId, pineTabs, setActivePineTabId, setLibrary, setPineTabs],
   );
 
   const deleteIndicatorById = useCallback(
@@ -1578,9 +1710,7 @@ export default function App() {
           const name = uniqueName(library.items, fallback);
           const item = createIndicator(name, text);
           setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
-          setScript(item.source);
-          revealSavedIndicator(item.id);
-          openVelaPanel('pine');
+          openSavedScript(item);
           toast.success(`Imported ${item.name}`);
           return;
         }
@@ -1606,7 +1736,7 @@ export default function App() {
         });
       }
     },
-    [library.items, setCurrentSavedId, setLibrary, setScript],
+    [library.items, openSavedScript, setLibrary],
   );
 
   const addSavedToChart = useCallback(
@@ -1658,12 +1788,10 @@ export default function App() {
 
   const scanSaved = useCallback(
     (item: SavedIndicator) => {
-      setScript(item.source);
-      revealSavedIndicator(item.id);
-      openVelaPanel('pine');
+      openSavedScript(item);
       runScan(item.source);
     },
-    [revealSavedIndicator, runScan, setScript],
+    [openSavedScript, runScan],
   );
 
   const scriptRef = useRef(script);
@@ -2192,6 +2320,37 @@ export default function App() {
           if (file) void importLayoutsFile(file);
         }}
       />
+
+      <Modal
+        open={pendingOpen !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingOpen(null);
+        }}
+        title="Unsaved changes"
+        description={
+          pendingItem
+            ? `"${pendingItem.name}" has unsaved changes.`
+            : 'The editor tab has unsaved changes.'
+        }
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPendingOpen(null)}>
+              Cancel
+            </Button>
+            <Button variant="secondary" onClick={discardPendingChanges}>
+              Discard changes
+            </Button>
+            <Button variant="primary" onClick={savePendingChanges}>
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[12px] leading-5 text-muted-foreground">
+          Save the current buffer to the Library, discard it and show the saved source, or
+          cancel.
+        </p>
+      </Modal>
 
       <Modal
         open={saveDialog !== null}

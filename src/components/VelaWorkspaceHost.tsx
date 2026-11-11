@@ -25,6 +25,7 @@ import { pushStrategyRun, removeStrategyRun } from '../lib/strategyRuns';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab, setScreenshotTarget } from '../lib/velaPanels';
+import { isSavedIndicatorInstance, savedIndicatorInstanceId } from '../lib/indicatorState';
 import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
@@ -995,11 +996,10 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           const ws = wsRef.current;
           if (!ws) return 0;
           const cells = allCells ? ws.cells() : [ws.active];
-          const id = `saved-${script.id}`;
+          const id = savedIndicatorInstanceId(script.id);
           let count = 0;
           rememberScriptName(id, script.name);
           for (const cell of cells) {
-            if (cell.instances.some((instance) => instance.id === id)) continue;
             cell.addExternalIndicator({
               id,
               name: script.name,
@@ -1044,8 +1044,11 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             nativeType: null,
             beta: false,
             present:
-              cell.instances.some((instance) => instance.id === `saved-${script.id}`) ||
-              onChart.has(script.name),
+              cell.instances.some(
+                (instance) =>
+                  typeof instance.id === 'string' &&
+                  isSavedIndicatorInstance(instance.id, script.id),
+              ) || onChart.has(script.name),
           }));
           const natives = cell.libraryRows().flatMap((row, index) =>
             row.native === true
