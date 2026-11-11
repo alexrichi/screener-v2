@@ -1,5 +1,6 @@
 ﻿import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import * as esbuild from 'esbuild';
@@ -7,6 +8,28 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
+
+/** `major.BUILT.HASH` inputs: package major, Vite build minute (UTC), git commit. */
+function buildStamp() {
+  let git = 'unknown';
+  try {
+    const hash = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+    }).trim();
+    const dirty =
+      execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()
+        .length > 0;
+    git = dirty ? `${hash}-dirty` : hash;
+  } catch {
+    /* a source tarball has no git; the version must still render */
+  }
+  const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  const built = new Date().toISOString().slice(0, 16).replace(/[-T:]/g, '');
+  return { major: String(version).split('.')[0] ?? '0', built, git };
+}
+
+const build = buildStamp();
 const velaSrc = path.resolve(root, '../Vela/src');
 const velaUiSrc = path.resolve(root, '../Vela/packages/vela-ui/src');
 const pineEngineSrc = path.resolve(root, '../pine-engine/src/index.ts');
@@ -60,6 +83,9 @@ function inlineWorker(): import('vite').Plugin {
 }
 
 export default defineConfig({
+  define: {
+    __BUILD_STAMP__: JSON.stringify(build),
+  },
   plugins: [velaUiSource(), react(), tailwindcss(), inlineWorker()],
   resolve: {
     // The Pine editor and the local Vela checkout both pull CodeMirror; keep one

@@ -228,6 +228,16 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   z-index: 50;
 }
 
+/* Vela appends its in-chart settings dialogs (chart settings, indicator inputs,
+   drawing settings) to the chart cell and marks their backdrop/positioner
+   `data-contained`, so the cell's overflow clips them. On desktop, pin those
+   layers to the viewport: the dialog overlays the workspace instead of only the
+   cell. */
+.vela-workspace[data-layout='desktop'] [data-slot='dialog-backdrop'][data-contained],
+.vela-workspace[data-layout='desktop'] [data-slot='dialog-positioner'][data-contained] {
+  position: fixed !important;
+}
+
 /* The AI toggle sits at the top of Vela's shared drawing toolbar; the widget
    attachment keeps it in place when the toolbar is rebuilt. */
 .screener-ai-rail {
@@ -319,6 +329,37 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   height: 1px;
   background: var(--border);
   pointer-events: none;
+}
+
+/* The favorites caret is part of the Indicators control: drop the primary's
+   trailing hairline, close the topbar gap and square the shared edge. */
+.vela-widget-topbar .vela-widget-action-pin:has(> [data-action-id='indicators']) + .vela-sep {
+  display: none;
+}
+
+.vela-widget-topbar
+  .vela-widget-actions-left:has(> [data-action-id='screener-indicator-favorites']) {
+  margin-left: -4px;
+}
+
+.vela-widget-topbar [data-action-id='indicators'] {
+  padding-right: 2px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.vela-widget-topbar [data-action-id='screener-indicator-favorites'] {
+  width: 18px;
+  padding: 0;
+  justify-content: center;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* The screenshot lives at the top of the right rail. Hide the topbar copy with
+   CSS so Vela keeps the mod+alt+s chord registered. */
+.vela-widget-topbar .vela-widget-screenshot {
+  display: none;
 }
 
 /* The app's Layouts action is the only text action in the right cluster. Draw

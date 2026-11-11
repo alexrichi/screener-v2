@@ -24,7 +24,7 @@ import { pushAlert, type ChartAlertInput } from '../lib/alerts';
 import { pushStrategyRun, removeStrategyRun } from '../lib/strategyRuns';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
-import { setMountingVelaTab } from '../lib/velaPanels';
+import { setMountingVelaTab, setScreenshotTarget } from '../lib/velaPanels';
 import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
@@ -727,7 +727,17 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               ? { storage: seededStorage(persistKey, layoutSeed) }
               : {}),
             drawingToolbar: true,
-            sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] },
+            sidebar: {
+              top: [
+                'screener-screenshot',
+                '|',
+                'screener',
+                'pine',
+                'library',
+                '|',
+                'alerts',
+              ],
+            },
             maxWebglCells,
           });
         } finally {
@@ -827,6 +837,11 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       // One host per visited tab; this effect owns that workspace until the tab
       // closes. Theme and prop sync are separate.
       // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tab.id]);
+
+    useEffect(() => {
+      setScreenshotTarget(tab.id, () => wsRef.current?.downloadScreenshot());
+      return () => setScreenshotTarget(tab.id, null);
     }, [tab.id]);
 
     useEffect(() => {

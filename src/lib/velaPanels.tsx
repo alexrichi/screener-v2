@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   registerIcon,
   registerSidePanel,
+  registerWidgetAction,
   registerWidgetAttachment,
   type WidgetContext,
 } from '@luxalgo/vela/plugin';
@@ -201,6 +202,26 @@ registerWidgetAttachment({
   mount: (ctx) => {
     ctx.topbar.setVisible('alerts', false);
     return () => ctx.topbar.setVisible('alerts', true);
+  },
+});
+
+const screenshotTargets = new Map<string, () => void>();
+
+/** Route the rail's camera to the workspace of its own tab. */
+export function setScreenshotTarget(tabId: string, download: (() => void) | null): void {
+  if (download) screenshotTargets.set(tabId, download);
+  else screenshotTargets.delete(tabId);
+}
+
+registerWidgetAction({
+  id: 'screener-screenshot',
+  target: 'sidebar',
+  label: 'Screenshot',
+  icon: 'camera',
+  order: 0,
+  run: (ctx) => {
+    const tabId = ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ?? '';
+    screenshotTargets.get(tabId)?.();
   },
 });
 

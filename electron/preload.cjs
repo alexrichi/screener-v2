@@ -1,5 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const buildBuilt = (() => {
+  try {
+    return ipcRenderer.sendSync('screener:build-built') ?? null;
+  } catch {
+    return null;
+  }
+})();
+
 contextBridge.exposeInMainWorld('screenerWindow', {
   setTitleBarTheme: (theme) =>
     ipcRenderer.send('screener:titlebar-theme', theme === 'light' ? 'light' : 'dark'),
@@ -8,4 +16,5 @@ contextBridge.exposeInMainWorld('screenerWindow', {
   close: () => ipcRenderer.send('screener:window', 'close'),
   quit: () => ipcRenderer.send('screener:window', 'quit'),
   pickScript: () => ipcRenderer.invoke('screener:pick-script'),
+  buildBuilt,
 });

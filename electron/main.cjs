@@ -24,6 +24,26 @@ let staticServer = null;
 let mainWindow = null;
 let sidecarStderr = '';
 
+/** `YYYYMMDDHHMM` in UTC, the same stamp screener-1 prints. */
+function buildMinute(date) {
+  return date.toISOString().slice(0, 16).replace(/[-T:]/g, '');
+}
+
+// The packaged executable is rewritten on every pack, so its mtime is the build
+// minute. `electron .` would report the downloaded Electron binary instead.
+const BUILD_BUILT = (() => {
+  if (process.defaultApp) return null;
+  try {
+    return buildMinute(fs.statSync(process.execPath).mtime);
+  } catch {
+    return null;
+  }
+})();
+
+ipcMain.on('screener:build-built', (event) => {
+  event.returnValue = BUILD_BUILT;
+});
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -212,6 +232,7 @@ async function runSmoke() {
     error,
     venues: [],
     titlebar: null,
+    build: null,
     at: new Date().toISOString(),
   };
   try {
@@ -227,6 +248,16 @@ async function runSmoke() {
       };
     })()`);
     if (!result.titlebar?.bridge) result.ok = false;
+  } catch (cause) {
+    error = String(cause);
+    result.error = error;
+    result.ok = false;
+  }
+  try {
+    result.build = await mainWindow.webContents.executeJavaScript(
+      'document.documentElement.dataset.buildVersion ?? null',
+    );
+    if (!result.build) result.ok = false;
   } catch (cause) {
     error = String(cause);
     result.error = error;

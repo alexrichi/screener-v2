@@ -13,6 +13,8 @@ declare global {
       pickScript: () => Promise<
         { name: string; text: string } | { error: string } | null
       >;
+      /** Packaged executable mtime as `YYYYMMDDHHMM` UTC; null in dev. */
+      buildBuilt: string | null;
     };
   }
 }

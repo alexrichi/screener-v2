@@ -193,7 +193,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
 - The library stores raw `.pine` source only. Saved scripts are app-owned: the
   host adds them as external indicators under `saved-<id>`, and the custom
   `IndicatorWindow` lists `My scripts` from app state plus `Built-in` from
-  `cell.libraryRows()`. There is no Vela `indicators` manifest and no
+  `cell.libraryRows()` and opens on `My scripts`; each saved row reveals
+  `Source code` and `Delete script` on hover or selection (`Delete` confirms and
+  clears the current editor item). There is no Vela `indicators` manifest and no
   `setIndicators` seam. `lib/velaScripts.ts` registers a cell-scope state
   handler (`screener.scripts`) that persists every external script except the
   applied `screener-pine`, so saved and Library-added indicators survive tab
@@ -421,10 +423,20 @@ bridge into `App`, which renders `IndicatorWindow`. The window reads the active
 cell's `libraryRows()`/`onChartRows()` (mapped to `IndicatorRow`) and adds via
 `addFromLibrary(index)`. Do not build the native picker a second time, and keep
 the original row indices: `libraryRows()` is the index space `addFromLibrary`
-expects. Native `On chart` is derived from `onChartRows()[].nativeType`, not the
+expects. The window opens on `My scripts`; a saved row reveals `Source code` and
+`Delete script` on hover or selection. `Source code` opens that item in the Pine
+editor and closes the picker, while `Delete script` confirms, removes the saved
+item, and clears `currentSavedId`; chart handles stay as snapshots. Native `On
+chart` is derived from `onChartRows()[].nativeType`, not the
 name: the legend title can differ from the picker row (Connors RSI → CRSI).
 Indicator add/remove events call `ws.context().stateChanged()` so native and
-external changes reach the workspace document before the next reload.
+external changes reach the workspace document before the next reload. The same
+module registers `screener-indicator-favorites` as a caret attached to the
+Indicators control in the topbar's left cluster. It opens the app's
+`FavoritesMenu`, anchored to the action button; the menu and `IndicatorWindow`
+share `indicatorPrefs` (`screener.indicators.picker.v1`). A favorite click adds
+the native, saved or Library item and marks it recent; `Manage in Indicators`
+opens the picker.
 
 **LuxAlgo Library imports keep their licence.** The source comes verbatim from
 the same public endpoint Vela's picker uses, including its header (MPL 2.0 or
@@ -547,10 +559,13 @@ registers `Screener`, `Pine`, `Library`, and `Alerts` with
 bodies Vela hands `mount`. Mounts are keyed `<tabId>:<panelId>`;
 `openVelaPanel` targets the active tab and the portals render only into its
 bodies. The shell runs with
-`sidebar: { top: ['screener', 'pine', 'library', '|', 'alerts'] }`
-(Vela dev): on desktop the panel toggles live in the right sidebar and the
-topbar keeps Maximize, Layouts and the screenshot button; mobile keeps the
-panel rows in its menu. `sidebar` does not exist in main/0.9.3, so drop it when
+`sidebar: { top: ['screener-screenshot', '|', 'screener', 'pine', 'library', '|', 'alerts'] }`
+(Vela dev): the rail's top action downloads the screenshot of its own tab
+(`setScreenshotTarget` maps `<tabId>` to `ws.downloadScreenshot()`), and the
+topbar copy is hidden with app CSS so the `mod+alt+s` chord stays registered.
+On desktop the panel toggles live in the right sidebar and the topbar keeps
+Maximize and Layouts; mobile keeps the panel rows in its menu. `sidebar` does
+not exist in main/0.9.3, so drop it when
 the checkout returns to main before the next release. The dock's open panel and
 width live in the Vela workspace document, not in `screener.dock.*`. Do not
 reach into panel internals. `screener.panels.welcomed` only controls the
@@ -575,7 +590,14 @@ maximized Pine editor keeps the pointer. Keep that override. Vela also inserts
 its floating menu/popover layers before `.vela-ws-main` and leaves the positioner
 at `z-index: auto` (the list inside carries the token z-index), so the chart
 paints over an open timeframe dropdown. `index.css` lifts the workspace's
-non-dialog `.vela-ui-layer` children to 50. Keep that override too.
+non-dialog `.vela-ui-layer` children to 50. Keep that override too. Vela's
+in-chart settings dialogs (chart settings, indicator inputs, drawing settings)
+are `contained: true` and appended to the chart cell; the cell clips them.
+`index.css` pins the contained `dialog-backdrop`/`dialog-positioner` to the
+viewport on desktop, so they overlay the workspace. The drawing quick toolbar
+(`.vela-dpop`) is not a dialog and
+stays cell-local. Re-check these overrides if Vela changes `data-slot` or
+`data-contained`.
 
 **Alerts are app-owned and session-only.** `lib/velaPanels.tsx` hides Vela's
 topbar bell (`ctx.topbar.setVisible('alerts', false)` through a widget
@@ -674,7 +696,15 @@ window bounds and maximized flag in `window.json` under `userData`
 (`electron/window-state.cjs`), restores them only when they still land on a
 connected display, clamps the size to that display's work area and keeps the
 title bar on screen, and saves on resize/move/maximize plus close. The smoke
-result includes `titlebar.bridge`, `paddingRight`, and `appRegion`.
+result includes `titlebar.bridge`, `paddingRight`, `appRegion`, and `build`.
+
+**The build stamp is per build.** `vite.config.ts` defines `__BUILD_STAMP__`:
+`major` from `package.json`, `built` = Vite build minute (UTC), and `git` =
+short HEAD plus `-dirty` when the tree is dirty. A packaged app replaces `built`
+with the executable's mtime minute over `screener:build-built`, so a repack from
+the same bundle still gets a new stamp. `lib/buildVersion.ts` formats
+`major.BUILT.HASH`; the About dialog shows it and `<html data-build-version>`
+carries it for the smoke result.
 
 **Theme changes touch two files.** App tokens live in `src/index.css`; the Vela
 theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will drift
@@ -749,10 +779,11 @@ Useful browser probes:
 - Zoom a cell to its scale floor, maximize it: the host loads enough history to
   fill the wider window at the same `barSpacing` (no click, resize or refit), and
   the left edge shows candles instead of empty space.
-- The right sidebar's panel buttons open `Screener`, `Pine`, `Library`, and
-  `Alerts` as one Vela side panel at a time; the topbar keeps Maximize, Layouts
-  and the screenshot button. The open panel and width survive reload. The legend
-  source action opens the Pine panel.
+- The right sidebar's top camera downloads the tab's layout PNG; the topbar has
+  no screenshot button. The panel buttons open `Screener`, `Pine`, `Library`,
+  and `Alerts` as one Vela side panel at a time; the topbar keeps Maximize and
+  Layouts. The open panel and width survive reload. The legend source action
+  opens the Pine panel.
 - A script with `alert()` on the active chart fills the `Alerts` rail panel with
   the symbol, timeframe, message and indicator; the topbar has no bell, and the
   rail button carries the alert count. Clearing empties the list and the count,

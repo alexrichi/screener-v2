@@ -3,8 +3,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type SetStateAction,
 } from 'react';
 import { Dialog } from '@base-ui/react';
 import { toast } from 'sonner';
@@ -19,6 +21,7 @@ import {
   Search,
   Shuffle,
   Star,
+  Trash2,
   Upload,
   X,
   type LucideIcon,
@@ -32,19 +35,15 @@ import {
   type LibraryItem,
 } from '../lib/luxalgoLibrary';
 import {
-  EMPTY_PICKER_PREFS,
-  PICKER_PREFS_KEY,
   buildPickerEntries,
   builtinFamilies,
   filterEntries,
-  isPickerPrefs,
   libraryFamilies,
   markRecent,
   toggleFavorite,
   type PickerEntry,
   type PickerPrefs,
 } from '../lib/indicatorPicker';
-import { usePersistedState } from '../lib/usePersistedState';
 import { Badge, Button, Input, Spinner } from '../ui/primitives';
 import { cn } from '../ui/cn';
 
@@ -56,6 +55,10 @@ interface Props {
   onAddSaved: (id: string) => void;
   onAddLibrary: (item: LibraryItem) => Promise<void>;
   onImportFile: (file: File) => Promise<void>;
+  onOpenSource: (id: string) => void;
+  onDelete: (id: string) => void;
+  prefs: PickerPrefs;
+  onPrefsChange: Dispatch<SetStateAction<PickerPrefs>>;
 }
 
 type Section =
@@ -264,6 +267,8 @@ function EntryRow({
   onSelect,
   onFavorite,
   onAdd,
+  onSource,
+  onDelete,
 }: {
   entry: PickerEntry;
   present: boolean;
@@ -272,8 +277,9 @@ function EntryRow({
   onSelect: () => void;
   onFavorite: () => void;
   onAdd: () => void;
+  onSource?: () => void;
+  onDelete?: () => void;
 }) {
-  const Icon = entry.kind === 'native' ? LineChart : Code2;
   const locked = present && entry.kind !== 'native';
   return (
     <div
@@ -282,10 +288,8 @@ function EntryRow({
         selected ? 'border-primary bg-primary-soft/40' : 'border-transparent hover:bg-accent/40',
       )}
     >
-      <button type="button" onClick={onSelect} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-muted-foreground">
-          <Icon className="size-3.5" />
-        </span>
+      <StarButton favorite={favorite} label={entry.name} onToggle={onFavorite} />
+      <button type="button" onClick={onSelect} className="flex min-w-0 flex-1 items-center text-left">
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-[12px] font-medium text-foreground">{entry.name}</span>
@@ -295,7 +299,43 @@ function EntryRow({
           <span className="block truncate text-[10px] text-muted-foreground">{entry.family}</span>
         </span>
       </button>
-      <StarButton favorite={favorite} label={entry.name} onToggle={onFavorite} />
+      {onSource || onDelete ? (
+        <div
+          className={cn(
+            'flex shrink-0 items-center gap-1',
+            selected ? 'visible' : 'invisible group-hover:visible group-focus-within:visible',
+          )}
+        >
+          {onSource ? (
+            <button
+              type="button"
+              aria-label={`Open source code for ${entry.name}`}
+              title="Source code"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSource();
+              }}
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Code2 className="size-3.5" />
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button
+              type="button"
+              aria-label={`Delete script ${entry.name}`}
+              title="Delete script"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-negative"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <button
         type="button"
         aria-label={
@@ -450,8 +490,12 @@ export function IndicatorWindow({
   onAddSaved,
   onAddLibrary,
   onImportFile,
+  onOpenSource,
+  onDelete,
+  prefs,
+  onPrefsChange,
 }: Props) {
-  const [section, setSection] = useState<Section>({ type: 'discover' });
+  const [section, setSection] = useState<Section>({ type: 'my-scripts' });
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -461,11 +505,6 @@ export function IndicatorWindow({
   const [added, setAdded] = useState<Record<string, true>>({});
   const searchRef = useRef<HTMLInputElement | null>(null);
   const importRef = useRef<HTMLInputElement | null>(null);
-  const [prefs, setPrefs] = usePersistedState<PickerPrefs>(
-    PICKER_PREFS_KEY,
-    EMPTY_PICKER_PREFS,
-    isPickerPrefs,
-  );
 
   const entries = useMemo(() => buildPickerEntries(rows, LIBRARY_ITEMS), [rows]);
   const libraryEntries = useMemo(
@@ -515,7 +554,7 @@ export function IndicatorWindow({
 
   useEffect(() => {
     if (!open) return;
-    setSection({ type: 'discover' });
+    setSection({ type: 'my-scripts' });
     setQuery('');
     setLimit(PAGE_SIZE);
     setSelectedKey(null);
@@ -592,7 +631,7 @@ export function IndicatorWindow({
   };
 
   const toggleFav = (entry: PickerEntry) => {
-    setPrefs((prev) => toggleFavorite(prev, entry.key));
+    onPrefsChange((prev) => toggleFavorite(prev, entry.key));
   };
 
   const addEntry = async (entry: PickerEntry | null, keepOpen: boolean) => {
@@ -625,7 +664,7 @@ export function IndicatorWindow({
         setBusy(null);
       }
     }
-    setPrefs((prev) => markRecent(prev, entry.key));
+    onPrefsChange((prev) => markRecent(prev, entry.key));
     setSelectedKey(entry.key);
     if (!keepOpen) onOpenChange(false);
   };
@@ -710,18 +749,23 @@ export function IndicatorWindow({
 
   const entryRows = (items: PickerEntry[]) => (
     <div className="grid gap-0.5">
-      {items.map((entry) => (
-        <EntryRow
-          key={entry.key}
-          entry={entry}
-          present={presentOf(entry)}
-          selected={selected?.key === entry.key}
-          favorite={favoriteSet.has(entry.key)}
-          onSelect={() => setSelectedKey(entry.key)}
-          onFavorite={() => toggleFav(entry)}
-          onAdd={() => void addEntry(entry, false)}
-        />
-      ))}
+      {items.map((entry) => {
+        const savedId = entry.kind === 'saved' ? entry.savedId : undefined;
+        return (
+          <EntryRow
+            key={entry.key}
+            entry={entry}
+            present={presentOf(entry)}
+            selected={selected?.key === entry.key}
+            favorite={favoriteSet.has(entry.key)}
+            onSelect={() => setSelectedKey(entry.key)}
+            onFavorite={() => toggleFav(entry)}
+            onAdd={() => void addEntry(entry, false)}
+            onSource={savedId ? () => onOpenSource(savedId) : undefined}
+            onDelete={savedId ? () => onDelete(savedId) : undefined}
+          />
+        );
+      })}
     </div>
   );
 

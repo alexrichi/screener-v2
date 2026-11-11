@@ -15,6 +15,7 @@ import { AppHeader } from './components/AppHeader';
 import { AiSidebar } from './components/AiSidebar';
 import { SettingsTemplateHost } from './components/SettingsTemplateHost';
 import { IndicatorWindow } from './components/IndicatorWindow';
+import { FavoritesMenu } from './components/FavoritesMenu';
 import { LibraryPanel } from './components/LibraryPanel';
 import { AlertsPanel } from './components/AlertsPanel';
 import { PinePanel } from './components/PinePanel';
@@ -50,12 +51,22 @@ import {
 import { openVelaPanel, setActiveVelaTab, VelaPanelPortals } from './lib/velaPanels';
 import './lib/velaStrategyDock';
 import { clearStrategyRuns } from './lib/strategyRuns';
-import { setIndicatorWindowBridge } from './lib/velaIndicators';
+import { setFavoritesMenuBridge, setIndicatorWindowBridge } from './lib/velaIndicators';
 import {
+  LIBRARY_ITEMS,
   fetchLibrarySource,
   libraryPageUrl,
   type LibraryItem,
 } from './lib/luxalgoLibrary';
+import {
+  EMPTY_PICKER_PREFS,
+  PICKER_PREFS_KEY,
+  buildPickerEntries,
+  isPickerPrefs,
+  markRecent,
+  type PickerEntry,
+  type PickerPrefs,
+} from './lib/indicatorPicker';
 import { useMarketRows } from './hooks/useMarketRows';
 import {
   isBoolean,
@@ -336,6 +347,13 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<'screener' | 'ai'>('screener');
   const [indicatorOpen, setIndicatorOpen] = useState(false);
   const [indicatorRows, setIndicatorRows] = useState<IndicatorRow[]>([]);
+  const [indicatorPrefs, setIndicatorPrefs] = usePersistedState<PickerPrefs>(
+    PICKER_PREFS_KEY,
+    EMPTY_PICKER_PREFS,
+    isPickerPrefs,
+  );
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [favoritesAnchor, setFavoritesAnchor] = useState<HTMLElement | null>(null);
   const [layouts, setLayouts] = useState<LayoutLibrary>(() => readLayouts());
   const [layoutsMenuOpen, setLayoutsMenuOpen] = useState(false);
   const [layoutsAnchor, setLayoutsAnchor] = useState<HTMLElement | null>(null);
@@ -394,6 +412,15 @@ export default function App() {
     refreshIndicatorRows();
     setIndicatorOpen(true);
   }, [refreshIndicatorRows]);
+
+  const openFavoritesMenu = useCallback(
+    (anchor: HTMLElement | null) => {
+      refreshIndicatorRows();
+      setFavoritesAnchor(anchor);
+      setFavoritesOpen((open) => (favoritesAnchor === anchor ? !open : true));
+    },
+    [favoritesAnchor, refreshIndicatorRows],
+  );
 
   const addIndicator = useCallback(
     (index: number) => {
@@ -478,6 +505,11 @@ export default function App() {
     setIndicatorWindowBridge(openIndicators);
     return () => setIndicatorWindowBridge(null);
   }, [openIndicators]);
+
+  useEffect(() => {
+    setFavoritesMenuBridge(openFavoritesMenu);
+    return () => setFavoritesMenuBridge(null);
+  }, [openFavoritesMenu]);
 
   useEffect(() => {
     setLayoutsBridge((anchor) => {
@@ -1325,15 +1357,23 @@ export default function App() {
   }, [library.items, revealSavedIndicator, saveDialog, script, setLibrary]);
 
   const selectSaved = useCallback(
-    (id: string) => {
+    (id: string): boolean => {
       const item = library.items.find((candidate) => candidate.id === id);
-      if (!item) return;
-      if (dirty && !window.confirm('Discard unsaved changes?')) return;
+      if (!item) return false;
+      if (dirty && !window.confirm('Discard unsaved changes?')) return false;
       setScript(item.source);
       revealSavedIndicator(id);
       openVelaPanel('pine');
+      return true;
     },
     [dirty, library.items, revealSavedIndicator, setScript],
+  );
+
+  const openIndicatorSource = useCallback(
+    (id: string) => {
+      if (selectSaved(id)) setIndicatorOpen(false);
+    },
+    [selectSaved],
   );
 
   const showSource = useCallback(
@@ -1407,6 +1447,14 @@ export default function App() {
     [currentSavedId, setCurrentSavedId, setLibrary],
   );
 
+  const deleteIndicatorById = useCallback(
+    (id: string) => {
+      const item = library.items.find((candidate) => candidate.id === id);
+      if (item) deleteIndicator(item);
+    },
+    [deleteIndicator, library.items],
+  );
+
   const exportIndicator = useCallback((item: SavedIndicator) => {
     downloadText(pineFileName(item.name), item.source, 'text/plain;charset=utf-8');
   }, []);
@@ -1476,6 +1524,35 @@ export default function App() {
       }
     },
     [activeWorkspace, refreshIndicatorRows, revealSavedIndicator],
+  );
+
+  const favoriteEntries = useMemo(() => {
+    const entries = buildPickerEntries(indicatorRows, LIBRARY_ITEMS);
+    return indicatorPrefs.favorites
+      .map((key) => entries.find((entry) => entry.key === key))
+      .filter((entry): entry is PickerEntry => Boolean(entry));
+  }, [indicatorPrefs.favorites, indicatorRows]);
+
+  const addFavorite = useCallback(
+    (entry: PickerEntry) => {
+      setFavoritesOpen(false);
+      if (entry.kind === 'native') {
+        if (entry.index !== undefined) addIndicator(entry.index);
+      } else if (entry.kind === 'saved') {
+        const item = entry.savedId
+          ? library.items.find((candidate) => candidate.id === entry.savedId)
+          : undefined;
+        if (item) addSavedToChart(item, false);
+      } else if (entry.item) {
+        void addLibraryIndicator(entry.item).catch((cause) => {
+          toast.error('Could not load the script', {
+            description: cause instanceof Error ? cause.message : String(cause),
+          });
+        });
+      }
+      setIndicatorPrefs((prev) => markRecent(prev, entry.key));
+    },
+    [addIndicator, addLibraryIndicator, addSavedToChart, library.items, setIndicatorPrefs],
   );
 
   const scanSaved = useCallback(
@@ -2009,6 +2086,18 @@ export default function App() {
         }}
         onAddLibrary={addLibraryIndicator}
         onImportFile={importLibraryFile}
+        onOpenSource={openIndicatorSource}
+        onDelete={deleteIndicatorById}
+        prefs={indicatorPrefs}
+        onPrefsChange={setIndicatorPrefs}
+      />
+
+      <FavoritesMenu
+        open={favoritesOpen}
+        onOpenChange={setFavoritesOpen}
+        anchor={favoritesAnchor}
+        entries={favoriteEntries}
+        onAdd={addFavorite}
       />
 
       <SettingsTemplateHost workspace={getVelaWorkspace} />
