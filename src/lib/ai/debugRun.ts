@@ -2,8 +2,7 @@ import type { ScriptRunSummary } from '../../types';
 import {
   emptyRunSummary,
   maxBarsBackOf,
-  summarizeError,
-  type RunMeta,
+  type DebugRunMeta,
 } from './debugResult';
 
 export interface DebugRunRequest {
@@ -12,6 +11,8 @@ export interface DebugRunRequest {
   source: string;
   /** Bar count to mirror from the active chart; 0 falls back to the worker default. */
   bars: number;
+  /** Zero-based bar to snapshot; omitted means the last loaded bar. */
+  bar?: number;
 }
 
 export type DebugWorkerMessage =
@@ -22,12 +23,12 @@ const DEBUG_TIMEOUT_MS = 20_000;
 const MAX_LOGS = 60;
 
 /**
- * Run Pine in a disposable worker over sidecar bars. The worker is terminated on
- * completion, on error, and on timeout, so a runaway script cannot block the UI
- * or leak an indicator into the chart.
+ * Run Pine in a disposable worker over sidecar bars with the same engine as the
+ * chart. The worker is terminated on completion, on error, and on timeout, so a
+ * runaway script cannot block the UI or leak an indicator into the chart.
  */
 export async function runScriptInWorker(request: DebugRunRequest): Promise<ScriptRunSummary> {
-  const meta: RunMeta = {
+  const meta: DebugRunMeta = {
     symbol: request.symbol,
     timeframe: request.timeframe,
     bars: request.bars,
@@ -74,6 +75,6 @@ export async function runScriptInWorker(request: DebugRunRequest): Promise<Scrip
       worker.postMessage(request);
     });
   } catch (error) {
-    return summarizeError(error, meta);
+    return emptyRunSummary(meta, error instanceof Error ? error.message : String(error));
   }
 }

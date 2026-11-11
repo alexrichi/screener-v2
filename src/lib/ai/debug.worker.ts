@@ -1,16 +1,15 @@
-import { Indicator, PineTS } from 'pinets';
-import type { ScriptRunSummary } from '../../types';
+import { compilePine } from '@screener/pine-engine';
 import { VENUE_IDS } from '../../venues/catalog';
 import { sameVelaSymbol } from '../../venues/instrument';
 import { SidecarVenueAdapter } from '../../venues/sidecar';
 import type { VenueId } from '../../venues/types';
+import type { ScriptRunSummary } from '../../types';
 import type { DebugRunRequest, DebugWorkerMessage } from './debugRun';
 import {
   emptyRunSummary,
   maxBarsBackOf,
-  summarizeContext,
-  summarizeError,
-  type RunMeta,
+  summarizeRun,
+  type DebugRunMeta,
 } from './debugResult';
 
 const workerSelf = self as unknown as {
@@ -29,36 +28,8 @@ function venueOf(symbol: string): VenueId | null {
   return VENUE_IDS.find((id) => id === provider) ?? null;
 }
 
-/**
- * PineTS writes `log.info/warning/error` through console; capture those calls
- * so the model gets the script's own log lines with the run result.
- */
-function captureLogs(): { logs: string[]; restore: () => void } {
-  const logs: string[] = [];
-  const write = (prefix: string) => (...args: unknown[]) => {
-    const text = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
-    const line = `${prefix}${text}`.slice(0, MAX_LOG_CHARS);
-    // Keep the newest lines: a per-bar log fills the cap from the oldest bar.
-    if (logs.length >= MAX_LOGS) logs.shift();
-    logs.push(line);
-    workerSelf.postMessage({ type: 'log', line });
-  };
-  const original = { log: console.log, warn: console.warn, error: console.error };
-  console.log = write('');
-  console.warn = write('WARN ');
-  console.error = write('ERROR ');
-  return {
-    logs,
-    restore: () => {
-      console.log = original.log;
-      console.warn = original.warn;
-      console.error = original.error;
-    },
-  };
-}
-
 async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
-  const meta: RunMeta = {
+  const meta: DebugRunMeta = {
     symbol: request.symbol,
     timeframe: request.timeframe,
     bars: 0,
@@ -67,7 +38,7 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
   const venue = venueOf(request.symbol);
   if (!venue) return emptyRunSummary(meta, `Unknown venue in "${request.symbol}".`);
 
-  let capture: ReturnType<typeof captureLogs> | null = null;
+  const logs: string[] = [];
   try {
     const adapter = new SidecarVenueAdapter(venue);
     const instruments = await adapter.listInstruments();
@@ -94,19 +65,44 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
       );
     }
 
-    capture = captureLogs();
-    const indicator = new Indicator(request.source);
-    const pine = new PineTS(bars, instrument.nativeId, request.timeframe);
-    const context = await pine.run(indicator);
-    const summary = summarizeContext(context, meta);
-    summary.logs = capture.logs.slice();
-    return summary;
+    const program = compilePine({ source: request.source, debug: true });
+    if (!program.ok) {
+      return emptyRunSummary(meta, program.error ?? 'The script could not be compiled');
+    }
+    const result = program.run({
+      bars: bars.map((bar) => ({
+        time: bar.openTime,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+      })),
+      timeframe: request.timeframe,
+      symbol: instrument.nativeId,
+      live: true,
+      debugBar: request.bar ?? bars.length - 1,
+      onLog: (level, message) => {
+        const prefix = level === 'warning' ? 'WARN ' : level === 'error' ? 'ERROR ' : '';
+        const line = `${prefix}${message}`.slice(0, MAX_LOG_CHARS);
+        if (logs.length >= MAX_LOGS) logs.shift();
+        logs.push(line);
+        workerSelf.postMessage({ type: 'log', line });
+      },
+    });
+    if (!result.ok) {
+      const summary = emptyRunSummary(meta, result.error ?? 'The script failed');
+      summary.logs = logs.slice();
+      return summary;
+    }
+    return summarizeRun(result, meta, logs);
   } catch (error) {
-    const summary = summarizeError(error, meta);
-    if (capture) summary.logs = capture.logs.slice();
+    const summary = emptyRunSummary(
+      meta,
+      error instanceof Error ? error.message : String(error),
+    );
+    summary.logs = logs.slice();
     return summary;
-  } finally {
-    capture?.restore();
   }
 }
 

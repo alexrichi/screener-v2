@@ -22,8 +22,8 @@ backend, auth, order execution, Electron shell, or Nautilus integration yet.
    in a browser. If you cannot drive one, say up front that verification is weaker.
 
 3. **Scope.** Keep changes inside this repo. Reading peer repos such as
-   `../Vela`, `../Vela-pinets`, and `../PineTS` is fine; do not modify them without
-   explicit permission.
+   `../Vela`, `../pine-engine`, and `../pine-editor` is fine; do not modify them
+   without explicit permission.
 
 4. **Data.** The app reads Binance public REST endpoints. No API key or secret is
    needed. If Binance is unreachable or geo-blocked, that is an environmental
@@ -115,6 +115,9 @@ src/
     useDictation.ts               microphone recording and sidecar transcription
   lib/
     ai/agents.ts                  agent presets: prompt, read-only flag
+    ai/debug.worker.ts            disposable pine-engine debug run over sidecar bars
+    ai/debugRun.ts                debug worker lifecycle and timeout
+    ai/debugResult.ts             engine run to ScriptRunSummary mapping
     ai/model.ts                   OpenAI-compatible provider + config and transcription calls
     ai/title.ts                   one-shot generated title for assistant-ui chats
     ai/tools.ts                   app tools: script, chart context, debug run
@@ -142,7 +145,7 @@ src/
     velaTheme.ts                  dark/light Vela theme matching the app tokens
     strategyRuns.ts               per-tab strategy runs fed by chart.on('script:run')
   scan/
-    extractPlots.ts               last finite plot value for the scan table and debug run
+    extractPlots.ts               last finite plot value for the scan table
     scan.worker.ts                Pine engine scan worker
     useScanner.ts                 worker lifecycle, progress, cancel, errors
   scripts/presets.ts              built-in Pine presets
@@ -463,12 +466,13 @@ localStorage, or the bundle. `AI_BASE_URL` /
 route refuses to edit while they are set. `apply_script`
 only rewrites the editor buffer (undo works, nothing runs); `apply_live` applies
 that buffer to the active chart through the same in-place path as the editor's
-Apply button and returns the live `{ ok, error }`; `run_script` runs the
-same source twice: on the active chart through `chart.runScript()` (the truth,
-including the forming bar) and in a disposable worker over sidecar bars of the
-same length (captures `log.info/warning/error`, hard-terminated after 20 s). The
-chart probe removes its indicator again, so debugging leaves no legend row. The
-chart image is attached as a `file` part of the **user** message, not as a tool
+Apply button and returns the live `{ ok, error }`; `run_script` runs the same
+source twice: on the active chart through `chart.runScript()` (the truth,
+including the forming bar) and in a disposable worker over sidecar bars with
+`@screener/pine-engine`, hard-terminated after 20 s. The worker captures
+`log.info/warning/error` lines and adds a second result to compare; the chart
+probe removes its indicator again, so debugging leaves no legend row. The chart
+image is attached as a `file` part of the **user** message, not as a tool
 result: the OpenAI-compatible adapter drops
 file parts from `role: 'tool'` messages, so a screenshot tool would silently
 never reach the model.
@@ -669,14 +673,13 @@ serve natively (`45`, `180`) are unsupported until the sidecar builds them.
 the last finite numeric value. Keep the cap (12) and the table's dynamic column
 merge stable. Plot keys are the column identity; titles are display only. Titles
 come from the parsed AST, because the transpiled metainfo carries only ids and
-styles. The debug runner still reads the PineTS context through `extractPlots`
-until the engine reports variables.
+styles.
 
 **Vela only fills between series.** `hline()` becomes a `PriceLine`, so a
-`fill(hline1, hline2)` (or `fill(hline, plot)`) would be dropped. Vela-pinets
-`toScene` gives each filled hline a hidden constant series (`visible: false`,
-all display surfaces off) as its anchor while keeping the visible price line.
-Do not remove that mapping when touching the scene transform.
+`fill(hline1, hline2)` (or `fill(hline, plot)`) would be dropped. The chart
+adapter gives each filled hline a hidden constant series (`visible: false`, all
+display surfaces off) as its anchor while keeping the visible price line. Do not
+remove that mapping when touching the scene transform.
 
 **The table is fixed-layout and horizontally scrollable.** Column definitions feed
 both `<colgroup>` and the header/cell renderer. New columns must be added to the
@@ -721,12 +724,9 @@ request. Keep public market data and the Vela host separated so a future sidecar
 replace the data boundary cleanly.
 
 **Licensing.** Vela is Apache-2.0 and its attribution watermark stays enabled.
-Vela-pinets and PineTS are AGPL-3.0. This app is intended for private use;
-distributing or hosting it triggers AGPL obligations or requires a commercial
-license. Do not remove attribution or relicence dependencies casually.
-LuxAlgo Library scripts keep their own licence (usually CC BY-NC-SA 4.0) and
-are saved with the header intact; private use is fine, redistribution is not
-without meeting those terms.
+The local Pine engine is MIT. LuxAlgo Library scripts keep their own licence
+(usually CC BY-NC-SA 4.0) and are saved with the header intact; private use is
+fine, redistribution is not without meeting those terms.
 
 **No secrets.** The app uses public endpoints only. Never add API keys to the client
 or commit `.env`; `.env*` is gitignored.
@@ -884,10 +884,10 @@ Useful browser probes:
   survives reload; collapsing the drawing toolbar hides the rail with the tools.
   With the mock model, `get_script` / `apply_script` / `run_script` /
   `get_chart_context` run end to end: the editor buffer becomes the returned
-  source, `run_script` returns `{ ok, live, worker }` with the full
-  plots/vars/logs of both runs, a broken script returns its error, and a
-  `Chart`-attached turn sends the PNG as a user
-  image part (`image_url` reaches the provider).
+  source, `run_script` returns `{ ok, live, worker }` with plots, warnings and
+  worker log lines (the live run adds vars and engine errors), a broken script
+  returns its error, and a `Chart`-attached turn sends the PNG as a user image
+  part (`image_url` reaches the provider).
 - The assistant-ui chat shows `Chat` / `All chats` tabs. History searches titles
   and chart context, groups by date, renames inline and deletes; empty chats are
   hidden. After the first reply the title is generated in the user's language
@@ -1059,32 +1059,7 @@ TA call site keeps its own state and source series, so two EMAs and chained
 instrument's state. `var` initializes on the first bar from that bar's data. It
 waits for `historyState: 'complete'` instead of running on a partial backfill.
 Series ids come from `stableSeriesId` so value patches hit the same series
-across runs. The old `PineWorkerEngine` and the `@luxalgo/vela-pinets`
-dependency are gone; `pinets` survives only in `ai/debug.worker.ts`.
-
-### PineTS documentation
-
-PineTS is the AGPL TypeScript Pine Script runtime still behind the AI debug
-runner. Its docs are at
-<https://docs.luxalgo.com/developers/pinets>:
-
-- Getting started: <https://docs.luxalgo.com/developers/pinets/getting-started>
-- Initialization and usage: <https://docs.luxalgo.com/developers/pinets/initialization-and-usage>
-- `Indicator` and runtime inputs: <https://docs.luxalgo.com/developers/pinets/indicator>
-- Syntax guide: <https://docs.luxalgo.com/developers/pinets/syntax-guide>
-- Pagination and live streaming: <https://docs.luxalgo.com/developers/pinets/pagination>
-- Language coverage: <https://docs.luxalgo.com/developers/pinets/lang-coverage>
-- API coverage: <https://docs.luxalgo.com/developers/pinets/api-coverage>
-- Using PineTS with Vela charts: <https://docs.luxalgo.com/developers/pinets/using-within-charts>
-
-The LLM index is <https://docs.luxalgo.com/llms.mdx/pinets/content.md>. The app
-uses `@luxalgo/vela-pinets` and `pinets`; the installed package is the baseline,
-but Vite and `tsconfig` resolve the addon to the local `../Vela-pinets/src`
-checkout (the `inline-worker:` import is bundled by the small plugin in
-`vite.config.ts`). PineTS runs scripts over closed bars in `scan.worker.ts`; do
-not reimplement Pine semantics in app code. PineTS and Vela-PineTS are
-AGPL-3.0: keep the attribution and do not copy their code into this repo
-without checking the license.
+across runs.
 
 ---
 

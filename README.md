@@ -10,7 +10,7 @@ TypeScript app; there is no private backend and no API key.
 - Base UI, Lucide, Sonner, Geist Sans / Geist Mono
 - `@luxalgo/vela` workspace; data comes from the venue sidecar
 - `@screener/pine-engine` (local MIT compiler and runtime) for Pine Script
-  indicators and the scanner; `pinets` survives only in the AI debug runner
+  indicators, the scanner, and the AI debug worker
 - CodeMirror 6 (`@uiw/react-codemirror`) with the local
   `@screener/pine-editor` Pine language
 - Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,
@@ -189,9 +189,7 @@ the same `build` string.
 ## Notes
 
 - Vela is Apache-2.0; its in-chart attribution mark stays enabled.
-- Vela PineTS and PineTS are AGPL-3.0. This app is intended for private use;
-  distributing or hosting it triggers AGPL obligations or requires a commercial
-  license.
+- The local Pine engine is MIT.
 - Indicators imported from the LuxAlgo Library keep their own licence header
   (usually CC BY-NC-SA 4.0) and are stored with it intact. Refresh the bundled
   catalog with `npm run library:catalog`.

@@ -476,7 +476,7 @@ export function AppHeader({
           Public market data from Binance, OKX, Bybit, Bitget, Hyperliquid, and
           Coinbase.
         </p>
-        <p>Vite + React + Vela + PineTS. No account, no trading.</p>
+        <p>Vite + React + Vela + a local Pine engine. No account, no trading.</p>
         <p className="font-mono text-[10px]">
           Version {BUILD_VERSION} · {windowApi ? 'Electron desktop build' : 'Browser build'}
         </p>

@@ -57,6 +57,29 @@ describe('outlineScript', () => {
     expect(outline.entries.some((entry) => entry.kind === 'function')).toBe(true);
     expect(outline.entries.some((entry) => entry.kind === 'security')).toBe(true);
     expect(outline.entries.some((entry) => entry.kind === 'array')).toBe(true);
+    // The AST adds calls the line patterns do not know about.
+    expect(outline.entries.some((entry) => entry.kind === 'plot')).toBe(true);
+  });
+
+  it('uses the parser for multi-line declarations the line scanner misses', () => {
+    const outline = outlineScript([
+      '//@version=6',
+      'indicator("x")',
+      'f(',
+      '  a,',
+      '  b) =>',
+      '    a + b',
+    ].join('\n'));
+    expect(outline.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ line: 3, kind: 'function', name: 'f' }),
+      ]),
+    );
+  });
+
+  it('falls back to the line scanner while the source does not compile', () => {
+    const outline = outlineScript('//@version=6\nindicator("x"\nplot(close)');
+    expect(outline.entries.some((entry) => entry.kind === 'declaration')).toBe(true);
   });
 
   it('caps the outline and flags it', () => {

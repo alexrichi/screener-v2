@@ -1093,11 +1093,15 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           const cell = ws?.active;
           if (!ws || !cell) return null;
           const range = cell.chart.getVisibleRange();
+          const pine = cell.instances.find((item) => item.id === 'screener-pine');
           return {
             symbol: cell.symbol,
             timeframe: cell.timeframe,
             layout: ws.layout.id,
             indicators: cell.chart.indicators().map((handle) => handle.title),
+            appliedPine: pine
+              ? { name: pine.handle?.title ?? 'Screener Pine', chars: pine.handle?.source?.length ?? 0 }
+              : null,
             cells: ws.cells().length,
             bars: chartBarCount(cell.chart),
             visible: range ? { from: range.from, to: range.to } : null,

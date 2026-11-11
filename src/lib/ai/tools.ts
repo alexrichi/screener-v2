@@ -23,7 +23,7 @@ export interface AiToolRuntime {
   /** Replace the editor buffer; the user can still undo and apply from the panel. */
   applyScript: (source: string) => void;
   chartContext: () => ChartContext | null;
-  runScript: (source: string) => Promise<ScriptRunReport>;
+  runScript: (source: string, options?: { bar?: number }) => Promise<ScriptRunReport>;
   /** Apply the editor buffer to the active chart in place, keeping its settings. */
   applyLive: () => Promise<LiveApplyResult>;
 }
@@ -51,20 +51,24 @@ export function createAppTools(runtime: AiToolRuntime) {
   return {
     get_chart_context: tool({
       description:
-        'Read the active chart: symbol, timeframe, layout, chart count, on-chart indicators and the visible window.',
+        'Read the active chart: symbol, timeframe, layout, chart count, on-chart indicators, the applied Pine-panel script (appliedPine) and the visible window. Use this to check what is actually on the chart; the editor buffer may differ.',
       inputSchema: z.object({}),
       execute: async () => runtime.chartContext() ?? { error: 'No chart is open' },
     }),
 
     get_script: tool({
       description:
-        'Read the open Pine script. Small scripts come whole; large ones come as an outline with line numbers so you can pull exact ranges with read_lines. Call this before editing.',
+        'Read the Pine editor buffer. This is not necessarily the script applied to the chart: check get_chart_context for appliedPine and the on-chart indicators before saying a script is running. Small scripts come whole; large ones come as an engine-AST outline with line numbers so you can pull exact ranges with read_lines. The outline includes declarations, functions, types, inputs, plots and request.security calls with their exact lines. Call this before editing.',
       inputSchema: z.object({}),
       execute: async () => {
         const source = runtime.getScript();
         const outline = outlineScript(source);
         const truncated = source.length > INLINE_LIMIT;
+        const chart = runtime.chartContext();
         return {
+          scope: 'editor',
+          appliedPine: chart?.appliedPine ?? null,
+          onChartIndicators: chart?.indicators ?? [],
           chars: source.length,
           lines: outline.lines,
           truncated,
@@ -156,14 +160,21 @@ export function createAppTools(runtime: AiToolRuntime) {
 
     run_script: tool({
       description:
-        'Run Pine twice and return both full results: on the active chart (the source of truth) and in a disposable worker over the same bars from the sidecar. The worker captures log.info/warning/error and is terminated on timeout, so it never blocks the UI. Compare the two when they disagree. This probe removes itself; it does not update the on-chart indicator.',
+        'Run Pine twice and return both full results: on the active chart (the source of truth) and in a disposable worker over the same sidecar bars. The worker uses the same engine, runs in isolation, captures log.info/warning/error lines, and is terminated on timeout, so it never blocks the UI. The worker also returns the top-level variables at the requested zero-based bar (or the last bar). Compare the two when they disagree. The probe removes itself; it does not update the on-chart indicator.',
       inputSchema: z.object({
         source: z
           .string()
           .optional()
           .describe('Pine source to test. Omit to run the script currently in the editor.'),
+        bar: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Zero-based bar for the worker variable snapshot. Omit for the last bar.'),
       }),
-      execute: async ({ source }) => runtime.runScript(source ?? runtime.getScript()),
+      execute: async ({ source, bar }) =>
+        runtime.runScript(source ?? runtime.getScript(), { bar }),
     }),
 
     apply_live: tool({

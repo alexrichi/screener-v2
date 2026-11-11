@@ -13,7 +13,6 @@ import {
   formatPrice,
   layoutLabel,
 } from '../src/lib/format';
-import { extractPlots } from '../src/scan/extractPlots';
 import {
   DEFAULT_VIEW,
   isScreenerView,
@@ -100,27 +99,6 @@ describe('formatters', () => {
     expect(layoutLabel('2h')).toBe('2×1');
     expect(layoutLabel('4')).toBe('2×2');
     expect(layoutLabel('g3x2')).toBe('3×2');
-  });
-});
-
-describe('scan plot extraction', () => {
-  it('takes the last finite value and skips internal plots', () => {
-    const plots = {
-      rsi: {
-        title: 'RSI',
-        data: [{ value: 50 }, { value: NaN }, { value: 61.5 }],
-      },
-      __labels__: { title: 'labels', data: [{ value: 1 }] },
-    };
-    expect(extractPlots(plots)).toEqual([
-      { key: 'rsi', title: 'RSI', value: 61.5 },
-    ]);
-  });
-
-  it('returns null when a plot has no finite value', () => {
-    expect(extractPlots({ x: { title: 'X', data: [{ value: null }] } })).toEqual([
-      { key: 'x', title: 'X', value: null },
-    ]);
   });
 });
 

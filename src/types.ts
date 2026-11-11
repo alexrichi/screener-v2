@@ -61,6 +61,8 @@ export interface ChartContext {
   timeframe: string;
   layout: string;
   indicators: string[];
+  /** The applied Pine-panel script, distinct from the editor buffer. */
+  appliedPine: { name: string; chars: number } | null;
   cells: number;
   /** Bars loaded in the active cell, including the forming bar. */
   bars: number;
@@ -68,7 +70,7 @@ export interface ChartContext {
   visible: { from: number; to: number } | null;
 }
 
-/** One debug evaluation of a Pine script, on the live chart or in the worker. */
+/** One debug evaluation of a Pine script, on the live chart or in the debug worker. */
 export interface ScriptRunSummary {
   ok: boolean;
   error: string | null;
@@ -93,12 +95,14 @@ export interface ScriptRunSummary {
   timeframe: string;
   /** `log.info` / `log.warning` / `log.error` lines, oldest first. Worker only. */
   logs: string[];
+  /** Zero-based bar whose worker variables were snapshotted. */
+  debugBar?: number;
 }
 
 /**
  * `run_script` runs the source twice: on the live chart and in a disposable
- * worker over sidecar bars. The chart is the truth; the worker adds logs and a
- * second engine path to compare against.
+ * worker over sidecar bars. The chart is the truth; the worker runs the same
+ * engine in isolation and adds a second result to compare against.
  */
 export interface ScriptRunReport {
   ok: boolean;
@@ -133,7 +137,7 @@ export interface ScanResult {
   /** Instrument identity: venue:kind:nativeId. */
   key: string;
   venue: VenueId;
-  /** Native venue ticker, used for display and PineTS. */
+  /** Native venue ticker, used for display. */
   symbol: string;
   plots: PlotValue[];
   error?: string;

@@ -32,7 +32,7 @@ export const AI_AGENTS: AiAgent[] = [
     hint: 'Writes and debugs Pine scripts on the chart',
     readOnly: false,
     instructions:
-      'Act as a Pine v6 developer inside PineTS. Read the script first, make the smallest change that satisfies the request, then call apply_live so the fix runs on the real chart and verify it with run_script when you need worker logs. Report errors verbatim instead of guessing.',
+      'Act as a Pine v6 developer for the chart engine. get_script reads the editor buffer, which may not be on the chart; use get_chart_context (appliedPine and indicators) for what is actually running. For large files get_script returns a compiler-AST outline with exact lines, so use read_lines for the region you need. Make the smallest change that satisfies the request, then call apply_live so the fix runs on the real chart. Use run_script with a zero-based bar to see the worker top-level variables at that bar and to compare chart vs worker logs. Report errors verbatim instead of guessing.',
   },
 ];
 
