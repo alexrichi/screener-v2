@@ -18,8 +18,27 @@ export interface LiveApplyResult {
   error?: string;
 }
 
+export type DraftConflict = 'save' | 'discard' | 'cancel';
+
+export interface NewScriptResult {
+  created: boolean;
+  needsDecision?: boolean;
+  cancelled?: boolean;
+  chars?: number;
+  draft?: { title: string; chars: number; saved: boolean };
+  options?: DraftConflict[];
+  hint?: string;
+  error?: string;
+}
+
 export interface AiToolRuntime {
   getScript: () => string;
+  /** Start a fresh buffer, first resolving an unsaved draft with the user. */
+  newScript: (input: {
+    source: string;
+    title?: string;
+    conflict?: DraftConflict;
+  }) => NewScriptResult;
   /** Replace the editor buffer; the user can still undo and apply from the panel. */
   applyScript: (source: string) => void;
   chartContext: () => ChartContext | null;
@@ -38,6 +57,7 @@ export function toolsForAgent<T extends Record<string, unknown>>(tools: T, readO
     apply_live: _applyLive,
     apply_script: _applyScript,
     edit_code: _editCode,
+    new_script: _newScript,
     ...rest
   } = tools;
   return rest;
@@ -140,9 +160,29 @@ export function createAppTools(runtime: AiToolRuntime) {
       },
     }),
 
+    new_script: tool({
+      description:
+        'Start a NEW Pine indicator or strategy in a fresh editor buffer. Use this instead of apply_script whenever the user asks for a new script. If the editor holds unsaved changes this returns needsDecision with draft {title, chars, saved} and options save/discard/cancel: ask the user which one they want, then call new_script again with the same source and conflict set to their choice. Save keeps the draft in the Library, discard drops it, cancel aborts. After created=true the new source is in the buffer; apply it with apply_live.',
+      inputSchema: z.object({
+        source: z.string().min(1).describe('Complete Pine v6 source for the new script.'),
+        title: z
+          .string()
+          .optional()
+          .describe('Short title if the user named the script; otherwise the declaration supplies it.'),
+        conflict: z
+          .enum(['save', 'discard', 'cancel'])
+          .optional()
+          .describe(
+            'How to handle the unsaved draft. Omit on the first call; pass the user choice on the next one.',
+          ),
+      }),
+      execute: async ({ source, title, conflict }) =>
+        runtime.newScript({ source, title, conflict }),
+    }),
+
     apply_script: tool({
       description:
-        'Replace the whole editor buffer with new Pine source. Only for new scripts or short files; large scripts must be patched with edit_code.',
+        'Replace the whole editor buffer with new Pine source. Use only when the user asked to rewrite the current script; to start a new indicator or strategy call new_script so an unsaved draft is never overwritten. Large scripts must be patched with edit_code.',
       inputSchema: z.object({
         source: z.string().min(1).describe('Complete Pine v6 script source.'),
       }),

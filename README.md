@@ -65,7 +65,10 @@ capture that attaches the active chart image. A run's activity is folded into a
 `Used N …` line: expand it for the Thoughts and tool cards, and expand those
 further for details. The final answer stays visible. The composer also picks the
 model and reasoning level; the agent mode (Assistant, Chart analyst or Pine
-developer) sits just below it and changes the system prompt and tools.
+developer) sits just below it and changes the system prompt and tools. The
+writing agents create a new indicator or strategy in a fresh buffer and apply it
+to the chart; when the editor holds an unsaved draft, they ask whether to save,
+discard or cancel it before replacing the buffer.
 
 Environment variables still work and win over the stored settings:
 

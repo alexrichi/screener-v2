@@ -318,9 +318,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   renderer (`AssistantUiThread`) because the tools need the live editor and
   chart; the sidecar only proxies the model call with `AI_BASE_URL`, `AI_MODEL`,
   `AI_TRANSCRIBE_MODEL` and `AI_API_KEY`. Tools are `get_chart_context`,
-  `get_script`, `read_lines`, `edit_code`, `apply_script`, `run_script` and
-  `apply_live`; read-only agents drop `edit_code`, `apply_script` and
-  `apply_live`. Attached text files are
+  `get_script`, `read_lines`, `edit_code`, `new_script`, `apply_script`,
+  `run_script` and `apply_live`; read-only agents drop `edit_code`,
+  `new_script`, `apply_script` and `apply_live`. Attached text files are
   folded into the prompt; images ride as image parts of the user message.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
@@ -463,7 +463,12 @@ key keeps the stored one, and replacing a saved key requires `replaceKey: true`,
 so a stray config POST cannot wipe it. Never move it into `VITE_*` env,
 localStorage, or the bundle. `AI_BASE_URL` /
 `AI_MODEL` / `AI_API_KEY` in the environment override the file, and the settings
-route refuses to edit while they are set. `apply_script`
+route refuses to edit while they are set. `new_script` starts a new indicator or
+strategy in a fresh buffer: it reports `needsDecision` with the draft's title and
+size when the editor holds unsaved changes, and only creates after the user picks
+`save`, `discard` or `cancel` and the model calls it again with `conflict`; a
+saved draft updates its Library item or becomes a new one, so a new script never
+overwrites someone else's draft. `apply_script`
 only rewrites the editor buffer (undo works, nothing runs); `apply_live` applies
 that buffer to the active chart through the same in-place path as the editor's
 Apply button and returns the live `{ ok, error }`; `run_script` runs the same
@@ -900,8 +905,8 @@ Useful browser probes:
   carries both images and the file text, and reload keeps the text but not the
   base64. With a fake media device, dictation fills the composer from the
   sidecar transcription; the mic is hidden without a transcription model.
-  Switching to `Chart analyst` sends four tools (no `edit_code`, `apply_script`
-  or `apply_live`); the selection and the chosen agent survive reload.
+  Switching to `Chart analyst` sends four tools (no `edit_code`, `new_script`,
+  `apply_script` or `apply_live`); the selection and the chosen agent survive reload.
 - A script over 40k chars comes back from `get_script` as
   `{ chars, lines, truncated: true, source: null, outline }`; `read_lines(1, 5)`
   returns exactly those raw lines and the total; `edit_code` with one anchor

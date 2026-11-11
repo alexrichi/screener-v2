@@ -108,7 +108,8 @@ import { DEFAULT_SCRIPT } from './scripts/presets';
 import { AI_AGENTS, agentById, type AiAgentId } from './lib/ai/agents';
 import { runScriptInWorker } from './lib/ai/debugRun';
 import { fetchAiStatus, type AiStatus } from './lib/ai/model';
-import { createAppTools, toolsForAgent } from './lib/ai/tools';
+import { createAppTools, toolsForAgent, type NewScriptResult } from './lib/ai/tools';
+import { isDraftDirty, NEW_SCRIPT } from './lib/pineDraft';
 import { useScanner } from './scan/useScanner';
 import { useTheme } from './ui/theme';
 import { Button, Input } from './ui/primitives';
@@ -231,12 +232,6 @@ function layoutFileName(name: string): string {
     .replace(/^-+|-+$/g, '');
   return `layout-${slug || 'workspace'}.json`;
 }
-
-const NEW_SCRIPT = `//@version=6
-indicator("My indicator")
-
-plot(close)
-`;
 
 function suggestedName(source: string, fallback = 'My indicator'): string {
   const match = /(?:indicator|strategy|library)\s*\(\s*["']([^"']+)["']/.exec(source);
@@ -462,7 +457,7 @@ export default function App() {
     : null;
   const currentSaved =
     library.items.find((item) => item.id === currentSavedId) ?? null;
-  const dirty = currentSaved ? currentSaved.source !== script : false;
+  const dirty = isDraftDirty(script, currentSaved?.source ?? null);
 
   useEffect(() => {
     if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) return;
@@ -1567,6 +1562,10 @@ export default function App() {
 
   const scriptRef = useRef(script);
   scriptRef.current = script;
+  const savedIdRef = useRef(currentSavedId);
+  savedIdRef.current = currentSavedId;
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
 
   const refreshAiStatus = useCallback(() => {
@@ -1606,10 +1605,79 @@ export default function App() {
   );
   const aiAgent = agentById(aiAgentId);
 
+  const newScript = useCallback(
+    (input: {
+      source: string;
+      title?: string;
+      conflict?: 'save' | 'discard' | 'cancel';
+    }): NewScriptResult => {
+      const saved = libraryRef.current.items.find((item) => item.id === savedIdRef.current) ?? null;
+      const current = scriptRef.current;
+      const dirtyNow = isDraftDirty(current, saved?.source ?? null);
+      if (dirtyNow && !input.conflict) {
+        return {
+          created: false,
+          needsDecision: true,
+          draft: {
+            title: saved?.name ?? suggestedName(current, 'Draft'),
+            chars: current.length,
+            saved: Boolean(saved),
+          },
+          options: ['save', 'discard', 'cancel'],
+          hint: 'The editor holds unsaved changes. Ask the user whether to save that draft to the Library, discard it or cancel, then call new_script again with the same source and conflict set to their choice.',
+        };
+      }
+      if (dirtyNow && input.conflict === 'cancel') {
+        return { created: false, cancelled: true };
+      }
+      if (dirtyNow && input.conflict === 'save') {
+        if (!current.trim()) return { created: false, error: 'The current draft is empty' };
+        if (saved) {
+          setLibrary((prev) => ({
+            version: 1,
+            items: prev.items.map((item) =>
+              item.id === saved.id
+                ? {
+                    ...item,
+                    source: current,
+                    updatedAt: Date.now(),
+                    version: item.version + 1,
+                  }
+                : item,
+            ),
+          }));
+          toast.success(`Saved ${saved.name}`);
+        } else {
+          const existing = libraryRef.current.items.find((item) => item.source === current);
+          if (existing) {
+            toast.success(`Saved ${existing.name}`);
+          } else {
+            const item = createIndicator(
+              uniqueName(libraryRef.current.items, suggestedName(current, 'My indicator')),
+              current,
+            );
+            setLibrary((prev) => ({ version: 1, items: [...prev.items, item] }));
+            toast.success(`Saved ${item.name}`);
+          }
+        }
+      }
+      // The tool loop can call the next tool before React re-renders, so the
+      // mirrors must update in the same tick as the state.
+      scriptRef.current = input.source;
+      savedIdRef.current = '';
+      setScript(input.source);
+      setCurrentSavedId('');
+      openVelaPanel('pine');
+      return { created: true, chars: input.source.length };
+    },
+    [setCurrentSavedId, setLibrary, setScript],
+  );
+
   const aiTools = useMemo(
     () =>
       createAppTools({
         getScript: () => scriptRef.current,
+        newScript,
         applyScript: (source) => {
           // The tool loop can call the next tool before React re-renders, so the
           // mirror must update in the same tick as the state.
@@ -1647,7 +1715,7 @@ export default function App() {
           return { ok: true, charts: report.count };
         },
       }),
-    [activeWorkspace, applyScriptToChart, setScript],
+    [activeWorkspace, applyScriptToChart, newScript, setScript],
   );
 
   // Read-only agents never see the editing tools, so the model cannot rewrite
@@ -1664,7 +1732,7 @@ export default function App() {
       'You are the built-in assistant of Screener v2, a multi-venue crypto screener.',
       'Charts run Pine v6 through the app engine. The right dock holds the Screener, Pine and Library panels; this sidebar sits on the left.',
       'Use the tools instead of guessing: get_script before editing, get_chart_context for the chart setup, apply_live after an edit, run_script to debug.',
-      'When the user asks for a Pine indicator or strategy, the deliverable is the applied chart, not a chat code block: create it with apply_script or edit_code, call apply_live, then verify with run_script. A read-only agent must ask the user to switch to Pine developer instead of pasting code.',
+      'When the user asks for a Pine indicator or strategy, the deliverable is the applied chart, not a chat code block: start a new script with new_script, call apply_live, then verify with run_script. Edit an existing script with edit_code. If new_script returns needsDecision, ask the user whether to save, discard or cancel the unsaved draft and repeat the call with conflict set to their answer. A read-only agent must ask the user to switch to Pine developer instead of pasting code.',
       'Keep interim notes short: they show as collapsed Thoughts. Put every finding, error and caveat in the final answer; tool cards show the work.',
       'Large scripts are not sent whole. get_script returns an outline with line numbers, then use read_lines(from, to) for the exact region. Apply fixes with edit_code patches; never re-emit the whole file and do not use apply_script on a large script.',
       'When a chart image is attached to the message you are looking at the active cell; read it before judging price action.',
@@ -1673,7 +1741,7 @@ export default function App() {
       'run_script returns two full runs: live (the active chart, including the forming bar) and worker (sidecar bars in a disposable worker running the same engine, with log.info/warning/error lines). The live result is the truth; when worker disagrees, say exactly that and debug the live path. Use the returned method, stack, logs, warnings, plots, vars, bars and max_bars_back; quote the failing function or line instead of guessing. The probe removes itself, so use apply_live to keep the fix on the chart.',
       'Do not paste raw tool JSON into an answer: summarize the result in one or two sentences.',
       'Do not claim a script works unless apply_live or run_script returned ok on the live chart. Retry at most three times.',
-      'apply_script replaces the whole editor buffer only; it never applies or runs the script on the chart.',
+      'apply_script replaces the whole editor buffer only; it never applies or runs the script on the chart. For a new script use new_script instead, so an unsaved draft is not overwritten.',
       'When you edit, change only the lines you need and keep the original licence header and comments.',
       'Never invent prices, indicator values or log lines: call a tool or say what you do not know.',
       'Reply in the language the user writes in. Keep answers short and concrete.',
