@@ -33,6 +33,10 @@ const velaSrc = path.resolve(root, '../Vela/src');
 const velaUiSrc = path.resolve(root, '../Vela/packages/vela-ui/src');
 const pineEngineSrc = path.resolve(root, '../pine-engine/src/index.ts');
 const pineEditorSrc = path.resolve(root, '../pine-editor/src/index.ts');
+const pineHighlighterCore = path.resolve(
+  root,
+  '../pine-script-syntax-highlighter/src/extension/core',
+);
 
 /** Resolve the Vela UI kit from its workspace source, as Vela's own playground does. */
 function velaUiSource(): import('vite').Plugin {
@@ -58,20 +62,9 @@ export default defineConfig({
   },
   plugins: [velaUiSource(), react(), tailwindcss()],
   resolve: {
-    // The Pine editor and the local Vela checkout both pull CodeMirror; keep one
-    // copy or production bundles two @codemirror/state instances and fails.
-    dedupe: [
-      'react',
-      'react-dom',
-      '@codemirror/autocomplete',
-      '@codemirror/commands',
-      '@codemirror/language',
-      '@codemirror/lint',
-      '@codemirror/search',
-      '@codemirror/state',
-      '@codemirror/view',
-      '@lezer/highlight',
-    ],
+    // Vela and the Pine editor pull React from different workspace paths; keep
+    // one copy or hooks break in development.
+    dedupe: ['react', 'react-dom'],
     alias: [
       // shadcn/assistant-ui registry components use the `@/` project alias.
       { find: /^@\//, replacement: `${root.replace(/\\/g, '/')}/src/` },
@@ -88,8 +81,37 @@ export default defineConfig({
       },
       // Local Pine engine: edit the transpiler runtime and see it live.
       { find: /^@screener\/pine-engine$/, replacement: pineEngineSrc },
-      // Local Pine editor: CodeMirror language support without the addon.
+      // Local Pine editor: editor-agnostic Pine language data.
       { find: /^@screener\/pine-editor$/, replacement: pineEditorSrc },
+      // Local Pine highlighter checkout: formatter, symbols and semantic tokens.
+      {
+        find: /^@pine-highlighter\/formatter$/,
+        replacement: path.join(pineHighlighterCore, 'formatter.ts'),
+      },
+      {
+        find: /^@pine-highlighter\/document-model$/,
+        replacement: path.join(pineHighlighterCore, 'document-model.ts'),
+      },
+      {
+        find: /^@pine-highlighter\/semantic$/,
+        replacement: path.join(pineHighlighterCore, 'semantic.ts'),
+      },
+      {
+        find: /^@pine-highlighter\/call-resolver$/,
+        replacement: path.join(pineHighlighterCore, 'call-resolver.ts'),
+      },
+      {
+        find: /^@pine-highlighter\/tokenizer$/,
+        replacement: path.join(pineHighlighterCore, 'tokenizer.ts'),
+      },
+      {
+        find: /^@pine-highlighter\/reference$/,
+        replacement: path.join(pineHighlighterCore, 'reference.ts'),
+      },
+      {
+        find: /^@pine-highlighter\/symbols$/,
+        replacement: path.join(pineHighlighterCore, 'symbols.ts'),
+      },
     ],
   },
   optimizeDeps: {
@@ -103,6 +125,7 @@ export default defineConfig({
         path.resolve(root, '../Vela'),
         path.resolve(root, '../pine-engine'),
         path.resolve(root, '../pine-editor'),
+        path.resolve(root, '../pine-script-syntax-highlighter'),
       ],
     },
   },

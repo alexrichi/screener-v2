@@ -105,9 +105,9 @@ src/
     VelaWorkspaceHost.tsx         Vela workspace per tab; cells, active-cell sync, Pine apply,
                                   source-code legend action
     ScreenerTable.tsx             market table, filters, favorites, column actions
-    PinePanel.tsx                 script editor, saved scripts, apply and scan controls
-    PineEditor.tsx                CodeMirror 6 wrapper; language and lint come from
-                                  `@screener/pine-editor`
+    PinePanel.tsx                 script editor with tabs, saved scripts, apply and scan controls
+    PineEditor.tsx                Monaco wrapper, lazy-loaded; Pine tokens, completions
+                                  and lint come from `@screener/pine-editor`
     LibraryPanel.tsx              saved indicator list, import/export and actions
     SettingsDialog.tsx            universe and scan defaults
   hooks/
@@ -131,6 +131,11 @@ src/
     luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
+    monaco/colors.ts              computed CSS color normalization for Monaco themes
+    monaco/markers.ts             lint finding to editor marker range mapping
+    monaco/pine.ts                Monaco worker, Pine tokens, completions, lint and theme
+    monaco/pineFeatures.ts        hover, definition, formatter, signature help, semantic tokens and outline
+    pineTabs.ts                   Pine editor tab model, legacy migration and validators
     pineVela/engine.ts            Vela ScriptingEngine backed by pine-engine
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
@@ -293,6 +298,13 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   by `instrument.key` plus progress with the current venue. A venue failure or
   rate limit does not stop the remaining venues. The main thread only merges
   results and derives plot columns.
+- The Pine editor is tabbed. Tabs live at `screener.pine.tabs.v1` as
+  `{ id, script, savedId }`; `screener.pine.activeTab.v1` selects one, and the
+  legacy `screener.pine.script` / `screener.pine.savedId` mirror the active tab
+  for backups and the smoke run. The old single buffer becomes the first tab on
+  first load. `New tab` adds a Pine editor tab, not a chart workspace tab;
+  closing a dirty tab confirms. The AI `new_script`, save and discard flows and
+  the scan all target the active tab.
 - The applied Pine script is stored on the tab as `pineScript` / `pineAll`, with its
   input values in `pineInputs` and declaration-property overrides in `pineProps`
   (both kept current by `indicator:inputs`, which Vela emits for input and prop
@@ -881,8 +893,21 @@ Useful browser probes:
   foreign hourly bars; the CRT Engine SMT labels (`smt ETHUSDT`) appear on a
   BTC chart with the default auto pair. A symbol the venue cannot serve returns
   `na` and reports one warning instead of drawing a flat line.
-- The Pine editor renders a non-empty `.cm-editor` with a gutter, highlighted
-  tokens, and the resolved editor background from the active theme.
+- The Pine editor renders a non-empty `.monaco-editor` with line numbers,
+  highlighted tokens, lint squiggles, and the resolved editor background from
+  the active theme; right-click offers Go to Definition, Change All Occurrences,
+  Discard all changes, Cut/Copy/Paste, Find/Replace, New tab, Open script, Save
+  script, Toggle console and Command Palette. Go to Definition resolves user
+  symbols; Discard restores the saved Library source after confirmation; New tab
+  adds a Pine editor tab, not a chart tab; Open script opens the Library panel;
+  Toggle console toggles the AI sidebar. `Ctrl/Cmd+S` saves, `Ctrl/Cmd+Enter` runs
+  the scan, `Ctrl/Cmd+F12` goes to a definition, `Shift+Alt+F` formats,
+  `Ctrl+Shift+O` lists the outline, signature help appears on `(` and user
+  parameters get semantic colors; hover on a built-in function shows its v6
+  description, parameters and returns, and hover on an object type or namespace
+  shows the type or member docs. Switching between Pine tabs preserves each
+  buffer; the tab strip and active tab survive a reload, and closing a dirty tab
+  confirms first.
 - The AI toggle sits at the top of the left drawing toolbar above `Cursor`;
   clicking it opens the sidebar (the chart host refills history), flips to
   `Hide AI` with the active highlight, and closing restores the chart. The width
@@ -1031,12 +1056,29 @@ involved. Edit the engine there and the app picks it up without a rebuild. The
 engine owns the compile-once/run-many API the scan worker needs; the app keeps
 only the venue fetching and the table mapping.
 
-`@screener/pine-editor` (`../pine-editor`) owns the editor's Pine language:
-a stream tokenizer, a CSS-variable theme, completions from the MIT
-`pinescript-v6-validator` signature table, and a linter that runs that
-validator. `PineEditor.tsx` keeps only the CodeMirror wiring and keymaps. The
-validator and its 475 signatures load through a dynamic import on first use, so
-neither is in the initial bundle.
+`@screener/pine-editor` (`../pine-editor`) owns the editor-agnostic Pine
+language data: a line tokenizer, completions from the MIT
+`pinescript-v6-validator` signature table, and the local v6 rules plus that
+validator's findings. The tokenizer handles triple-quoted strings, `//@`
+annotations and the v6 keyword and type sets. `PineEditor.tsx` lazy-loads Monaco and maps the data onto
+it: a tokens provider, language configuration, completion provider, model
+markers and the `--pine-*` theme. `lib/monaco/pine.ts` owns the worker setup and
+providers, `markers.ts` clamps findings to the document, and `colors.ts`
+expands Chromium's three-digit computed colors because Monaco token colors need
+six or eight digits. `syncContextViewTheme` copies the menu's `--vscode-*`
+variables from the editor root onto its container: Monaco renders the context
+menu in a shadow root that is a sibling of `.monaco-editor`, so without the copy
+the menu is transparent. `pineFeatures.ts` maps the editor-agnostic core of the
+local MIT `../pine-script-syntax-highlighter` checkout (aliased as
+`@pine-highlighter/*`) onto Monaco: document formatting, signature help,
+semantic tokens for user symbols, definition lookup and the document outline. Hover uses the
+reference data from the same checkout, loaded in its own 1.25 MB chunk on the
+first hover: hovering a function shows its v6 description, parameters and
+returns, a bare object name such as `array` or `label` shows the type docs, and a
+namespace such as `syminfo` lists its members. Only its `core/` directory is
+imported; its VS Code providers are not. The validator and its 475
+signatures load through a dynamic import on first use, so neither is in the
+initial bundle.
 
 `lib/pineVela/engine.ts` is the chart engine: `PineEngine` implements Vela's
 `ScriptingEngine` port over `pine-engine`, registered as

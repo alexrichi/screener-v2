@@ -82,8 +82,8 @@
   --pine-active-line: rgba(255, 255, 255, 0.03);
   --pine-selection: rgba(70, 95, 255, 0.28);
   --pine-caret: #465fff;
-  --pine-tooltip-bg: #0f172a;
-  --pine-tooltip-border: #1f2937;
+  --pine-tooltip-bg: #1f2937;
+  --pine-tooltip-border: #475569;
   --pine-keyword: #7592ff;
   --pine-atom: #c2d6ff;
   --pine-variable: #f3f4f6;
@@ -126,8 +126,8 @@ html.light {
   --pine-active-line: rgba(15, 23, 42, 0.035);
   --pine-selection: rgba(70, 95, 255, 0.18);
   --pine-caret: #465fff;
-  --pine-tooltip-bg: #ffffff;
-  --pine-tooltip-border: #e2e8f0;
+  --pine-tooltip-bg: #f3f4f6;
+  --pine-tooltip-border: #94a3b8;
   --pine-keyword: #2b45e0;
   --pine-atom: #1a33b8;
   --pine-variable: #0f172a;
@@ -496,6 +496,13 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
     animation: none;
     border-right-color: currentColor;
   }
+}
+
+/* Monaco's hover and suggest popups need a shadow to separate them from the editor. */
+.monaco-resizable-hover,
+.suggest-widget,
+.parameter-hints-widget {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28) !important;
 }
 
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));

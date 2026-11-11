@@ -11,8 +11,10 @@ TypeScript app; there is no private backend and no API key.
 - `@luxalgo/vela` workspace; data comes from the venue sidecar
 - `@screener/pine-engine` (local MIT compiler and runtime) for Pine Script
   indicators, the scanner, and the AI debug worker
-- CodeMirror 6 (`@uiw/react-codemirror`) with the local
-  `@screener/pine-editor` Pine language
+- Monaco Editor (`monaco-editor`) with the local
+  `@screener/pine-editor` Pine language, loaded lazily with the editor chunk
+- The local MIT `pine-script-syntax-highlighter` checkout for hover docs,
+  formatter, signature help, semantic tokens and the outline
 - Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,
   Hyperliquid, and Coinbase through their public APIs, normalized by
   `VenueAdapter`
@@ -137,9 +139,11 @@ the same `build` string.
   into the active list; export every list as JSON. Favorites stay visible in the
   `Favorites` tab even when a symbol falls outside `topN` or the volume filter.
   The active list name labels the favorites button in the screener toolbar.
-- Pine editor with presets and CodeMirror highlighting, completions, folding,
-  search, and lint. Apply a script to the active chart or all charts in the
-  workspace; an on-chart script updates in place and keeps its inputs and
+- Pine editor with tabs, presets and Monaco highlighting, completions, signature
+  help, folding, search, semantic colors, outline, formatting, rich hover docs,
+  context actions (Go to Definition, Discard, New tab, Open script, Save,
+  Toggle console) and lint. Apply a script to the active chart or all charts in
+  the workspace; an on-chart script updates in place and keeps its inputs and
   settings. Scripts can draw plots, hlines, fills, markers, lines, boxes,
   labels, tables and candles, and recolor chart candles with `barcolor`.
   `request.security` reads higher timeframes, lower intrabar data, and foreign
@@ -192,7 +196,9 @@ the same `build` string.
 ## Notes
 
 - Vela is Apache-2.0; its in-chart attribution mark stays enabled.
-- The local Pine engine is MIT.
+- Monaco Editor and the local Pine engine and editor packages are MIT. The
+  formatter, signature help, semantic tokens and outline use the MIT
+  `pine-script-syntax-highlighter` checkout.
 - Indicators imported from the LuxAlgo Library keep their own licence header
   (usually CC BY-NC-SA 4.0) and are stored with it intact. Refresh the bundled
   catalog with `npm run library:catalog`.

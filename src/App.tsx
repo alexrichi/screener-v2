@@ -110,6 +110,14 @@ import { runScriptInWorker } from './lib/ai/debugRun';
 import { fetchAiStatus, type AiStatus } from './lib/ai/model';
 import { createAppTools, toolsForAgent, type NewScriptResult } from './lib/ai/tools';
 import { isDraftDirty, NEW_SCRIPT } from './lib/pineDraft';
+import {
+  isPineTabs,
+  makePineTab,
+  PINE_ACTIVE_TAB_KEY,
+  PINE_TABS_KEY,
+  readLegacyPineTab,
+  type PineTab,
+} from './lib/pineTabs';
 import { useScanner } from './scan/useScanner';
 import { useTheme } from './ui/theme';
 import { Button, Input } from './ui/primitives';
@@ -316,9 +324,14 @@ export default function App() {
     isFavoritesState,
   );
   const activeFavorites = activeFavoriteList(favoritesState);
-  const [script, setScript] = usePersistedState<string>(
-    'screener.pine.script',
-    DEFAULT_SCRIPT,
+  const [pineTabs, setPineTabs] = usePersistedState<PineTab[]>(
+    PINE_TABS_KEY,
+    [readLegacyPineTab()],
+    isPineTabs,
+  );
+  const [activePineTabId, setActivePineTabId] = usePersistedState<string>(
+    PINE_ACTIVE_TAB_KEY,
+    'main',
     isString,
   );
   const [library, setLibrary] = usePersistedState<IndicatorLibrary>(
@@ -326,11 +339,46 @@ export default function App() {
     EMPTY_LIBRARY,
     isIndicatorLibrary,
   );
-  const [currentSavedId, setCurrentSavedId] = usePersistedState<string>(
-    'screener.pine.savedId',
-    '',
-    isString,
+  const activePineTab =
+    pineTabs.find((tab) => tab.id === activePineTabId) ?? pineTabs[0] ?? null;
+  const script = activePineTab?.script ?? DEFAULT_SCRIPT;
+  const currentSavedId = activePineTab?.savedId ?? '';
+  const setScript = useCallback(
+    (next: string) => {
+      setPineTabs((prev) => {
+        const active = prev.find((tab) => tab.id === activePineTabId) ?? prev[0];
+        if (!active) return prev;
+        return prev.map((tab) => (tab.id === active.id ? { ...tab, script: next } : tab));
+      });
+    },
+    [activePineTabId, setPineTabs],
   );
+  const setCurrentSavedId = useCallback(
+    (next: string) => {
+      setPineTabs((prev) => {
+        const active = prev.find((tab) => tab.id === activePineTabId) ?? prev[0];
+        if (!active) return prev;
+        return prev.map((tab) => (tab.id === active.id ? { ...tab, savedId: next } : tab));
+      });
+    },
+    [activePineTabId, setPineTabs],
+  );
+
+  useEffect(() => {
+    try {
+      // Keep the old single-buffer keys in sync for backups and the smoke run.
+      localStorage.setItem('screener.pine.script', JSON.stringify(script));
+      localStorage.setItem('screener.pine.savedId', JSON.stringify(currentSavedId));
+    } catch {
+      /* storage can be full; the tabs keep the session state */
+    }
+  }, [script, currentSavedId]);
+
+  useEffect(() => {
+    if (pineTabs.some((tab) => tab.id === activePineTabId)) return;
+    const first = pineTabs[0]?.id;
+    if (first) setActivePineTabId(first);
+  }, [activePineTabId, pineTabs, setActivePineTabId]);
   const [saveDialog, setSaveDialog] = useState<{
     mode: 'saveAs' | 'rename';
     id?: string;
@@ -458,6 +506,18 @@ export default function App() {
   const currentSaved =
     library.items.find((item) => item.id === currentSavedId) ?? null;
   const dirty = isDraftDirty(script, currentSaved?.source ?? null);
+  const pineTabItems = useMemo(
+    () =>
+      pineTabs.map((tab) => {
+        const saved = library.items.find((item) => item.id === tab.savedId) ?? null;
+        return {
+          id: tab.id,
+          label: saved?.name ?? suggestedName(tab.script, 'Draft'),
+          dirty: isDraftDirty(tab.script, saved?.source ?? null),
+        };
+      }),
+    [library.items, pineTabs],
+  );
 
   useEffect(() => {
     if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) return;
@@ -761,6 +821,10 @@ export default function App() {
     },
     [activeTab?.timeframe, setActiveTabId, setTabs, settings.defaultLayout],
   );
+
+  const openScriptLibrary = useCallback(() => {
+    openVelaPanel('library');
+  }, []);
 
   const closeTab = useCallback(
     (id: string) => {
@@ -1315,6 +1379,20 @@ export default function App() {
     openSaveAs(script);
   }, [currentSaved, openSaveAs, script, setLibrary]);
 
+  const discardChanges = useCallback(() => {
+    if (!currentSaved) {
+      toast.error('No saved version to restore');
+      return;
+    }
+    if (currentSaved.source === script) {
+      toast.info('No changes to discard');
+      return;
+    }
+    if (!window.confirm(`Discard changes to "${currentSaved.name}"?`)) return;
+    setScript(currentSaved.source);
+    toast.success(`Restored ${currentSaved.name}`);
+  }, [currentSaved, script, setScript]);
+
   const commitSaveDialog = useCallback(() => {
     if (!saveDialog) return;
     const name = saveDialog.name.trim();
@@ -1393,12 +1471,40 @@ export default function App() {
     [dirty, setCurrentSavedId, setScript],
   );
 
-  const newDraft = useCallback(() => {
-    if (dirty && !window.confirm('Discard unsaved changes?')) return;
-    setScript(NEW_SCRIPT);
-    setCurrentSavedId('');
+  const addPineTab = useCallback(() => {
+    const tab = makePineTab(NEW_SCRIPT);
+    setPineTabs((prev) => [...prev, tab]);
+    setActivePineTabId(tab.id);
     openVelaPanel('pine');
-  }, [dirty, setCurrentSavedId, setScript]);
+  }, [openVelaPanel, setActivePineTabId, setPineTabs]);
+
+  const closePineTab = useCallback(
+    (id: string) => {
+      const index = pineTabs.findIndex((tab) => tab.id === id);
+      if (index === -1) return;
+      const tab = pineTabs[index]!;
+      const saved = library.items.find((item) => item.id === tab.savedId) ?? null;
+      if (
+        isDraftDirty(tab.script, saved?.source ?? null) &&
+        !window.confirm('Discard unsaved changes in this tab?')
+      ) {
+        return;
+      }
+      const next = pineTabs.filter((item) => item.id !== id);
+      if (next.length === 0) {
+        const fresh = makePineTab(NEW_SCRIPT);
+        setPineTabs([fresh]);
+        setActivePineTabId(fresh.id);
+        return;
+      }
+      setPineTabs(next);
+      if (id === activePineTabId) {
+        const nextActive = next[Math.min(index, next.length - 1)]!;
+        setActivePineTabId(nextActive.id);
+      }
+    },
+    [activePineTabId, library.items, pineTabs, setActivePineTabId, setPineTabs],
+  );
 
   const renameIndicator = useCallback((item: SavedIndicator) => {
     setSaveDialog({
@@ -1913,7 +2019,15 @@ export default function App() {
                 onSelectSaved={selectSaved}
                 onUsePreset={usePreset}
                 onSave={saveCurrent}
-                onNew={newDraft}
+                onNew={addPineTab}
+                onDiscardChanges={discardChanges}
+                onNewTab={addPineTab}
+                onOpenScript={openScriptLibrary}
+                onToggleConsole={toggleAi}
+                pineTabs={pineTabItems}
+                activePineTabId={activePineTabId}
+                onSelectPineTab={setActivePineTabId}
+                onClosePineTab={closePineTab}
                 scanTimeframe={settings.scanTimeframe}
                 onScanTimeframeChange={(scanTimeframe) =>
                   setSettings((prev) => ({ ...prev, scanTimeframe }))
@@ -1941,7 +2055,7 @@ export default function App() {
                 onQueryChange={setLibraryQuery}
                 revealId={libraryReveal?.id ?? null}
                 revealNonce={libraryReveal?.nonce ?? 0}
-                onNew={newDraft}
+                onNew={addPineTab}
                 onEdit={(item) => selectSaved(item.id)}
                 onAdd={addSavedToChart}
                 onScan={scanSaved}

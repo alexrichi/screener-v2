@@ -17,7 +17,8 @@
       "@luxalgo/vela/ui": ["../Vela/src/ui/index.ts"],
       "@luxalgo/vela/providers/binance": ["../Vela/src/data/providers/binance/index.ts"],
       "@screener/pine-engine": ["../pine-engine/src/index.ts"],
-      "@screener/pine-editor": ["../pine-editor/src/index.ts"]
+      "@screener/pine-editor": ["../pine-editor/src/index.ts"],
+      "@pine-highlighter/*": ["../pine-script-syntax-highlighter/src/extension/core/*"]
     },
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,

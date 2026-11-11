@@ -2,7 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   type ReactNode,
 } from 'react';
@@ -24,7 +24,7 @@ function isThemeMode(value: unknown): value is ThemeMode {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = usePersistedState<ThemeMode>('screener.theme', 'dark', isThemeMode);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
     root.classList.toggle('light', theme === 'light');

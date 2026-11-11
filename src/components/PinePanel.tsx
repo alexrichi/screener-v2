@@ -1,19 +1,25 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import {
   FilePlus2,
   Layers,
   Play,
+  Plus,
   Save,
   ScanSearch,
   Square,
   Upload,
+  X,
 } from 'lucide-react';
 import type { PlotColumn, ScanProgress } from '../types';
 import type { SavedIndicator } from '../lib/indicatorLibrary';
 import { PRESETS } from '../scripts/presets';
 import { venueLabel } from '../venues/catalog';
 import { Button, ProgressBar, Select } from '../ui/primitives';
-import { PineEditor } from './PineEditor';
+import { cn } from '../ui/cn';
+
+const PineEditor = lazy(async () => ({
+  default: (await import('./PineEditor')).PineEditor,
+}));
 
 const TIMEFRAMES = [
   { value: '5', label: '5m' },
@@ -33,6 +39,14 @@ interface Props {
   onUsePreset: (source: string) => void;
   onSave: () => void;
   onNew: () => void;
+  onDiscardChanges?: () => void;
+  onNewTab?: () => void;
+  onOpenScript?: () => void;
+  onToggleConsole?: () => void;
+  pineTabs: Array<{ id: string; label: string; dirty: boolean }>;
+  activePineTabId: string;
+  onSelectPineTab: (id: string) => void;
+  onClosePineTab: (id: string) => void;
   scanTimeframe: string;
   onScanTimeframeChange: (timeframe: string) => void;
   scanBars: number;
@@ -58,6 +72,14 @@ export function PinePanel({
   onUsePreset,
   onSave,
   onNew,
+  onDiscardChanges,
+  onNewTab,
+  onOpenScript,
+  onToggleConsole,
+  pineTabs,
+  activePineTabId,
+  onSelectPineTab,
+  onClosePineTab,
   scanTimeframe,
   onScanTimeframeChange,
   scanBars,
@@ -102,6 +124,48 @@ export function PinePanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1">
+        {pineTabs.map((tab) => (
+          <div
+            key={tab.id}
+            className={cn(
+              'flex shrink-0 items-center rounded-md border text-[11px]',
+              tab.id === activePineTabId
+                ? 'border-primary/40 bg-primary-soft text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-accent',
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => onSelectPineTab(tab.id)}
+              className="flex min-w-0 items-center gap-1 px-1.5 py-1"
+              title={tab.label}
+            >
+              <span className="max-w-28 truncate">{tab.label}</span>
+              {tab.dirty ? (
+                <span className="size-1.5 shrink-0 rounded-full bg-amber-400" />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              aria-label={`Close ${tab.label}`}
+              onClick={() => onClosePineTab(tab.id)}
+              className="mr-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          aria-label="New tab"
+          title="New tab"
+          onClick={onNewTab}
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </div>
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-2">
         {dirty ? (
           <span
@@ -184,14 +248,26 @@ export function PinePanel({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
-        <PineEditor
-          value={script}
-          onChange={onScriptChange}
-          onSave={onSave}
-          onRun={onScan}
-          className="min-h-48 flex-1"
-          placeholder={'//@version=6\nindicator("My script")\nplot(close)'}
-        />
+        <Suspense
+          fallback={
+            <div className="flex min-h-48 flex-1 items-center justify-center rounded-md border border-border bg-muted/20 text-[11px] text-muted-foreground">
+              Loading editor…
+            </div>
+          }
+        >
+          <PineEditor
+            value={script}
+            onChange={onScriptChange}
+            onSave={onSave}
+            onRun={onScan}
+            onDiscardChanges={onDiscardChanges}
+            onNewTab={onNewTab}
+            onOpenScript={onOpenScript}
+            onToggleConsole={onToggleConsole}
+            className="min-h-48 flex-1"
+            placeholder={'//@version=6\nindicator("My script")\nplot(close)'}
+          />
+        </Suspense>
 
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
