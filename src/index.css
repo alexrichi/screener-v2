@@ -238,6 +238,21 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   position: fixed !important;
 }
 
+/* Chart settings has no primary footer button of its own; the app adds one.
+   The secondary footer buttons use Vela's own .vela-sd-btn. */
+.vela-sd-btn[data-screener-primary] {
+  border-color: var(--vela-selected-bg);
+  background: var(--vela-selected-bg);
+  color: var(--vela-selected-fg);
+}
+
+.vela-sd-btn[data-screener-primary]:hover {
+  border-color: var(--vela-selected-bg);
+  background: var(--vela-selected-bg);
+  color: var(--vela-selected-fg);
+  opacity: 0.85;
+}
+
 /* The AI toggle sits at the top of Vela's shared drawing toolbar; the widget
    attachment keeps it in place when the toolbar is rebuilt. */
 .screener-ai-rail {

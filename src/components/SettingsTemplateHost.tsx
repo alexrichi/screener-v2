@@ -34,6 +34,7 @@ interface Target {
   slot: HTMLDivElement;
   adapter: SettingsTemplateAdapter;
   marker: string;
+  variant: 'chart' | 'indicator';
   actions?: ChartActions;
 }
 
@@ -124,7 +125,7 @@ function isChartPayload(value: unknown): value is ChartTemplatePayload {
 }
 
 function chartState(cell: ChartCell, renderer: ChartRenderer): ChartTemplatePayload {
-  return { config: renderer.getConfig(), priceStyle: cell.priceStyle };
+  return { config: renderer.getConfig(), priceStyle: cell.requestedPriceStyle };
 }
 
 function applyChartState(
@@ -192,12 +193,13 @@ function ChartSettingsActions({ actions }: { actions: ChartActions }) {
   };
   return (
     <>
-      <button type="button" className="vela-dialog-btn" onClick={cancel}>
+      <button type="button" className="vela-sd-btn" onClick={cancel}>
         Cancel
       </button>
       <button
         type="button"
-        className="vela-dialog-btn vela-dialog-btn-primary"
+        className="vela-sd-btn"
+        data-screener-primary="1"
         onClick={() => actions.close?.click()}
       >
         OK
@@ -300,7 +302,14 @@ export function SettingsTemplateHost({ workspace }: Props) {
       }
 
       dialog.setAttribute('data-screener-template-marker', marker);
-      setTarget({ dialog, slot, adapter, marker, ...(actions ? { actions } : {}) });
+      setTarget({
+        dialog,
+        slot,
+        adapter,
+        marker,
+        variant: chart ? 'chart' : 'indicator',
+        ...(actions ? { actions } : {}),
+      });
     };
 
     const schedule = () => {
@@ -321,7 +330,11 @@ export function SettingsTemplateHost({ workspace }: Props) {
   return (
     <>
       {createPortal(
-        <SettingsTemplateMenu key={target.marker} adapter={target.adapter} />,
+        <SettingsTemplateMenu
+          key={target.marker}
+          adapter={target.adapter}
+          variant={target.variant}
+        />,
         target.slot,
       )}
       {target.actions

@@ -19,7 +19,13 @@ export interface SettingsTemplateAdapter {
   close?: () => void;
 }
 
-export function SettingsTemplateMenu({ adapter }: { adapter: SettingsTemplateAdapter }) {
+export function SettingsTemplateMenu({
+  adapter,
+  variant = 'indicator',
+}: {
+  adapter: SettingsTemplateAdapter;
+  variant?: 'chart' | 'indicator';
+}) {
   const [open, setOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [name, setName] = useState('');
@@ -86,7 +92,10 @@ export function SettingsTemplateMenu({ adapter }: { adapter: SettingsTemplateAda
     <Popover.Root open={open} onOpenChange={toggle}>
       <Popover.Trigger
         type="button"
-        className="vela-dialog-btn"
+        className={variant === 'chart' ? 'vela-sd-btn' : 'vela-btn'}
+        data-slot={variant === 'indicator' ? 'button' : undefined}
+        data-variant={variant === 'indicator' ? 'outline' : undefined}
+        data-size={variant === 'indicator' ? 'default' : undefined}
         style={{
           display: 'inline-flex',
           alignItems: 'center',

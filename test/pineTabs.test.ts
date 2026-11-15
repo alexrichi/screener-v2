@@ -4,6 +4,7 @@ import {
   findPineTabBySource,
   isPineTabs,
   makePineTab,
+  normalizePineSource,
   planOpenSavedTab,
   removeSavedPineTabs,
 } from '../src/lib/pineTabs';
@@ -23,6 +24,18 @@ describe('Pine editor tabs', () => {
     expect(first.id).not.toBe(second.id);
     expect(first.savedId).toBe('saved-1');
     expect(second.savedId).toBe('');
+  });
+
+  it('compares CRLF and LF sources as the same script', () => {
+    expect(normalizePineSource('a\r\nb\rc')).toBe('a\nb\nc');
+    const raw = { id: 'raw', script: 'a\r\nb', savedId: 'saved-1' };
+    expect(makePineTab('a\r\nb').script).toBe('a\nb');
+    expect(findPineTabBySource([raw], 'a\nb')).toBe(raw);
+    expect(planOpenSavedTab([raw], 'saved-1', 'a\nb')).toEqual({
+      kind: 'activate',
+      tab: raw,
+    });
+    expect(removeSavedPineTabs([raw], 'saved-1', 'a\nb').removed).toBe(1);
   });
 
   it('finds an open tab by saved id or by exact source', () => {

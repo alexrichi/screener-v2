@@ -74,6 +74,9 @@ A change is not done until these checks pass together:
 - `npm test` — Vitest passes, including a targeted test for new pure logic.
 - `npm run build` — the app and worker bundle build.
 
+When `../pine-editor` or `../pine-engine` changes, also run that package's
+`npm run typecheck` and `npm test`.
+
 There is no `npm run lint` script yet. Do not claim one exists. If you add ESLint,
 add the script and include it in this gate.
 
@@ -105,9 +108,8 @@ src/
     VelaWorkspaceHost.tsx         Vela workspace per tab; cells, active-cell sync, Pine apply,
                                   source-code legend action
     ScreenerTable.tsx             market table, filters, favorites, column actions
-    PinePanel.tsx                 script editor with tabs, saved scripts, apply and scan controls
-    PineEditor.tsx                Monaco wrapper, lazy-loaded; Pine tokens, completions
-                                  and lint come from `@screener/pine-editor`
+    PinePanel.tsx                 script editor with tabs, saved scripts, apply and scan controls;
+                                  lazy-loads the Monaco editor from `@screener/pine-editor/monaco/react`
     LibraryPanel.tsx              saved indicator list, import/export and actions
     SettingsDialog.tsx            universe and scan defaults
   hooks/
@@ -127,15 +129,13 @@ src/
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
+    indicatorState.ts             saved instance ids, input deltas, stored-script validation
     indicatorPicker.ts            picker entries, relevance filter, favorites/recents
     luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
     marketData.ts                 market rows for the checked venues via the sidecar
-    monaco/colors.ts              computed CSS color normalization for Monaco themes
-    monaco/markers.ts             lint finding to editor marker range mapping
-    monaco/pine.ts                Monaco worker, Pine tokens, completions, lint and theme
-    monaco/pineFeatures.ts        hover, definition, formatter, signature help, semantic tokens and outline
-    pineTabs.ts                   Pine editor tab model, legacy migration and validators
+    pineDraft.ts                  saved/source dirty comparison and starter templates
+    pineTabs.ts                   Pine editor tab model, source normalization, legacy migration and validators
     pineVela/engine.ts            Vela ScriptingEngine backed by pine-engine
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
@@ -307,13 +307,17 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   legacy `screener.pine.script` / `screener.pine.savedId` mirror the active tab
   for backups and the smoke run. The old single buffer becomes the first tab on
   first load. `New tab` adds a Pine editor tab, not a chart workspace tab;
-  closing a dirty tab confirms. The AI `new_script`, save and discard flows and
-  the scan all target the active tab. Opening a saved script (chart legend
-  source, picker `Source code`, Library edit/scan, import, duplicate) reuses its
-  tab or creates one; it never replaces another tab's buffer. A dirty target
-  asks Save changes / Discard changes / Cancel. Delete drops clean tabs for the
-  deleted item and turns dirty ones into drafts. Add to chart and Library reveal
-  never bind `savedId`.
+  closing a dirty tab confirms. Each open tab owns a Monaco model keyed by its
+  id; switching calls `setModel` with the saved view state, so undo/redo, cursor
+  and scroll never cross tabs, and models of closed tabs are disposed. Sources
+  are normalized to LF for dirty checks, tab lookup and saved-script plans, so a
+  saved CRLF script does not open as a draft. The AI `new_script`, save and
+  discard flows and the scan all target the active tab. Opening a saved script
+  (chart legend source, picker `Source code`, Library edit/scan, import,
+  duplicate) reuses its tab or creates one; it never replaces another tab's
+  buffer. A dirty target asks Save changes / Discard changes / Cancel. Delete
+  drops clean tabs for the deleted item and turns dirty ones into drafts. Add to
+  chart and Library reveal never bind `savedId`.
 - The applied Pine script is stored on the tab as `pineScript` / `pineAll`, with its
   input values in `pineInputs` and declaration-property overrides in `pineProps`
   (both kept current by `indicator:inputs`, which Vela emits for input and prop
@@ -432,11 +436,13 @@ watches `.vela-ind-dialog` and `.vela-dialog--settings` and injects the shared
 `SettingsTemplateMenu` into their footers, keeping the native Reset defaults in
 the DOM but hidden. Templates live in `screener.settingsTemplates.v1`, scoped:
 `indicator:<native|source-hash>` stores input deltas plus prop overrides; `chart`
-stores the renderer config and the cell `priceStyle` so the chart type survives a
-reload. Indicator dialogs keep a working copy and commit on OK, so Save commits
-before capturing; chart settings are live, so the host adds Cancel/OK and Cancel
-restores the open-time config plus priceStyle. Apply closes the dialog before
-writing so stale working values cannot win. The old
+stores the renderer config and the cell `requestedPriceStyle` so the chart type
+survives a reload. Indicator dialogs keep a working copy and commit on OK, so
+Save commits before capturing; chart settings are live, so the host adds
+Cancel/OK and Cancel restores the open-time config plus requestedPriceStyle. On
+Vela 0.10.7 the chart footer uses `.vela-sd-btn`; the app marks its OK with
+`data-screener-primary` and styles it in `index.css`. Apply closes the dialog
+before writing so stale working values cannot win. The old
 `screener.indicatorTemplates.v1` is folded into the shared store on first load.
 Vela Pro uses the same injection pattern; a Vela dialog markup change needs a
 check here.
@@ -473,8 +479,10 @@ only.
 
 **The legend source action uses Vela's public contribution seam.** The host
 registers one `registerLegendAction` for Pine indicators and forwards
-`LegendIndicatorInfo.source` to `App`, which opens the Pine tab and selects a
-saved item only when its source matches exactly. Do not add a parallel chart
+`LegendIndicatorInfo.source` plus the Library id parsed from its
+`saved-<id>:<instance>` handle to `App`. `showSource` opens the saved item by
+id first, then falls back to a normalized source match, so a CRLF copy or a
+renamed handle still lands in the right tab. Do not add a parallel chart
 button or reach into renderer internals.
 
 **The AI sidebar is renderer-side and keyless.** `lib/ai/model.ts` points an
@@ -597,10 +605,9 @@ bodies. The shell runs with
 (`setScreenshotTarget` maps `<tabId>` to `ws.downloadScreenshot()`), and the
 topbar copy is hidden with app CSS so the `mod+alt+s` chord stays registered.
 On desktop the panel toggles live in the right sidebar and the topbar keeps
-Maximize and Layouts; mobile keeps the panel rows in its menu. `sidebar` does
-not exist in main/0.9.3, so drop it when
-the checkout returns to main before the next release. The dock's open panel and
-width live in the Vela workspace document, not in `screener.dock.*`. Do not
+Maximize and Layouts; mobile keeps the panel rows in its menu. `sidebar` is part
+of Vela 0.10.7, so keep it. The dock's open panel and width live in the Vela
+workspace document, not in `screener.dock.*`. Do not
 reach into panel internals. `screener.panels.welcomed` only controls the
 one-time Screener default.
 
@@ -746,6 +753,10 @@ from the UI. Use semantic classes (`bg-background`, `text-muted-foreground`,
 **Binance streams may fall back to polling.** The bundled provider can log
 `stream delivered no data; falling back to polling` in restricted environments.
 That is expected; do not treat it as a chart bug.
+
+**Synced drawings rebuild their links.** Vela 0.10.7 relinks identical drawing
+copies on boot, `applyState` and when drawings sync is enabled; the app stores no
+pairing field. A copy edited while sync was off stays independent.
 
 **No speculative platform work.** There is no auth, backend, trading, Electron, or
 Nautilus integration. Do not add them, or scaffold for them, without an explicit
@@ -923,8 +934,12 @@ Useful browser probes:
   parameters get semantic colors; hover on a built-in function shows its v6
   description, parameters and returns, and hover on an object type or namespace
   shows the type or member docs. Switching between Pine tabs preserves each
-  buffer; the tab strip and active tab survive a reload, and closing a dirty tab
-  confirms first.
+  buffer, cursor and undo stack; the tab strip and active tab survive a reload,
+  and closing a dirty tab confirms first. `New tab` starts from `NEW_SCRIPT` and
+  never inherits the previous tab; `Ctrl+Z` there does not bring the other
+  script back. Type in one tab, switch away and back, then `Ctrl+Z`: only that
+  tab's edit is undone. A saved CRLF script opens without a dirty dot, and
+  closing the active tab moves the editor to a remaining tab.
 - The AI toggle sits at the top of the left drawing toolbar above `Cursor`;
   clicking it opens the sidebar (the chart host refills history), flips to
   `Hide AI` with the active highlight, and closing restores the chart. The width
@@ -1051,16 +1066,20 @@ reaching into `node_modules` or the peer `../Vela` checkout:
 The docs page exposes "View as Markdown"; the LLM index is
 <https://docs.luxalgo.com/llms.mdx/vela/content.md>. Vite and `tsconfig` resolve
 `@luxalgo/vela` to the local `../Vela/src` checkout; `package.json` keeps the npm
-pin as a fallback and must name the same minor: `^0.10.1`.
+pin as a fallback and must name the same minor: `^0.10.7`.
 
-The checkout must be Vela 0.10.1 or newer. Since 0.10.1 Vela imports
+The checkout must be Vela 0.10.7 or newer. Since 0.10.7 `cell.timeframe` and
+`cell.priceStyle` are the values the chart shows (a provider or style fallback),
+while `cell.requestedTimeframe` and `cell.requestedPriceStyle` are the user's
+choices: persist and capture the requested values, display the shown ones.
+Since 0.10.1 Vela imports
 `@luxalgo/vela-ui` in its chrome, and the app resolves that kit from
 `../Vela/packages/vela-ui/src` — the `vela-ui-source` plugin in `vite.config.ts`
 maps the package and each subpath (`components/*.ts`, `lib/*.ts`), with matching
-`tsconfig` paths. The local `dist` is not built and is not needed. Switching the
-checkout back to `main` (0.9.3) removes `packages/vela-ui` and breaks the build;
-run `npm run typecheck` after any Vela branch change. Do not patch or fork Vela
-from this repo.
+`tsconfig` paths. The local `dist` is not built and is not needed. Older
+checkouts (0.9.3) lack `packages/vela-ui` and break the build; run
+`npm run typecheck` after any Vela branch change. Do not patch or fork Vela from
+this repo.
 
 ### Pine engine
 
@@ -1073,29 +1092,37 @@ involved. Edit the engine there and the app picks it up without a rebuild. The
 engine owns the compile-once/run-many API the scan worker needs; the app keeps
 only the venue fetching and the table mapping.
 
-`@screener/pine-editor` (`../pine-editor`) owns the editor-agnostic Pine
-language data: a line tokenizer, completions from the MIT
-`pinescript-v6-validator` signature table, and the local v6 rules plus that
-validator's findings. The tokenizer handles triple-quoted strings, `//@`
-annotations and the v6 keyword and type sets. `PineEditor.tsx` lazy-loads Monaco and maps the data onto
-it: a tokens provider, language configuration, completion provider, model
-markers and the `--pine-*` theme. `lib/monaco/pine.ts` owns the worker setup and
-providers, `markers.ts` clamps findings to the document, and `colors.ts`
-expands Chromium's three-digit computed colors because Monaco token colors need
-six or eight digits. `syncContextViewTheme` copies the menu's `--vscode-*`
-variables from the editor root onto its container: Monaco renders the context
-menu in a shadow root that is a sibling of `.monaco-editor`, so without the copy
-the menu is transparent. `pineFeatures.ts` maps the editor-agnostic core of the
-local MIT `../pine-script-syntax-highlighter` checkout (aliased as
+`@screener/pine-editor` (`../pine-editor`) owns the Pine language data and the
+Monaco editor. The base entry (`@screener/pine-editor`) is editor-agnostic: a
+line tokenizer, completions from the MIT `pinescript-v6-validator` signature
+table, and the local v6 rules plus that validator's findings. The tokenizer
+handles triple-quoted strings, `//@` annotations and the v6 keyword and type
+sets. `@screener/pine-editor/monaco` maps that data onto Monaco: a tokens
+provider, language configuration, completion provider, model markers and the
+`--pine-*` theme, plus the worker setup. `markers.ts` clamps findings to the
+document and `colors.ts` expands Chromium's three-digit computed colors because
+Monaco token colors need six or eight digits. `syncContextViewTheme` copies the
+menu's `--vscode-*` variables from the editor root onto its container: Monaco
+renders the context menu in a shadow root that is a sibling of
+`.monaco-editor`, so without the copy the menu is transparent. `pineFeatures.ts`
+maps the editor-agnostic core of the local MIT
+`../pine-script-syntax-highlighter` checkout (aliased as
 `@pine-highlighter/*`) onto Monaco: document formatting, signature help,
-semantic tokens for user symbols, definition lookup and the document outline. Hover uses the
-reference data from the same checkout, loaded in its own 1.25 MB chunk on the
-first hover: hovering a function shows its v6 description, parameters and
-returns, a bare object name such as `array` or `label` shows the type docs, and a
-namespace such as `syminfo` lists its members. Only its `core/` directory is
-imported; its VS Code providers are not. The validator and its 475
+semantic tokens for user symbols, definition lookup and the document outline.
+Hover uses the reference data from the same checkout, loaded in its own 1.25 MB
+chunk on the first hover: hovering a function shows its v6 description,
+parameters and returns, a bare object name such as `array` or `label` shows the
+type docs, and a namespace such as `syminfo` lists its members. Only its `core/`
+directory is imported; its VS Code providers are not. The validator and its 475
 signatures load through a dynamic import on first use, so neither is in the
-initial bundle.
+initial bundle. `@screener/pine-editor/monaco/react` exports the `PineEditor`
+component; `PinePanel` lazy-loads it and passes the app theme. The component
+keeps one Monaco model per Pine tab (`tabId`) and switches with `setModel`
+plus the saved view state, so undo/redo, cursor and scroll never cross tabs;
+models of closed tabs are disposed. Pine sources are normalized to LF for dirty
+checks, tab lookup and saved-script plans, so a saved CRLF script does not open
+as a dirty draft. The package keeps `monaco-editor` and optional React peers, so
+the language entry stays usable without a DOM editor.
 
 `lib/pineVela/engine.ts` is the chart engine: `PineEngine` implements Vela's
 `ScriptingEngine` port over `pine-engine`, registered as

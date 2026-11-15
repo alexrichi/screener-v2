@@ -115,6 +115,7 @@ import {
   findPineTabBySource,
   isPineTabs,
   makePineTab,
+  normalizePineSource,
   PINE_ACTIVE_TAB_KEY,
   PINE_TABS_KEY,
   planOpenSavedTab,
@@ -517,7 +518,10 @@ export default function App() {
 
   const openSourceScript = useCallback(
     (source: string) => {
-      const saved = library.items.find((item) => item.source === source);
+      const normalized = normalizePineSource(source);
+      const saved = library.items.find(
+        (item) => normalizePineSource(item.source) === normalized,
+      );
       if (saved) {
         openSavedScript(saved);
         return;
@@ -1514,11 +1518,18 @@ export default function App() {
   );
 
   const showSource = useCallback(
-    (source: string) => {
+    (source: string, savedId?: string) => {
       if (!source.trim()) return;
+      const saved = savedId
+        ? library.items.find((item) => item.id === savedId)
+        : undefined;
+      if (saved) {
+        openSavedScript(saved);
+        return;
+      }
       openSourceScript(source);
     },
-    [openSourceScript],
+    [library.items, openSavedScript, openSourceScript],
   );
 
   const savePendingChanges = useCallback(() => {
@@ -2140,6 +2151,7 @@ export default function App() {
             pine: (
               <PinePanel
                 script={script}
+                theme={theme}
                 onScriptChange={setScript}
                 savedItems={library.items}
                 currentSavedId={currentSavedId}

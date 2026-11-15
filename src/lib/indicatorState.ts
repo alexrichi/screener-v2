@@ -31,6 +31,14 @@ export function isSavedIndicatorInstance(instanceId: string, libraryId: string):
   );
 }
 
+/** The Library id behind a saved external handle, or `''` for other indicators. */
+export function savedLibraryId(instanceId: string): string {
+  if (!instanceId.startsWith('saved-')) return '';
+  const rest = instanceId.slice('saved-'.length);
+  const colon = rest.indexOf(':');
+  return colon >= 0 ? rest.slice(0, colon) : rest;
+}
+
 /**
  * Deltas of a value bag against its schema's declaration defaults. Vela stores
  * the same shape for manifest indicators; a default that changes in the script

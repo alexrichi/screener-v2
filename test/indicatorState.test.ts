@@ -4,6 +4,7 @@ import {
   isSavedIndicatorInstance,
   isStoredScripts,
   savedIndicatorInstanceId,
+  savedLibraryId,
 } from '../src/lib/indicatorState';
 
 const schema = [
@@ -21,6 +22,9 @@ describe('saved indicator instances', () => {
     expect(isSavedIndicatorInstance(first, 'test-a')).toBe(true);
     expect(isSavedIndicatorInstance('saved-test-a', 'test-a')).toBe(true);
     expect(isSavedIndicatorInstance(first, 'test-b')).toBe(false);
+    expect(savedLibraryId(first)).toBe('test-a');
+    expect(savedLibraryId('saved-test-a')).toBe('test-a');
+    expect(savedLibraryId('screener-pine')).toBe('');
   });
 });
 

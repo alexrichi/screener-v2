@@ -25,7 +25,11 @@ import { pushStrategyRun, removeStrategyRun } from '../lib/strategyRuns';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
 import { setMountingVelaTab, setScreenshotTarget } from '../lib/velaPanels';
-import { isSavedIndicatorInstance, savedIndicatorInstanceId } from '../lib/indicatorState';
+import {
+  isSavedIndicatorInstance,
+  savedIndicatorInstanceId,
+  savedLibraryId,
+} from '../lib/indicatorState';
 import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
@@ -82,7 +86,7 @@ interface Props {
   savedScripts: SavedScript[];
   /** Saved layout state for a fresh tab; ignored once the tab has its own doc. */
   layoutSeed?: unknown;
-  onShowSource: (source: string) => void;
+  onShowSource: (source: string, savedId?: string) => void;
   onIndicatorsChange?: () => void;
   /** The applied script's settings changed; persist them with the tab. */
   onPineSettings?: (settings: {
@@ -99,7 +103,7 @@ interface Props {
 
 const SOURCE_ACTION_ID = 'screener-show-source';
 
-let showSourceHandler: ((source: string) => void) | null = null;
+let showSourceHandler: ((source: string, savedId?: string) => void) | null = null;
 
 registerIcon(
   'screener-source',
@@ -126,7 +130,9 @@ registerLegendAction({
   tooltip: 'Show source code',
   when: (indicator) => indicator.source !== undefined,
   run: (_ctx, indicator) => {
-    if (indicator.source) showSourceHandler?.(indicator.source);
+    if (indicator.source) {
+      showSourceHandler?.(indicator.source, savedLibraryId(indicator.id));
+    }
   },
 });
 
@@ -649,7 +655,8 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     const syncMaximizeRef = useRef<() => void>(() => {});
 
     useEffect(() => {
-      showSourceHandler = (source) => onShowSourceRef.current(source);
+      showSourceHandler = (source, savedId) =>
+        onShowSourceRef.current(source, savedId);
       return () => {
         showSourceHandler = null;
       };
@@ -786,7 +793,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         try {
           const cell = ws.active;
           const symbol = spotSymbol(cell.symbol);
-          const timeframe = cell.timeframe;
+          const timeframe = cell.requestedTimeframe;
           const layout = ws.layout.id;
           onMarketChangeRef.current(tab.id, { symbol, timeframe, layout });
         } catch {
@@ -863,7 +870,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         if (spotSymbol(cell.symbol) !== tab.symbol) {
           cell.setSymbol(chartSymbol(tab.symbol));
         }
-        if (cell.timeframe !== tab.timeframe) {
+        if (cell.requestedTimeframe !== tab.timeframe) {
           cell.setTimeframe(tab.timeframe);
         }
         if (ws.layout.id !== tab.layout) {
@@ -920,7 +927,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               state,
               layout: ws.layout.id,
               symbol: spotSymbol(cell.symbol),
-              timeframe: cell.timeframe,
+              timeframe: cell.requestedTimeframe,
               altSymbol: other ? spotSymbol(other.symbol) : tab.altSymbol,
             };
           } catch (cause) {
@@ -980,7 +987,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               ok: pineError === null,
               error: pineError,
               symbol: spotSymbol(cell.symbol),
-              timeframe: cell.timeframe,
+              timeframe: cell.requestedTimeframe,
               layout: ws.layout.id,
               altSymbol: other ? spotSymbol(other.symbol) : '',
               cells: ws.cells().length,

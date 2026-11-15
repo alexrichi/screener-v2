@@ -11,8 +11,8 @@ TypeScript app; there is no private backend and no API key.
 - `@luxalgo/vela` workspace; data comes from the venue sidecar
 - `@screener/pine-engine` (local MIT compiler and runtime) for Pine Script
   indicators, the scanner, and the AI debug worker
-- Monaco Editor (`monaco-editor`) with the local
-  `@screener/pine-editor` Pine language, loaded lazily with the editor chunk
+- Monaco Editor and Pine language support from the local
+  `@screener/pine-editor/monaco` entry, loaded lazily with the editor chunk
 - The local MIT `pine-script-syntax-highlighter` checkout for hover docs,
   formatter, signature help, semantic tokens and the outline
 - Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,

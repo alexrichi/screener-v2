@@ -10,7 +10,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import type { PlotColumn, ScanProgress } from '../types';
+import type { PlotColumn, ScanProgress, ThemeMode } from '../types';
 import type { SavedIndicator } from '../lib/indicatorLibrary';
 import { PRESETS } from '../scripts/presets';
 import { venueLabel } from '../venues/catalog';
@@ -18,7 +18,7 @@ import { Button, ProgressBar, Select } from '../ui/primitives';
 import { cn } from '../ui/cn';
 
 const PineEditor = lazy(async () => ({
-  default: (await import('./PineEditor')).PineEditor,
+  default: (await import('@screener/pine-editor/monaco/react')).PineEditor,
 }));
 
 const TIMEFRAMES = [
@@ -31,6 +31,7 @@ const TIMEFRAMES = [
 
 interface Props {
   script: string;
+  theme: ThemeMode;
   onScriptChange: (script: string) => void;
   savedItems: SavedIndicator[];
   currentSavedId: string | null;
@@ -64,6 +65,7 @@ interface Props {
 
 export function PinePanel({
   script,
+  theme,
   onScriptChange,
   savedItems,
   currentSavedId,
@@ -111,6 +113,7 @@ export function PinePanel({
         : 'draft';
   const percent = progress && progress.total > 0 ? (progress.done / progress.total) * 100 : 0;
   const [applying, setApplying] = useState<'active' | 'all' | null>(null);
+  const tabIds = useMemo(() => pineTabs.map((tab) => tab.id), [pineTabs]);
 
   const apply = async (scope: 'active' | 'all') => {
     if (applying) return;
@@ -257,6 +260,9 @@ export function PinePanel({
         >
           <PineEditor
             value={script}
+            tabId={activePineTabId}
+            tabIds={tabIds}
+            theme={theme}
             onChange={onScriptChange}
             onSave={onSave}
             onRun={onScan}

@@ -13,8 +13,16 @@ export function newPineTabId(): string {
   return `pine-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/**
+ * Monaco stores LF line endings. Compare and persist the same form so a saved
+ * CRLF script does not open as a dirty draft.
+ */
+export function normalizePineSource(source: string): string {
+  return source.replace(/\r\n?/g, '\n');
+}
+
 export function makePineTab(script: string, savedId = ''): PineTab {
-  return { id: newPineTabId(), script, savedId };
+  return { id: newPineTabId(), script: normalizePineSource(script), savedId };
 }
 
 export function isPineTabs(value: unknown): value is PineTab[] {
@@ -47,7 +55,8 @@ export function findPineTabBySource(
   tabs: readonly PineTab[],
   source: string,
 ): PineTab | undefined {
-  return tabs.find((tab) => tab.script === source);
+  const normalized = normalizePineSource(source);
+  return tabs.find((tab) => normalizePineSource(tab.script) === normalized);
 }
 
 /** What an Open-saved-script request should do with the editor tabs. */
@@ -64,7 +73,7 @@ export function planOpenSavedTab(
 ): OpenSavedPlan {
   const existing = findPineTabBySavedId(tabs, savedId);
   if (!existing) return { kind: 'create' };
-  return existing.script === source
+  return normalizePineSource(existing.script) === normalizePineSource(source)
     ? { kind: 'activate', tab: existing }
     : { kind: 'prompt', tab: existing };
 }
@@ -84,11 +93,17 @@ export function removeSavedPineTabs(
   savedId: string,
   source: string,
 ): RemovedSavedTabs {
+  const normalized = normalizePineSource(source);
   const affected = tabs.filter((tab) => tab.savedId === savedId);
-  const removed = affected.filter((tab) => tab.script === source).length;
+  const removed = affected.filter(
+    (tab) => normalizePineSource(tab.script) === normalized,
+  ).length;
   return {
     tabs: tabs
-      .filter((tab) => tab.savedId !== savedId || tab.script !== source)
+      .filter(
+        (tab) =>
+          tab.savedId !== savedId || normalizePineSource(tab.script) !== normalized,
+      )
       .map((tab) => (tab.savedId === savedId ? { ...tab, savedId: '' } : tab)),
     removed,
     drafts: affected.length - removed,
