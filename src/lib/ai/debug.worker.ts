@@ -1,8 +1,7 @@
-import { compilePine } from '@screener/pine-engine';
 import { VENUE_IDS } from '../../venues/catalog';
 import { sameVelaSymbol } from '../../venues/instrument';
 import { SidecarVenueAdapter } from '../../venues/sidecar';
-import type { VenueId } from '../../venues/types';
+import type { Instrument, VenueBar, VenueId } from '../../venues/types';
 import type { ScriptRunSummary } from '../../types';
 import type { DebugRunRequest, DebugWorkerMessage } from './debugRun';
 import {
@@ -11,6 +10,13 @@ import {
   summarizeRun,
   type DebugRunMeta,
 } from './debugResult';
+import {
+  compilePineSession,
+  fetchPineSeries,
+  PineSession,
+  type FetchSeries,
+} from '../pineVela/session';
+import type { PineBar } from '@screener/pine-engine';
 
 const workerSelf = self as unknown as {
   onmessage: ((event: MessageEvent<DebugRunRequest>) => void) | null;
@@ -21,11 +27,47 @@ const DEFAULT_BARS = 500;
 const MAX_BARS = 10_000;
 const MAX_LOGS = 60;
 const MAX_LOG_CHARS = 300;
+const MAX_SERIES_ROUNDS = 2;
 
 function venueOf(symbol: string): VenueId | null {
   const at = symbol.indexOf(':');
   const provider = (at >= 0 ? symbol.slice(0, at) : 'binance').toLowerCase();
   return VENUE_IDS.find((id) => id === provider) ?? null;
+}
+
+function flatTicker(symbol: string): string {
+  const at = symbol.indexOf(':');
+  return (at >= 0 ? symbol.slice(at + 1) : symbol)
+    .replace(/\.P$/i, '')
+    .replace(/[-_/]/g, '')
+    .toUpperCase();
+}
+
+/** A script's bare `ETHUSDT` still resolves the chart venue's perpetual. */
+function findInstrument(
+  instruments: readonly Instrument[],
+  symbol: string,
+): Instrument | undefined {
+  const exact = instruments.find((item) => sameVelaSymbol(item.velaSymbol, symbol));
+  if (exact) return exact;
+  const wanted = flatTicker(symbol);
+  return (
+    instruments.find((item) => flatTicker(item.nativeId) === wanted) ??
+    instruments.find(
+      (item) => `${item.base}${item.quote}`.toUpperCase() === wanted,
+    )
+  );
+}
+
+function pineBar(bar: VenueBar): PineBar {
+  return {
+    time: bar.openTime,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    volume: bar.volume,
+  };
 }
 
 async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
@@ -39,6 +81,14 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
   if (!venue) return emptyRunSummary(meta, `Unknown venue in "${request.symbol}".`);
 
   const logs: string[] = [];
+  const log = (level: 'info' | 'warning' | 'error', message: string) => {
+    const prefix = level === 'warning' ? 'WARN ' : level === 'error' ? 'ERROR ' : '';
+    const line = `${prefix}${message}`.slice(0, MAX_LOG_CHARS);
+    if (logs.length >= MAX_LOGS) logs.shift();
+    logs.push(line);
+    workerSelf.postMessage({ type: 'log', line });
+  };
+
   try {
     const adapter = new SidecarVenueAdapter(venue);
     const instruments = await adapter.listInstruments();
@@ -65,37 +115,74 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
       );
     }
 
-    const program = compilePine({ source: request.source, debug: true });
-    if (!program.ok) {
-      return emptyRunSummary(meta, program.error ?? 'The script could not be compiled');
-    }
-    const result = program.run({
-      bars: bars.map((bar) => ({
-        time: bar.openTime,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-      })),
-      timeframe: request.timeframe,
-      symbol: instrument.nativeId,
-      live: true,
-      debugBar: request.bar ?? bars.length - 1,
-      onLog: (level, message) => {
-        const prefix = level === 'warning' ? 'WARN ' : level === 'error' ? 'ERROR ' : '';
-        const line = `${prefix}${message}`.slice(0, MAX_LOG_CHARS);
-        if (logs.length >= MAX_LOGS) logs.shift();
-        logs.push(line);
-        workerSelf.postMessage({ type: 'log', line });
+    const compiled = compilePineSession(request.source, 'ai-debug', { debug: true });
+    const prefix = venue.toUpperCase();
+    const session = new PineSession({
+      program: compiled.program,
+      instanceId: 'ai-debug',
+      market: {
+        symbol: instrument.nativeId,
+        timeframe: request.timeframe,
+        symbolInfo: {
+          ticker: instrument.nativeId,
+          tickerid: `${prefix}:${instrument.nativeId}`,
+          prefix,
+          root: instrument.base,
+          type: instrument.kind === 'perp' ? 'futures' : 'crypto',
+          basecurrency: instrument.base,
+          currency: instrument.quote,
+          description: instrument.display,
+          timezone: 'Etc/UTC',
+          session: '24x7',
+          mintick:
+            instrument.tickSize && instrument.tickSize > 0
+              ? instrument.tickSize
+              : 1 / 10 ** instrument.pricePrecision,
+          pricescale: 10 ** instrument.pricePrecision,
+        },
       },
+      bars: bars.map(pineBar),
+      inputs: {},
+      mode: 'live',
     });
-    if (!result.ok) {
-      const summary = emptyRunSummary(meta, result.error ?? 'The script failed');
+
+    const fetchSeries: FetchSeries = async (symbol, timeframe, range) => {
+      const target = findInstrument(instruments, symbol);
+      if (!target) throw new Error(`No ${venue} instrument matches "${symbol}"`);
+      const series = await adapter.fetchBars(
+        target,
+        timeframe,
+        range.limit,
+        undefined,
+        { includeForming: true, to: range.to },
+      );
+      return series.map(pineBar);
+    };
+
+    let outcome = session.run();
+    for (let round = 0; outcome.needs.length > 0 && round < MAX_SERIES_ROUNDS; round++) {
+      const series = await fetchPineSeries(outcome.needs, fetchSeries, (need) => {
+        log(
+          'warning',
+          `request.security(${need.symbol}, ${need.timeframe}): no bars for this instrument`,
+        );
+      });
+      session.resume(series);
+      outcome = session.run();
+    }
+
+    // Logs and the variable snapshot belong to the final pass only; the
+    // intrabar fetch runs the script once more after the resume.
+    const final = session.run({
+      debugBar: request.bar ?? bars.length - 1,
+      onLog: log,
+    });
+    if (!final.result.ok) {
+      const summary = emptyRunSummary(meta, final.result.error ?? 'The script failed');
       summary.logs = logs.slice();
       return summary;
     }
-    return summarizeRun(result, meta, logs);
+    return summarizeRun(final.result, meta, logs);
   } catch (error) {
     const summary = emptyRunSummary(
       meta,

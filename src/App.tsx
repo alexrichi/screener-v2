@@ -106,12 +106,13 @@ import {
   type SavedIndicator,
 } from './lib/indicatorLibrary';
 import { DEFAULT_SCRIPT } from './scripts/presets';
-import { AI_AGENTS, agentById, type AiAgentId } from './lib/ai/agents';
 import { runScriptInWorker } from './lib/ai/debugRun';
 import { fetchAiStatus, type AiStatus } from './lib/ai/model';
-import { createAppTools, toolsForAgent, type NewScriptResult } from './lib/ai/tools';
+import { createAppTools, type NewScriptResult } from './lib/ai/tools';
+import type { AiScriptTarget } from './lib/ai/target';
 import { isDraftDirty, NEW_SCRIPT } from './lib/pineDraft';
 import {
+  findPineTabBySavedId,
   findPineTabBySource,
   isPineTabs,
   makePineTab,
@@ -348,6 +349,10 @@ export default function App() {
     pineTabs.find((tab) => tab.id === activePineTabId) ?? pineTabs[0] ?? null;
   const script = activePineTab?.script ?? DEFAULT_SCRIPT;
   const currentSavedId = activePineTab?.savedId ?? '';
+  const pineTabsRef = useRef(pineTabs);
+  pineTabsRef.current = pineTabs;
+  const activePineTabIdRef = useRef(activePineTabId);
+  activePineTabIdRef.current = activePineTabId;
   const setScript = useCallback(
     (next: string) => {
       setPineTabs((prev) => {
@@ -424,6 +429,10 @@ export default function App() {
   const layoutImportRef = useRef<HTMLInputElement | null>(null);
   const [aiOpen, setAiOpen] = usePersistedState<boolean>('screener.ai.open', false, isBoolean);
   const [aiWidth, setAiWidth] = usePersistedState<number>('screener.ai.width', 380, isNumber);
+  const [aiTarget, setAiTarget] = useState<AiScriptTarget | null>(null);
+  const aiTargetRef = useRef(aiTarget);
+  aiTargetRef.current = aiTarget;
+  const [aiTargetRequest, setAiTargetRequest] = useState<AiScriptTarget | null>(null);
   const toggleAi = useCallback(() => setAiOpen((open) => !open), [setAiOpen]);
   const [libraryQuery, setLibraryQuery] = useState('');
   const [libraryReveal, setLibraryReveal] = useState<{ id: string; nonce: number } | null>(
@@ -997,17 +1006,26 @@ export default function App() {
   }, [scanner]);
 
   const applyScriptToChart = useCallback(
-    async (source: string, allCells: boolean): Promise<ScriptApplyReport | null> => {
+    async (
+      source: string,
+      allCells: boolean,
+      workspaceTabId?: string,
+      nameOverride?: string,
+    ): Promise<ScriptApplyReport | null> => {
       if (!source.trim()) return null;
+      const targetTabId = workspaceTabId ?? activeTab?.id;
       const name =
-        currentSaved && currentSaved.source === source ? currentSaved.name : 'Screener Pine';
-      const handle = activeWorkspace();
+        nameOverride ??
+        (currentSaved && currentSaved.source === source ? currentSaved.name : 'Screener Pine');
+      const handle = targetTabId
+        ? (handlesRef.current.get(targetTabId) ?? null)
+        : activeWorkspace();
       if (!handle) return { count: 0, errors: ['The chart is not ready yet'] };
       const report = await handle.applyScript(source, name, allCells);
       if (report.count > 0) {
         setTabs((prev) =>
           prev.map((tab) =>
-            tab.id === activeTab?.id
+            tab.id === targetTabId
               ? {
                   ...tab,
                   pineScript: source,
@@ -1813,6 +1831,89 @@ export default function App() {
   libraryRef.current = library;
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
 
+  const targetForTab = useCallback(
+    (tab: PineTab, workspaceTabId = activeTabId): AiScriptTarget => {
+      const saved = libraryRef.current.items.find((item) => item.id === tab.savedId) ?? null;
+      return {
+        pineTabId: tab.id,
+        savedId: tab.savedId,
+        name: saved?.name ?? suggestedName(tab.script, 'Draft'),
+        workspaceTabId,
+      };
+    },
+    [activeTabId],
+  );
+
+  const ensureAiTarget = useCallback((): AiScriptTarget => {
+    const current = aiTargetRef.current;
+    if (current) {
+      if (!pineTabsRef.current.some((tab) => tab.id === current.pineTabId)) {
+        throw new Error(`The script target "${current.name}" is closed`);
+      }
+      return current;
+    }
+    const tab =
+      pineTabsRef.current.find((entry) => entry.id === activePineTabIdRef.current) ??
+      pineTabsRef.current[0];
+    if (!tab) throw new Error('No Pine editor tab is open');
+    const target = targetForTab(tab);
+    aiTargetRef.current = target;
+    setAiTarget(target);
+    return target;
+  }, [targetForTab]);
+
+  const scriptForTarget = useCallback((target: AiScriptTarget): string => {
+    const tab = pineTabsRef.current.find((entry) => entry.id === target.pineTabId);
+    if (!tab) throw new Error(`The script target "${target.name}" is closed`);
+    return tab.script;
+  }, []);
+
+  const updateTargetScript = useCallback(
+    (target: AiScriptTarget, source: string) => {
+      // The tool loop can call the next tool before React re-renders, so the
+      // ref list is the synchronous source of truth for scriptForTarget.
+      const tabs = pineTabsRef.current.map((tab) =>
+        tab.id === target.pineTabId ? { ...tab, script: source } : tab,
+      );
+      pineTabsRef.current = tabs;
+      setPineTabs(tabs);
+      if (target.pineTabId === activePineTabIdRef.current) scriptRef.current = source;
+      openVelaPanel('pine');
+    },
+    [openVelaPanel, setPineTabs],
+  );
+
+  const askAiAboutIndicator = useCallback(
+    (source: string, savedId: string, workspaceTabId: string) => {
+      if (!source.trim()) return;
+      const saved = libraryRef.current.items.find((item) => item.id === savedId) ?? null;
+      const useSaved =
+        saved !== null &&
+        normalizePineSource(saved.source) === normalizePineSource(source);
+      let tab = useSaved
+        ? findPineTabBySavedId(pineTabsRef.current, savedId)
+        : findPineTabBySource(pineTabsRef.current, source);
+      if (!tab) {
+        tab = makePineTab(source, useSaved ? savedId : '');
+        const tabs = [...pineTabsRef.current, tab];
+        pineTabsRef.current = tabs;
+        setPineTabs(tabs);
+      }
+      setActivePineTabId(tab.id);
+      const target: AiScriptTarget = {
+        pineTabId: tab.id,
+        savedId: useSaved ? savedId : '',
+        name: useSaved ? saved!.name : suggestedName(source, 'Draft'),
+        workspaceTabId: workspaceTabId || activeTabId,
+      };
+      aiTargetRef.current = target;
+      setAiTarget(target);
+      setAiTargetRequest(target);
+      setAiOpen(true);
+    },
+    [activeTabId, setActivePineTabId, setPineTabs],
+  );
+
   const refreshAiStatus = useCallback(() => {
     void fetchAiStatus()
       .then(setAiStatus)
@@ -1843,21 +1944,19 @@ export default function App() {
     return () => setAiBridge(null);
   }, [toggleAi]);
 
-  const [aiAgentId, setAiAgentId] = usePersistedState<string>(
-    'screener.ai.agent',
-    'assistant',
-    isString,
-  );
-  const aiAgent = agentById(aiAgentId);
-
   const newScript = useCallback(
     (input: {
       source: string;
       title?: string;
       conflict?: 'save' | 'discard' | 'cancel';
     }): NewScriptResult => {
-      const saved = libraryRef.current.items.find((item) => item.id === savedIdRef.current) ?? null;
-      const current = scriptRef.current;
+      const target = ensureAiTarget();
+      const targetTab = pineTabsRef.current.find((tab) => tab.id === target.pineTabId);
+      if (!targetTab) {
+        return { created: false, error: `The script target "${target.name}" is closed` };
+      }
+      const saved = libraryRef.current.items.find((item) => item.id === targetTab.savedId) ?? null;
+      const current = targetTab.script;
       const dirtyNow = isDraftDirty(current, saved?.source ?? null);
       if (dirtyNow && !input.conflict) {
         return {
@@ -1906,34 +2005,48 @@ export default function App() {
           }
         }
       }
-      // The tool loop can call the next tool before React re-renders, so the
-      // mirrors must update in the same tick as the state.
+      const next = makePineTab(input.source);
+      const tabs = [...pineTabsRef.current, next];
+      pineTabsRef.current = tabs;
+      setPineTabs(tabs);
+      setActivePineTabId(next.id);
+      const nextTarget: AiScriptTarget = {
+        pineTabId: next.id,
+        savedId: '',
+        name: input.title?.trim() || suggestedName(input.source, 'Draft'),
+        workspaceTabId: target.workspaceTabId,
+      };
+      aiTargetRef.current = nextTarget;
+      setAiTarget(nextTarget);
+      // The tool loop can call the next tool before React re-renders.
       scriptRef.current = input.source;
       savedIdRef.current = '';
-      setScript(input.source);
-      setCurrentSavedId('');
       openVelaPanel('pine');
-      return { created: true, chars: input.source.length };
+      return { created: true, chars: input.source.length, target: nextTarget };
     },
-    [setCurrentSavedId, setLibrary, setScript],
+    [ensureAiTarget, openVelaPanel, setActivePineTabId, setLibrary, setPineTabs],
   );
 
   const aiTools = useMemo(
     () =>
       createAppTools({
-        getScript: () => scriptRef.current,
+        target: () => ensureAiTarget(),
+        getScript: () => scriptForTarget(ensureAiTarget()),
         newScript,
         applyScript: (source) => {
-          // The tool loop can call the next tool before React re-renders, so the
-          // mirror must update in the same tick as the state.
-          scriptRef.current = source;
-          setScript(source);
-          openVelaPanel('pine');
+          const target = ensureAiTarget();
+          updateTargetScript(target, source);
         },
-        chartContext: () => activeWorkspace()?.chartContext() ?? null,
+        chartContext: () => {
+          const target = ensureAiTarget();
+          const handle = handlesRef.current.get(target.workspaceTabId);
+          if (!handle) throw new Error(`The chart target "${target.workspaceTabId}" is closed`);
+          return handle.chartContext();
+        },
         runScript: async (source, options) => {
-          const handle = activeWorkspace();
-          if (!handle) throw new Error('No workspace is open');
+          const target = ensureAiTarget();
+          const handle = handlesRef.current.get(target.workspaceTabId);
+          if (!handle) throw new Error(`The chart target "${target.workspaceTabId}" is closed`);
           const context = handle.chartContext();
           if (!context) throw new Error('No active chart');
           const [worker, live] = await Promise.all([
@@ -1949,7 +2062,14 @@ export default function App() {
           return { ok: live.ok, live, worker };
         },
         applyLive: async () => {
-          const report = await applyScriptToChart(scriptRef.current, false);
+          const target = ensureAiTarget();
+          const source = scriptForTarget(target);
+          const report = await applyScriptToChart(
+            source,
+            false,
+            target.workspaceTabId,
+            target.name,
+          );
           if (!report) return { ok: false, charts: 0, error: 'The editor is empty' };
           if (report.errors.length > 0) {
             return { ok: false, charts: report.count, error: report.errors[0] };
@@ -1960,24 +2080,27 @@ export default function App() {
           return { ok: true, charts: report.count };
         },
       }),
-    [activeWorkspace, applyScriptToChart, newScript, setScript],
-  );
-
-  // Read-only agents never see the editing tools, so the model cannot rewrite
-  // the buffer or the chart even if a prompt asks for it.
-  const aiAgentTools = useMemo(
-    () => toolsForAgent(aiTools, aiAgent.readOnly),
-    [aiAgent.readOnly, aiTools],
+    [
+      activeWorkspace,
+      applyScriptToChart,
+      ensureAiTarget,
+      newScript,
+      scriptForTarget,
+      updateTargetScript,
+    ],
   );
 
   const aiSystem = useCallback(() => {
-    const context = activeWorkspace()?.chartContext() ?? null;
+    const target = aiTargetRef.current;
+    const context = target
+      ? (handlesRef.current.get(target.workspaceTabId)?.chartContext() ?? null)
+      : (activeWorkspace()?.chartContext() ?? null);
     const lines = [
-      aiAgent.instructions,
       'You are the built-in assistant of Screener v2, a multi-venue crypto screener.',
+      'Chart reading, Pine work and debugging are all in scope. When a chart image is attached, describe structure, levels, trend and momentum before judging price action.',
       'Charts run Pine v6 through the app engine. The right dock holds the Screener, Pine and Library panels; this sidebar sits on the left.',
       'Use the tools instead of guessing: get_script before editing, get_chart_context for the chart setup, apply_live after an edit, run_script to debug.',
-      'When the user asks for a Pine indicator or strategy, the deliverable is the applied chart, not a chat code block: start a new script with new_script, call apply_live, then verify with run_script. Edit an existing script with edit_code. If new_script returns needsDecision, ask the user whether to save, discard or cancel the unsaved draft and repeat the call with conflict set to their answer. A read-only agent must ask the user to switch to Pine developer instead of pasting code.',
+      'When the user asks for a Pine indicator or strategy, the deliverable is the applied chart, not a chat code block: start a new script with new_script, call apply_live, then verify with run_script. Edit an existing script with edit_code. If new_script returns needsDecision, ask the user whether to save, discard or cancel the unsaved draft and repeat the call with conflict set to their answer.',
       'Keep interim notes short: they show as collapsed Thoughts. Put every finding, error and caveat in the final answer; tool cards show the work.',
       'Large scripts are not sent whole. get_script returns an outline with line numbers, then use read_lines(from, to) for the exact region. Apply fixes with edit_code patches; never re-emit the whole file and do not use apply_script on a large script.',
       'When a chart image is attached to the message you are looking at the active cell; read it before judging price action.',
@@ -1991,6 +2114,11 @@ export default function App() {
       'Never invent prices, indicator values or log lines: call a tool or say what you do not know.',
       'Reply in the language the user writes in. Keep answers short and concrete.',
     ];
+    if (target) {
+      lines.push(
+        `Script target: ${target.name} (Pine tab ${target.pineTabId}${target.savedId ? `, saved ${target.savedId}` : ', draft'}). Edits stay on this target even if the user switches tabs.`,
+      );
+    }
     if (context) {
       lines.push(
         `Active chart: ${context.symbol} · ${context.timeframe} · layout ${context.layout} · ${context.indicators.length} indicator(s): ${context.indicators.join(', ') || 'none'}.`,
@@ -2001,7 +2129,7 @@ export default function App() {
       );
     }
     return lines.join('\n');
-  }, [activeTab, activeWorkspace, aiAgent.instructions]);
+  }, [activeTab, activeWorkspace]);
 
   const saveSettings = useCallback(
     (next: Settings) => {
@@ -2041,11 +2169,8 @@ export default function App() {
         {aiOpen ? (
           <AiSidebar
             width={aiSidebarWidth}
-            tools={aiAgentTools}
+            tools={aiTools}
             system={aiSystem}
-            agents={AI_AGENTS}
-            agent={aiAgent}
-            onAgentChange={(id) => setAiAgentId(id)}
             configured={aiStatus?.configured ?? null}
             model={aiStatus?.model ?? null}
             transcriptionModel={aiStatus?.transcriptionModel ?? null}
@@ -2064,6 +2189,10 @@ export default function App() {
             }}
             onWidthChange={setAiWidth}
             onClose={() => setAiOpen(false)}
+            target={aiTarget}
+            targetRequest={aiTargetRequest}
+            onTargetRequestHandled={() => setAiTargetRequest(null)}
+            onClearTarget={() => setAiTarget(null)}
           />
         ) : null}
         <section className="relative min-w-0 flex-1 overflow-hidden bg-background">
@@ -2097,6 +2226,9 @@ export default function App() {
                       : undefined
                   }
                   onShowSource={showSource}
+                  onAskAi={(source, savedId) =>
+                    askAiAboutIndicator(source, savedId, tab.id)
+                  }
                   onIndicatorsChange={refreshIndicatorRows}
                   onPineSettings={({ inputs, props }) =>
                     setTabs((prev) =>

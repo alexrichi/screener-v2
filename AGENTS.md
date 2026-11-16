@@ -94,8 +94,7 @@ src/
   components/
     AppHeader.tsx                 brand, workspace tabs, "+" picker, status
     AiSidebar.tsx                 left AI sidebar: assistant-ui chat, history, attachments,
-                                  dictation, agents
-    AiAgentPicker.tsx             agent preset picker for the header and composer
+                                  dictation
     AiChatHistory.tsx             chat history: search, date groups, inline rename, delete
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
@@ -116,13 +115,13 @@ src/
     useMarketRows.ts              market-row poll loop via the venue layer
     useDictation.ts               microphone recording and sidecar transcription
   lib/
-    ai/agents.ts                  agent presets: prompt, read-only flag
     ai/debug.worker.ts            disposable pine-engine debug run over sidecar bars
     ai/debugRun.ts                debug worker lifecycle and timeout
     ai/debugResult.ts             engine run to ScriptRunSummary mapping
     ai/model.ts                   OpenAI-compatible provider + config and transcription calls
     ai/title.ts                   one-shot generated title for assistant-ui chats
     ai/tools.ts                   app tools: script, chart context, debug run
+    ai/target.ts                  script/chart target carried by AI tool calls
     ai/uiChats.ts                 assistant-ui sessions, migration, groups, title fallback
     utils.ts                      shadcn `cn` helper for registry components
     alerts.ts                     session-only per-tab chart alerts
@@ -136,7 +135,11 @@ src/
     marketData.ts                 market rows for the checked venues via the sidecar
     pineDraft.ts                  saved/source dirty comparison and starter templates
     pineTabs.ts                   Pine editor tab model, source normalization, legacy migration and validators
-    pineVela/engine.ts            Vela ScriptingEngine backed by pine-engine
+    pineVela/engine.ts            Vela ScriptingEngine: worker orchestration and result mapping
+    pineVela/session.ts           Pine run state: bars, inputs, security caches, probes
+    pineVela/engine.worker.ts     module worker: compile and run sessions off the main thread
+    pineVela/protocol.ts          structured-clone worker messages
+    pineVela/workerClient.ts      worker lifecycle and needs/resume fetching
     universe.ts                   per-venue trim, scan target grouping, favorites key
     velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
     velaLayouts.ts                topbar Layouts action and popover bridge
@@ -261,7 +264,10 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   chart keeps what it has and the table shows the error. Vela never fetches older bars
   on pan, zoom or resize, so the host watches `viewport:changed` and wheel-zoom-out,
   then raises the cell's depth by 500 bars (cap 100k) when the viewport reaches the
-  oldest loaded bar (8-bar tolerance) or the zoom hits the loaded-depth limit. A
+  oldest loaded bar (8-bar tolerance) or the zoom hits the loaded-depth limit. Since
+  Vela 0.10.8 the zoom-out floor is a fixed 0.5 px per bar instead of "all bars fill
+  the width", so a deep zoom-out passes the loaded series and extends the depth in
+  500-bar steps until the view is covered; it stops at the floor, not per tick. A
   `ResizeObserver` also fills a cell whose width grew while its loaded series ends at
   the left edge: it asks for `depth * newWidth / oldWidth` (cap 100k) instead of
   re-framing. Vela keeps the bar spacing, so the older bars fill the extra width with
@@ -338,14 +344,13 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
 - The AI sidebar is a sibling of the Vela section, not a Vela panel, so it stays
   visible next to the chart and the Pine dock. `screener.ai.open` and
   `screener.ai.width` persist; chats live in `screener.ai.aui.v2`
-  (`{ version: 2, sessions, activeId }`, capped at 30 chats and 200 messages each)
-  and the selected agent in `screener.ai.agent`. The tool loop runs in the
+  (`{ version: 2, sessions, activeId }`, capped at 30 chats and 200 messages each).
+  The tool loop runs in the
   renderer (`AssistantUiThread`) because the tools need the live editor and
   chart; the sidecar only proxies the model call with `AI_BASE_URL`, `AI_MODEL`,
   `AI_TRANSCRIBE_MODEL` and `AI_API_KEY`. Tools are `get_chart_context`,
   `get_script`, `read_lines`, `edit_code`, `new_script`, `apply_script`,
-  `run_script` and `apply_live`; read-only agents drop `edit_code`,
-  `new_script`, `apply_script` and `apply_live`. Attached text files are
+  `run_script` and `apply_live`. Attached text files are
   folded into the prompt; images ride as image parts of the user message.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
@@ -485,6 +490,17 @@ id first, then falls back to a normalized source match, so a CRLF copy or a
 renamed handle still lands in the right tab. Do not add a parallel chart
 button or reach into renderer internals.
 
+**AI tools use an explicit script target.** `lib/ai/target.ts` carries
+`{ pineTabId, savedId, name, workspaceTabId }`. `get_script` binds the active
+Pine tab on first use and returns that target; `edit_code`, `apply_script`,
+`apply_live` and `run_script` resolve the target by id, not the currently active
+tab. `new_script` creates a fresh tab and returns its target. The AI sidebar
+shows `Editing <name>` and can clear it. Closing the target makes the next tool
+return an error instead of writing into another tab. The legend row's
+`screener-ask-ai` action (sparkles, before Source code) resolves the script from
+the clicked indicator and opens the sidebar with that target; native indicators
+have no source and no action.
+
 **The AI sidebar is renderer-side and keyless.** `lib/ai/model.ts` points an
 OpenAI-compatible provider at `<sidecar>/ai/v1`; `sidecar/ai.ts` swaps in the real
 key and model. The key lives only in the sidecar process and its settings file
@@ -506,7 +522,12 @@ that buffer to the active chart through the same in-place path as the editor's
 Apply button and returns the live `{ ok, error }`; `run_script` runs the same
 source twice: on the active chart through `chart.runScript()` (the truth,
 including the forming bar) and in a disposable worker over sidecar bars with
-`@screener/pine-engine`, hard-terminated after 20 s. The worker captures
+`@screener/pine-engine`, hard-terminated after 20 s. The worker uses the same
+`PineSession` as the chart engine, so `request.security`/`security_lower_tf`
+fetch lower and foreign series through the sidecar adapter instead of returning
+`na`. The live probe also waits briefly for a follow-up run when the source
+uses `request.security`, so the summary reports the final series, not the
+provisional pass. It captures
 `log.info/warning/error` lines and adds a second result to compare; the chart
 probe removes its indicator again, so debugging leaves no legend row. The chart
 image is attached as a `file` part of the **user** message, not as a tool
@@ -542,8 +563,7 @@ line numbers (`lib/ai/scriptOutline.ts`). The model then calls
 `read_lines(from, to)` (400-line page, raw text, no prefixes) and applies fixes
 with `edit_code`, a list of `{ oldStr, newStr }` patches validated by
 `lib/ai/edits.ts` (each anchor must be unique). `apply_script` refuses sources
-over 40k so a truncated model answer cannot overwrite a 126k file. Read-only
-agents get neither editing tool.
+over 40k so a truncated model answer cannot overwrite a 126k file.
 
 **The assistant-ui chat is the AI sidebar.** It renders the `Thread` from
 `src/components/assistant-ui/`, installed with
@@ -566,7 +586,7 @@ timestamps. `AssistantUiThread` is controlled: the sidebar passes
 to the tool cards, and the final answer text as text. `ChainOfThoughtGroup` folds
 a run into one `Used N <tools>` line; `ToolActivityGroup` names each smaller tool
 run, and the kit's `group-chainOfThought` honours the `ChainOfThought` slot.
-Agents keep interim notes short. The tab strip switches between the current chat
+The assistant keeps interim notes short. The tab strip switches between the current chat
 and `All chats`; the history view has search, relative-date groups, inline rename
 and delete, and hides chats with no messages. The first assistant reply triggers
 one `generateText` title call in the user's language (fallback: the first user
@@ -576,14 +596,13 @@ text. `titleSource: 'user'` stops later generated titles from overwriting a
 manual rename. `screener.ai.aui.v1` is folded into one session and
 removed on first load.
 
-The composer keeps the model and reasoning pickers inside the action row and
-puts the agent mode in a `ComposerFooter` slot below the card, which keeps a
-narrow sidebar readable. The same row carries the **Chart** toggle (the active
+The composer keeps the model and reasoning pickers inside the action row, which
+keeps a narrow sidebar readable. The same row carries the **Chart** toggle (the active
 chart PNG rides on the newest user message, older file parts are dropped so the
 payload does not grow) and the mic; the mic uses `useDictation`,
 and it stays hidden until a transcription model is configured. The composer
 component types are module-level constants fed by `AiComposerContext`; recreating
-them when model/reasoning/agent state changes makes assistant-ui remount the
+them when model/reasoning state changes makes assistant-ui remount the
 composer and closes an open picker popover. The chosen model
 (`screener.ai.model`) and reasoning level (`screener.ai.reasoning`) persist and
 apply to the assistant-ui requests;
@@ -878,9 +897,9 @@ Useful browser probes:
   the error while the previous code keeps running. `All` adds or updates every
   cell. Deleting the applied row from the legend clears the tab's stored script:
   `Update layout` then drops `pine` from the snapshot, a reload does not reapply
-  it, and switching layouts does not bring it back. The Pine developer AI calls
+  it, and switching layouts does not bring it back. The AI calls
   `edit_code` then `apply_live` and reports
-  the live result; `Chart analyst` gets none of the three editing tools.
+  the live result.
 - Change a setting of the applied Pine script (for example `Show MA lines`),
   reload: the value survives and the script reopens with it. The tab stores the
   applied inputs in `pineInputs` and property overrides in `pineProps`; a layout
@@ -940,6 +959,13 @@ Useful browser probes:
   script back. Type in one tab, switch away and back, then `Ctrl+Z`: only that
   tab's edit is undone. A saved CRLF script opens without a dirty dot, and
   closing the active tab moves the editor to a remaining tab.
+- Applying a script that uses `request.security_lower_tf` loads the
+  `engine.worker-*.js` chunk, plots the lower-timeframe count, and leaves the
+  main thread responsive; the console has no worker errors.
+- Every Pine legend row has an `Ask AI about this script` sparkles action before
+  `Source code`; native rows have none. Clicking it opens the AI sidebar with
+  `Editing <name>`, creates or reuses the script's Pine tab, and leaves that
+  target in place when the user switches tabs.
 - The AI toggle sits at the top of the left drawing toolbar above `Cursor`;
   clicking it opens the sidebar (the chart host refills history), flips to
   `Hide AI` with the active highlight, and closing restores the chart. The width
@@ -949,7 +975,10 @@ Useful browser probes:
   source, `run_script` returns `{ ok, live, worker }` with plots, warnings and
   worker log lines (the live run adds vars and engine errors), a broken script
   returns its error, and a `Chart`-attached turn sends the PNG as a user image
-  part (`image_url` reaches the provider).
+  part (`image_url` reaches the provider). A script using
+  `request.security_lower_tf(syminfo.tickerid, "1", [close])` on a 5m chart
+  reports the same intrabar count in `live` and `worker`, and the worker logs no
+  `needs 1-minute intrabar data` warning.
 - The assistant-ui chat shows `Chat` / `All chats` tabs. History searches titles
   and chart context, groups by date, renames inline and deletes; empty chats are
   hidden. After the first reply the title is generated in the user's language
@@ -962,8 +991,6 @@ Useful browser probes:
   carries both images and the file text, and reload keeps the text but not the
   base64. With a fake media device, dictation fills the composer from the
   sidecar transcription; the mic is hidden without a transcription model.
-  Switching to `Chart analyst` sends four tools (no `edit_code`, `new_script`,
-  `apply_script` or `apply_live`); the selection and the chosen agent survive reload.
 - A script over 40k chars comes back from `get_script` as
   `{ chars, lines, truncated: true, source: null, outline }`; `read_lines(1, 5)`
   returns exactly those raw lines and the total; `edit_code` with one anchor
@@ -1066,9 +1093,9 @@ reaching into `node_modules` or the peer `../Vela` checkout:
 The docs page exposes "View as Markdown"; the LLM index is
 <https://docs.luxalgo.com/llms.mdx/vela/content.md>. Vite and `tsconfig` resolve
 `@luxalgo/vela` to the local `../Vela/src` checkout; `package.json` keeps the npm
-pin as a fallback and must name the same minor: `^0.10.7`.
+pin as a fallback and must name the same minor: `^0.10.8`.
 
-The checkout must be Vela 0.10.7 or newer. Since 0.10.7 `cell.timeframe` and
+The checkout must be Vela 0.10.8 or newer. Since 0.10.7 `cell.timeframe` and
 `cell.priceStyle` are the values the chart shows (a provider or style fallback),
 while `cell.requestedTimeframe` and `cell.requestedPriceStyle` are the user's
 choices: persist and capture the requested values, display the shown ones.
@@ -1128,9 +1155,24 @@ the language entry stays usable without a DOM editor.
 `ScriptingEngine` port over `pine-engine`, registered as
 `engines: { pine: () => new PineEngine() }`. It reports `streaming: false`, so
 Vela re-runs it on every bar notification; the adapter coalesces those runs with
-a cooldown scaled to the previous run (250 ms–2 s) and drops live ticks during a
+a cooldown scaled to the previous run (250 ms—2 s) and drops live ticks during a
 pan/zoom gesture, so a 5000-bar script cannot hitch the drag. Forced runs
-(inputs, history completion, first paint) bypass the cooldown. It reports
+(inputs, history completion, first paint) bypass the cooldown. The run itself
+happens in a module worker (`engine.worker.ts`) through `workerClient.ts`; one
+worker belongs to one `PineEngine`, sessions are multiplexed by id, and an idle
+worker is terminated after 30 s. Pending worker replies are keyed by
+`sessionId:runId`; each indicator runner starts its own run counter at 1, so two
+indicators in one cell must not share a reply slot. `PineEngine` keeps the Vela mapping, alert
+deduplication, snapshot and cooldown on the main thread. `prepare()` compiles
+once on the main thread for the input/meta schema; the worker compiles its own
+copy on the first run. The worker owns `session.ts` state: bars, inputs, visible
+range, lower/foreign caches and nested probe results. `request.security` returns
+`needs`; the main thread fetches the series and posts `resume`. The prepared token
+carries `source`, `instanceId`, `shortName` and `overlay`; `modelOf` takes
+`overlay`/`paneHint` from that prepared value, not from the computed run, so an
+overlay script never drifts into a separate pane. Hosts without a global
+`Worker` (Node/Vitest) use the same session through `LocalPineRunner` on the
+main thread. It reports
 `visibleRange: true` (scripts using
 `chart.*_visible_bar_time` re-run through `setVisibleRange`), and `inputs: true`,
 so the settings dialog works. It emits plots plus `line`/`box`/`label` drawings and `bgcolor`
@@ -1142,7 +1184,7 @@ raise one alert per bar per call site, and `strategy.*` orders run the backtest
 in `lib/pineVela/strategy.ts`. `request.security` works for the chart's own symbol on its own timeframe and, on a higher timeframe, by resampling the chart's bars: builtin source expressions take the fast spec path, while arrays, UDT tuples and other expressions run a nested HTF probe (the script executes once on the resampled bars, snapshots the expression per HTF bar, and the chart bar reads the snapshot the gaps/lookahead contract selects; one probe per call site and timeframe (the target site captures even when the
 script recomputes its timeframe argument inside the probe, as an auto timeframe
 derived from `timeframe.in_seconds()` does), and a probe the script's own guards
-reject falls back to `na`; the chart adapter caches probe results for its session and invalidates them when the inputs, the cached lower series, or the foreign series change). Lower timeframes read intrabar bars the host fetches through Vela's `fetchSeries` (60 s cache; the adapter strips the chart's venue prefix so `syminfo.tickerid` resolves; the sidecar's venue adapter pages past its 1500-bar cap inside the shared limiter; the local pass paints first, and a 20 s fetch timeout prevents a stuck chart): simple sources read the last lower bar per chart bar, while an array/UDT expression probes the host's lower series and reads its last bar inside the chart bar; `request.security_lower_tf` returns the lower bars inside each chart bar and `source[n]` offsets count lower bars. `ta.atr(...)` inside a security tuple is evaluated over those lower bars. A **foreign symbol** is fetched through the host at the requested timeframe: the adapter keys the bars `<symbol>@<tf>` and the engine selects the bar by the lookahead/gaps contract, reading source specs directly from the foreign series and running the tuple/function probe over its bars; a bare `ETHUSDT` resolves to the chart venue's perpetual (OKX/Bybit style tickers included). A foreign symbol the chart's venue cannot serve and an unbounded expression inside a security tuple return `na` with a warning.
+reject falls back to `na`; the worker session caches probe results and invalidates them when the inputs, the cached lower series, or the foreign series change). Lower timeframes read intrabar bars the host fetches through Vela's `fetchSeries` (60 s cache; the adapter strips the chart's venue prefix so `syminfo.tickerid` resolves; the sidecar's venue adapter pages past its 1500-bar cap inside the shared limiter; the local pass paints first, and a 20 s fetch timeout prevents a stuck chart): simple sources read the last lower bar per chart bar, while an array/UDT expression probes the host's lower series and reads its last bar inside the chart bar; `request.security_lower_tf` returns the lower bars inside each chart bar and `source[n]` offsets count lower bars. `ta.atr(...)` inside a security tuple is evaluated over those lower bars. A **foreign symbol** is fetched through the host at the requested timeframe: the adapter keys the bars `<symbol>@<tf>` and the engine selects the bar by the lookahead/gaps contract, reading source specs directly from the foreign series and running the tuple/function probe over its bars; a bare `ETHUSDT` resolves to the chart venue's perpetual (OKX/Bybit style tickers included). A foreign symbol the chart's venue cannot serve and an unbounded expression inside a security tuple return `na` with a warning.
 `na` is `NaN`, so warm-up arithmetic and comparisons behave like Pine, and
 `if not na(box)` guards still work because a drawing handle is an object. Each
 TA call site keeps its own state and source series, so two EMAs and chained

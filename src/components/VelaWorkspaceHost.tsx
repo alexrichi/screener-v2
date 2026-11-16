@@ -87,6 +87,7 @@ interface Props {
   /** Saved layout state for a fresh tab; ignored once the tab has its own doc. */
   layoutSeed?: unknown;
   onShowSource: (source: string, savedId?: string) => void;
+  onAskAi: (source: string, savedId: string) => void;
   onIndicatorsChange?: () => void;
   /** The applied script's settings changed; persist them with the tab. */
   onPineSettings?: (settings: {
@@ -102,12 +103,22 @@ interface Props {
 }
 
 const SOURCE_ACTION_ID = 'screener-show-source';
+const ASK_AI_ACTION_ID = 'screener-ask-ai';
 
 let showSourceHandler: ((source: string, savedId?: string) => void) | null = null;
+const askAiHandlers = new Map<string, (source: string, savedId: string) => void>();
+
+function legendTabId(ctx: { host: HTMLElement }): string {
+  return ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ?? '';
+}
 
 registerIcon(
   'screener-source',
   '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/></svg>',
+);
+registerIcon(
+  'screener-ai',
+  '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5 9.7 6.3 14.5 8l-4.8 1.7L8 14.5 6.3 9.7 1.5 8l4.8-1.7Z"/><path d="M12.8 1.7v2.6M11.5 3h2.6"/></svg>',
 );
 
 // The picker's pool is built venue by venue; sort it by ticker so exchanges are
@@ -133,6 +144,22 @@ registerLegendAction({
     if (indicator.source) {
       showSourceHandler?.(indicator.source, savedLibraryId(indicator.id));
     }
+  },
+});
+
+registerLegendAction({
+  id: ASK_AI_ACTION_ID,
+  icon: 'screener-ai',
+  tooltip: 'Ask AI about this script',
+  order: -10,
+  when: (indicator) =>
+    indicator.source !== undefined && indicator.language === 'pine',
+  run: (ctx, indicator) => {
+    if (!indicator.source) return;
+    askAiHandlers.get(legendTabId(ctx))?.(
+      indicator.source,
+      savedLibraryId(indicator.id),
+    );
   },
 });
 
@@ -625,6 +652,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       savedScripts,
       layoutSeed,
       onShowSource,
+      onAskAi,
       onIndicatorsChange,
       onPineSettings,
       onPineRemoved,
@@ -640,6 +668,8 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     onMarketChangeRef.current = onMarketChange;
     const onShowSourceRef = useRef(onShowSource);
     onShowSourceRef.current = onShowSource;
+    const onAskAiRef = useRef(onAskAi);
+    onAskAiRef.current = onAskAi;
     const onIndicatorsChangeRef = useRef(onIndicatorsChange);
     onIndicatorsChangeRef.current = onIndicatorsChange;
     const onPineSettingsRef = useRef(onPineSettings);
@@ -657,10 +687,14 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     useEffect(() => {
       showSourceHandler = (source, savedId) =>
         onShowSourceRef.current(source, savedId);
+      askAiHandlers.set(tab.id, (source, savedId) =>
+        onAskAiRef.current(source, savedId),
+      );
       return () => {
         showSourceHandler = null;
+        askAiHandlers.delete(tab.id);
       };
-    }, []);
+    }, [tab.id]);
 
     /** The applied script left the chart on its own: forget it on the tab so a
      *  reload, a layout save or a layout switch cannot bring it back. */
@@ -1161,7 +1195,25 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               error: 'The chart did not finish the run within 15 seconds; check that it has data.',
             };
           }
-          const run = result.run;
+          let run = result.run;
+          // The first run paints before request.security lower/foreign series
+          // arrive. Wait briefly for that follow-up so the summary reports the
+          // final values instead of the provisional pass.
+          if (run && /request\.security/.test(source)) {
+            const first = run;
+            // Collect follow-ups for a short window; the last one carries the
+            // lower/foreign series, while a live tick may arrive first.
+            run = await new Promise((resolve) => {
+              let latest = first;
+              const off = result.onUpdate((next) => {
+                latest = next;
+              });
+              window.setTimeout(() => {
+                off();
+                resolve(latest);
+              }, 1500);
+            });
+          }
           const error = result.error;
           const summary: ScriptRunSummary = {
             ok: result.ok,

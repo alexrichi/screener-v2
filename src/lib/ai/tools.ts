@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ChartContext, ScriptRunReport } from '../../types';
 import { applyEdits } from './edits';
 import { outlineScript } from './scriptOutline';
+import type { AiScriptTarget } from './target';
 
 /** Source above this is not sent whole; the model reads it in ranges. */
 const INLINE_LIMIT = 40_000;
@@ -25,6 +26,7 @@ export interface NewScriptResult {
   needsDecision?: boolean;
   cancelled?: boolean;
   chars?: number;
+  target?: AiScriptTarget;
   draft?: { title: string; chars: number; saved: boolean };
   options?: DraftConflict[];
   hint?: string;
@@ -32,6 +34,8 @@ export interface NewScriptResult {
 }
 
 export interface AiToolRuntime {
+  /** Bind the chat to the active script on first use, then keep that target. */
+  target: () => AiScriptTarget;
   getScript: () => string;
   /** Start a fresh buffer, first resolving an unsaved draft with the user. */
   newScript: (input: {
@@ -45,22 +49,6 @@ export interface AiToolRuntime {
   runScript: (source: string, options?: { bar?: number }) => Promise<ScriptRunReport>;
   /** Apply the editor buffer to the active chart in place, keeping its settings. */
   applyLive: () => Promise<LiveApplyResult>;
-}
-
-/**
- * Read-only agents get no tool that can rewrite the editor or the chart, so a
- * prompt cannot edit code through this path.
- */
-export function toolsForAgent<T extends Record<string, unknown>>(tools: T, readOnly: boolean) {
-  if (!readOnly) return tools;
-  const {
-    apply_live: _applyLive,
-    apply_script: _applyScript,
-    edit_code: _editCode,
-    new_script: _newScript,
-    ...rest
-  } = tools;
-  return rest;
 }
 
 /**
@@ -81,12 +69,14 @@ export function createAppTools(runtime: AiToolRuntime) {
         'Read the Pine editor buffer. This is not necessarily the script applied to the chart: check get_chart_context for appliedPine and the on-chart indicators before saying a script is running. Small scripts come whole; large ones come as an engine-AST outline with line numbers so you can pull exact ranges with read_lines. The outline includes declarations, functions, types, inputs, plots and request.security calls with their exact lines. Call this before editing.',
       inputSchema: z.object({}),
       execute: async () => {
+        const target = runtime.target();
         const source = runtime.getScript();
         const outline = outlineScript(source);
         const truncated = source.length > INLINE_LIMIT;
         const chart = runtime.chartContext();
         return {
           scope: 'editor',
+          target,
           appliedPine: chart?.appliedPine ?? null,
           onChartIndicators: chart?.indicators ?? [],
           chars: source.length,
@@ -152,6 +142,7 @@ export function createAppTools(runtime: AiToolRuntime) {
         runtime.applyScript(result.code);
         return {
           applied: true,
+          target: runtime.target(),
           summary,
           edits: edits.length,
           beforeChars: before.length,
@@ -194,7 +185,7 @@ export function createAppTools(runtime: AiToolRuntime) {
           };
         }
         runtime.applyScript(source);
-        return { applied: true, chars: source.length };
+        return { applied: true, target: runtime.target(), chars: source.length };
       },
     }),
 

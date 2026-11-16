@@ -15,15 +15,23 @@ import type {
 } from '@luxalgo/vela/plugin';
 import { ACCENT, CATEGORICAL, stableSeriesId } from '@luxalgo/vela/plugin';
 import {
-  canonicalTimeframe,
-  compilePine,
-  timeframeMs,
   type PineBar,
   type PineFillAnchor,
-  type PineProgram,
+  type PineInput,
   type PineRunResult,
 } from '@screener/pine-engine';
 import { pineDrawings } from './drawings';
+import { compilePineSession, PineSession } from './session';
+import type { PineToken } from './protocol';
+import {
+  defaultWorkerFactory,
+  LocalPineRunner,
+  PineWorkerClient,
+  WorkerPineRunner,
+  type FetchSeries,
+  type PineRunner,
+  type WorkerFactory,
+} from './workerClient';
 import { strategyStateOf, strategyTradesOf, tradeExecutionsOf } from './strategy';
 
 /**
@@ -89,11 +97,6 @@ const SERIES_KINDS: Record<string, LineLikeKind> = {
   cross: 'cross',
 };
 
-interface PineToken {
-  program: PineProgram;
-  instanceId: string;
-}
-
 /** `#RRGGBB` plus Pine's transparency as an alpha suffix. */
 function withTransparency(color: string, transparency = 0): string {
   if (!/^#[0-9a-fA-F]{6}$/.test(color) || transparency <= 0) return color;
@@ -101,8 +104,8 @@ function withTransparency(color: string, transparency = 0): string {
   return `${color}${alpha.toString(16).padStart(2, '0').toUpperCase()}`;
 }
 
-function inputsSchema(program: PineProgram): InputSchema[] {
-  return program.meta.inputs.map((input) => ({
+function inputsSchema(inputs: readonly PineInput[]): InputSchema[] {
+  return inputs.map((input) => ({
     key: input.id,
     title: input.name,
     type: INPUT_TYPES[input.type] ?? 'float',
@@ -124,7 +127,7 @@ export function modelOf(
   inputs: InputSchema[],
   values: Record<string, InputValue>,
 ): IndicatorModel {
-  const { instanceId, program } = token;
+  const { instanceId } = token;
   const series: SeriesSpec[] = [];
   const ordinalByKey = new Map<string, number>();
   const plotSeriesId = new Map<string, string>();
@@ -251,13 +254,11 @@ export function modelOf(
 
   return {
     id: instanceId,
-    title: program.meta.name,
+    title: run.name,
     shorttitle:
-      program.meta.shortName && program.meta.shortName !== program.meta.name
-        ? program.meta.shortName
-        : undefined,
-    overlay: program.meta.overlay,
-    paneHint: program.meta.overlay ? 'price' : 'new',
+      token.shortName && token.shortName !== run.name ? token.shortName : undefined,
+    overlay: token.overlay,
+    paneHint: token.overlay ? 'price' : 'new',
     series,
     fills,
     backgrounds: drawings.backgrounds,
@@ -278,6 +279,8 @@ export function modelOf(
 export interface PineEngineOptions {
   /** Called once per distinct warning for this workspace; hosts surface it in the UI. */
   onWarning?: (message: string) => void;
+  /** Inject a worker factory in tests or hosts without a global Worker. */
+  workerFactory?: WorkerFactory;
 }
 
 /**
@@ -287,12 +290,33 @@ export interface PineEngineOptions {
  * `request.security` is limited to the chart's own symbol and timeframe.
  * No streaming context: Vela re-runs this engine on every bar notification.
  */
+
 export class PineEngine implements ScriptingEngine {
   readonly language = 'pine';
   readonly capabilities = { streaming: false, visibleRange: true, inputs: true };
   private readonly reported = new Set<string>();
+  private readonly localPrograms = new Map<string, ReturnType<typeof compilePineSession>>();
+  private worker: PineWorkerClient | null = null;
+  private workerEnabled: boolean;
+  private sessionSeq = 0;
 
-  constructor(private readonly options: PineEngineOptions = {}) {}
+  constructor(private readonly options: PineEngineOptions = {}) {
+    this.workerEnabled =
+      typeof Worker !== 'undefined' || options.workerFactory !== undefined;
+  }
+
+  private client(): PineWorkerClient {
+    this.worker ??= new PineWorkerClient(
+      this.options.workerFactory ?? defaultWorkerFactory,
+    );
+    return this.worker;
+  }
+
+  /** Release the worker. Vela has no engine dispose hook yet; idle cleanup covers the app. */
+  dispose(): void {
+    this.worker?.terminate();
+    this.worker = null;
+  }
 
   private report(message: string): void {
     if (this.reported.has(message)) return;
@@ -300,23 +324,44 @@ export class PineEngine implements ScriptingEngine {
     this.options.onWarning?.(message);
   }
 
-  prepare(source: string, instanceId: string): Promise<PreparedScript> {
-    const program = compilePine({ source, id: instanceId });
-    if (!program.ok) {
-      return Promise.reject(new Error(program.error ?? 'The script could not be compiled'));
-    }
-    const inputs = inputsSchema(program);
-    return Promise.resolve({
+  private prepared(
+    source: string,
+    instanceId: string,
+    inputs: readonly PineInput[],
+    meta: { name: string; shortName?: string; overlay: boolean },
+    reactsToViewport: boolean,
+  ): PreparedScript {
+    return {
       language: this.language,
-      inputs,
+      inputs: inputsSchema(inputs),
       meta: {
-        title: program.meta.name,
-        shorttitle: program.meta.shortName,
-        overlay: program.meta.overlay,
+        title: meta.name,
+        shorttitle: meta.shortName,
+        overlay: meta.overlay,
       },
-      reactsToViewport: /chart\.(?:left|right)_visible_bar_time/.test(source),
-      token: { program, instanceId } satisfies PineToken,
-    });
+      reactsToViewport,
+      token: {
+        source,
+        instanceId,
+        overlay: meta.overlay,
+        ...(meta.shortName ? { shortName: meta.shortName } : {}),
+      } satisfies PineToken,
+    };
+  }
+
+  async prepare(source: string, instanceId: string): Promise<PreparedScript> {
+    // Compile once on the main thread for the input/meta schema. The worker
+    // compiles its own copy on the first run, so preparing a cell that never
+    // executes a script does not spawn a worker.
+    const compiled = compilePineSession(source, instanceId);
+    this.localPrograms.set(instanceId, compiled);
+    return this.prepared(
+      source,
+      instanceId,
+      compiled.inputs,
+      compiled.meta,
+      compiled.reactsToViewport,
+    );
   }
 
   execute(req: ExecutionRequest, handlers: ExecutionHandlers): ExecutionSession {
@@ -341,59 +386,44 @@ export class PineEngine implements ScriptingEngine {
     // The engine only alerts on the current bar, but it re-runs that bar on
     // every tick; keep each alert once per bar so the bell does not flood.
     const alerted = new Set<string>();
-    // ponytail: a 60 s lower-timeframe cache; intrabar precision on forming bars
-    // trails by at most that long. Shorter needs a per-bar subscription.
-    const LOWER_TTL_MS = 60_000;
-    const LOWER_FETCH_TIMEOUT_MS = 20_000;
-    const lowerCache = new Map<string, { bars: PineBar[]; at: number }>();
-    // Foreign `request.security` symbols come from the host's own venue feed.
-    const foreignCache = new Map<string, { bars: PineBar[]; at: number }>();
     const warnedForeign = new Set<string>();
-    let foreignChartSignature = '';
-    const prefix = (req.market.symbolInfo as { prefix?: unknown } | undefined)?.prefix;
-    const normalizeForeign = (symbol: string): string => {
-      const at = symbol.indexOf(':');
-      if (at > 0 && typeof prefix === 'string' && symbol.slice(0, at).toUpperCase() === prefix.toUpperCase()) {
-        return symbol.slice(at + 1);
-      }
-      return symbol;
+    let latestBars: PineBar[] = [];
+    const market = req.market;
+    const fetchSeries: FetchSeries | undefined = req.fetchSeries
+      ? (symbol, timeframe, range) => req.fetchSeries!(symbol, timeframe, range)
+      : undefined;
+    const onForeignError = (need: { key: string; symbol: string; timeframe: string }): void => {
+      if (warnedForeign.has(need.key)) return;
+      warnedForeign.add(need.key);
+      handlers.onWarning?.({
+        message: `request.security(${need.symbol}, ${need.timeframe}): no bars for this instrument`,
+        bar: Math.max(latestBars.length - 1, 0),
+      });
     };
-    // The probe captures the whole script on HTF/LTF bars; it is expensive and
-    // only changes when the inputs or the cached lower series change. Keep it
-    // across ticks in this session and clear it on either.
-    const probeCache = new Map<string, unknown[]>();
-    let probeSignature = '';
-    const syncProbeCache = (chartBars: readonly PineBar[]): void => {
-      const lowerSignature = Object.entries(lowerCache)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => {
-          const last = entry.bars.at(-1);
-          return `${key}:${entry.bars.length}:${last?.time ?? 0}:${last?.close ?? 0}:${last?.high ?? 0}:${last?.low ?? 0}:${last?.volume ?? 0}`;
-        })
-        .join('|');
-      // A new chart bar (or backfilled history) can extend the last HTF bucket;
-      // intra-bar price ticks do not invalidate a default lookahead_off probe.
-      const last = chartBars.at(-1);
-      const chartSignature = `${chartBars.length}:${last?.time ?? 0}`;
-      // Foreign HTF bars close on their own schedule; refresh them with the
-      // chart bar instead of keeping yesterday's daily bar for the session.
-      if (chartSignature !== foreignChartSignature) {
-        foreignChartSignature = chartSignature;
-        foreignCache.clear();
-      }
-      const foreignSignature = Object.entries(foreignCache)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => {
-          const tail = entry.bars.at(-1);
-          return `${key}:${entry.bars.length}:${tail?.time ?? 0}:${tail?.close ?? 0}`;
-        })
-        .join('|');
-      const signature = `${JSON.stringify(values)}|${chartSignature}|${lowerSignature}|${foreignSignature}`;
-      if (signature !== probeSignature) {
-        probeCache.clear();
-        probeSignature = signature;
-      }
-    };
+    const sessionId = ++this.sessionSeq;
+    let runner: PineRunner;
+    if (this.workerEnabled) {
+      runner = new WorkerPineRunner(
+        this.client(),
+        sessionId,
+        token,
+        market,
+        fetchSeries,
+        onForeignError,
+      );
+    } else {
+      const compiled =
+        this.localPrograms.get(token.instanceId) ??
+        compilePineSession(token.source, token.instanceId);
+      this.localPrograms.set(token.instanceId, compiled);
+      runner = new LocalPineRunner(
+        compiled.program,
+        token.instanceId,
+        market,
+        fetchSeries,
+        onForeignError,
+      );
+    }
 
     const reportResult = (
       result: PineRunResult,
@@ -498,8 +528,6 @@ export class PineEngine implements ScriptingEngine {
         return;
       }
       running = true;
-      const startedAt = performance.now();
-      let lastComputeStart = 0;
       const runGeneration = generation;
       try {
         const chartBars = req.getBars?.() ?? req.bars;
@@ -512,163 +540,32 @@ export class PineEngine implements ScriptingEngine {
           close: bar.close,
           volume: bar.volume ?? 0,
         }));
-
-        const requested = new Map<string, { symbol: string; timeframe: string }>();
-        const foreignRequested = new Map<string, { symbol: string; timeframe: string }>();
-        const executeOnce = () => {
-          lastComputeStart = performance.now();
-          syncProbeCache(pineBars);
-          const computed = token.program.run({
+        latestBars = pineBars;
+        const outcome = await runner.run(
+          {
             bars: pineBars,
-            timeframe: req.market.timeframe,
-            symbol: req.market.symbol,
-            symbolInfo: req.market.symbolInfo as Record<string, unknown> | undefined,
-            live: req.mode === 'live',
-            visibleRange,
-            securityProbeCache: probeCache,
             inputs: values,
-            lowerBars: Object.fromEntries(
-              [...lowerCache].map(([key, entry]) => [key, entry.bars]),
-            ),
-            foreignBars: Object.fromEntries(
-              [...foreignCache].map(([key, entry]) => [key, entry.bars]),
-            ),
-            onLowerTimeframe: (symbol, timeframe) => {
-              const tf = canonicalTimeframe(timeframe);
-              const normalized = normalizeForeign(symbol);
-              requested.set(`${normalized}@${tf}`, { symbol: normalized, timeframe: tf });
-            },
-            onForeignSymbol: (symbol, timeframe) => {
-              const tf = canonicalTimeframe(timeframe);
-              const normalized = normalizeForeign(symbol);
-              foreignRequested.set(`${normalized}@${tf}`, { symbol: normalized, timeframe: tf });
-            },
-          });
-          return computed;
-        };
-
-        let result = executeOnce();
-        const missing = [...requested].filter(([key]) => {
-          const entry = lowerCache.get(key);
-          return !entry || Date.now() - entry.at >= LOWER_TTL_MS;
-        });
-
-        if (missing.length > 0 && req.fetchSeries) {
-          // Paint the locally-computable part immediately; the intrabar pass
-          // replaces it when the lower series arrives.
-          if (missing.some(([key]) => !lowerCache.has(key))) {
-            reportResult(result, pineBars, true);
-          }
-          const last = pineBars[pineBars.length - 1]!;
-          const chartMs = timeframeMs(req.market.timeframe) || 1;
-          const from = pineBars[0]?.time ?? last.time;
-          const fetchSeries = req.fetchSeries;
-          await Promise.all(
-            missing.map(async ([key, request]) => {
-              const lowerMs = timeframeMs(request.timeframe) || 1;
-              const limit = Math.min(
-                100_000,
-                Math.max(500, Math.ceil((pineBars.length * chartMs * 1.1) / lowerMs) + 20),
-              );
-              try {
-                const series = await Promise.race([
-                  fetchSeries(request.symbol, request.timeframe, {
-                    from,
-                    to: last.time + chartMs,
-                    limit,
-                  }),
-                  new Promise<never>((_, reject) => {
-                    setTimeout(() => reject(new Error('lower timeframe fetch timed out')), LOWER_FETCH_TIMEOUT_MS);
-                  }),
-                ]);
-                lowerCache.set(key, {
-                  bars: series
-                    .map((bar) => ({
-                      time: bar.time,
-                      open: bar.open,
-                      high: bar.high,
-                      low: bar.low,
-                      close: bar.close,
-                      volume: bar.volume ?? 0,
-                    }))
-                    .sort((a, b) => a.time - b.time),
-                  at: Date.now(),
-                });
-              } catch {
-                lowerCache.set(key, { bars: [], at: Date.now() });
-              }
-            }),
-          );
-          if (stopped || runGeneration !== generation) return;
-          result = executeOnce();
-        }
-
-        const missingForeign = [...foreignRequested].filter(([key]) => {
-          const entry = foreignCache.get(key);
-          return !entry || Date.now() - entry.at >= LOWER_TTL_MS;
-        });
-        if (missingForeign.length > 0 && req.fetchSeries) {
-          const last = pineBars[pineBars.length - 1]!;
-          const chartMs = timeframeMs(req.market.timeframe) || 1;
-          const fetchSeries = req.fetchSeries;
-          await Promise.all(
-            missingForeign.map(async ([key, request]) => {
-              const requestedMs = timeframeMs(request.timeframe) || chartMs;
-              const limit = Math.min(
-                100_000,
-                Math.max(50, Math.ceil((pineBars.length * chartMs * 1.1) / requestedMs) + 20),
-              );
-              try {
-                const series = await Promise.race([
-                  fetchSeries(request.symbol, request.timeframe, {
-                    from: pineBars[0]?.time ?? last.time,
-                    to: last.time + chartMs,
-                    limit,
-                  }),
-                  new Promise<never>((_, reject) => {
-                    setTimeout(
-                      () => reject(new Error('foreign symbol fetch timed out')),
-                      LOWER_FETCH_TIMEOUT_MS,
-                    );
-                  }),
-                ]);
-                foreignCache.set(key, {
-                  bars: series
-                    .map((bar) => ({
-                      time: bar.time,
-                      open: bar.open,
-                      high: bar.high,
-                      low: bar.low,
-                      close: bar.close,
-                      volume: bar.volume ?? 0,
-                    }))
-                    .sort((a, b) => a.time - b.time),
-                  at: Date.now(),
-                });
-              } catch {
-                foreignCache.set(key, { bars: [], at: Date.now() });
-                if (!warnedForeign.has(key)) {
-                  warnedForeign.add(key);
-                  handlers.onWarning?.({
-                    message: `request.security(${request.symbol}, ${request.timeframe}): no bars for this instrument`,
-                    bar: pineBars.length - 1,
-                  });
-                }
-              }
-            }),
-          );
-          if (stopped || runGeneration !== generation) return;
-          result = executeOnce();
-        }
-
+            visibleRange,
+            mode: req.mode,
+          },
+          (provisional) => {
+            if (stopped || runGeneration !== generation) return;
+            reportResult(provisional, pineBars, true);
+          },
+        );
         if (stopped || runGeneration !== generation) return;
-        reportResult(result, pineBars);
+        const reportStarted = performance.now();
+        reportResult(outcome.result, pineBars);
+        lastRunMs = outcome.durationMs + (performance.now() - reportStarted);
+      } catch (error) {
+        if (!stopped && runGeneration === generation) {
+          handlers.onError?.(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        }
       } finally {
         running = false;
         lastRunEnd = performance.now();
-        // Measure from the last script run through its model handoff; the
-        // fetch/await between runs is not the script's cost.
-        lastRunMs = lastComputeStart > 0 ? lastRunEnd - lastComputeStart : lastRunEnd - startedAt;
         if (pending && !stopped) {
           pending = false;
           void run();
@@ -694,6 +591,7 @@ export class PineEngine implements ScriptingEngine {
           clearTimeout(cooldownTimer);
           cooldownTimer = null;
         }
+        runner.stop();
       },
       update: (next) => {
         Object.assign(values, next);

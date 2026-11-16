@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyRunSummary } from '../src/lib/ai/debugResult';
-import { createAppTools, toolsForAgent } from '../src/lib/ai/tools';
+import { createAppTools } from '../src/lib/ai/tools';
 
 const meta = { symbol: 'BINANCE:BTCUSDT.P', timeframe: '15', bars: 3, maxBarsBack: null };
 
@@ -9,6 +9,12 @@ describe('AI tools', () => {
     const seen: Array<{ source: string; bar?: number }> = [];
     const summary = emptyRunSummary(meta);
     const tools = createAppTools({
+      target: () => ({
+        pineTabId: 'tab',
+        savedId: '',
+        name: 'Draft',
+        workspaceTabId: 'ws',
+      }),
       getScript: () => '//@version=6\nindicator("x")\nplot(close)',
       applyScript: () => {},
       newScript: () => ({ created: true }),
@@ -33,6 +39,12 @@ f(
     a + b
 plot(f(1, 2))`;
     const tools = createAppTools({
+      target: () => ({
+        pineTabId: 'tab',
+        savedId: '',
+        name: 'Draft',
+        workspaceTabId: 'ws',
+      }),
       getScript: () => source,
       applyScript: () => {},
       newScript: () => ({ created: true }),
@@ -55,10 +67,12 @@ plot(f(1, 2))`;
 
     const result = (await tools.get_script.execute!({}, {} as never)) as {
       scope: string;
+      target: { name: string; pineTabId: string };
       appliedPine: { name: string; chars: number } | null;
       outline: Array<{ kind: string; name?: string; line: number }>;
     };
     expect(result.scope).toBe('editor');
+    expect(result.target).toMatchObject({ name: 'Draft', pineTabId: 'tab' });
     expect(result.appliedPine).toEqual({ name: 'Valid BOS Pullback', chars: 100 });
     expect(result.outline).toEqual(
       expect.arrayContaining([
@@ -68,9 +82,15 @@ plot(f(1, 2))`;
     );
   });
 
-  it('forwards the new-script draft decision and hides the tool from read-only agents', async () => {
+  it('forwards the new-script draft decision', async () => {
     const calls: Array<{ source: string; title?: string; conflict?: string }> = [];
     const tools = createAppTools({
+      target: () => ({
+        pineTabId: 'tab',
+        savedId: '',
+        name: 'Draft',
+        workspaceTabId: 'ws',
+      }),
       getScript: () => '//@version=6\nindicator("x")\nplot(close)',
       newScript: (input) => {
         calls.push(input);
@@ -105,8 +125,5 @@ plot(f(1, 2))`;
     expect(second.created).toBe(true);
     expect(calls).toHaveLength(2);
     expect(calls[1].conflict).toBe('save');
-
-    expect(toolsForAgent(tools, true)).not.toHaveProperty('new_script');
-    expect(toolsForAgent(tools, false)).toHaveProperty('new_script');
   });
 });

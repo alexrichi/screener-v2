@@ -9,7 +9,6 @@ import {
   withModel,
 } from '../sidecar/ai';
 import { providerIdFor, presetById } from '../src/lib/ai/providers';
-import { toolsForAgent } from '../src/lib/ai/tools';
 
 describe('AI sidecar config', () => {
   it('trims the base URL and keeps the stored key when the field is blank', () => {
@@ -141,23 +140,3 @@ describe('AI provider presets', () => {
   });
 });
 
-describe('AI agent tools', () => {
-  it('hides every editing tool from a read-only agent', () => {
-    const tools = {
-      get_chart_context: 1,
-      get_script: 2,
-      read_lines: 3,
-      edit_code: 4,
-      apply_script: 5,
-      run_script: 6,
-      apply_live: 7,
-    };
-    expect(Object.keys(toolsForAgent(tools, true))).toEqual([
-      'get_chart_context',
-      'get_script',
-      'read_lines',
-      'run_script',
-    ]);
-    expect(toolsForAgent(tools, false)).toBe(tools);
-  });
-});

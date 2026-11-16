@@ -9,9 +9,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type { ToolSet } from 'ai';
-import { Image as ImageIcon, Mic } from 'lucide-react';
+import { Image as ImageIcon, Mic, Sparkles, X } from 'lucide-react';
 import { useAui, type ThreadMessage } from '@assistant-ui/react';
-import { AiAgentPicker } from './AiAgentPicker';
 import { AiChatHistory } from './AiChatHistory';
 import { AiChatTabs } from './AiChatTabs';
 import { AiModelPicker, AiReasoningPicker } from './AiModelPicker';
@@ -20,6 +19,7 @@ import { ChainOfThoughtGroup } from './ChainOfThoughtGroup';
 import { ToolActivityGroup } from './ToolActivityGroup';
 import type { ThreadComponents } from './assistant-ui/elements/thread.aui';
 import { generateChatTitle } from '../lib/ai/title';
+import type { AiScriptTarget } from '../lib/ai/target';
 import {
   UI_CHATS_KEY,
   UI_CHATS_LEGACY_KEY,
@@ -38,7 +38,6 @@ import {
   type UiChats,
 } from '../lib/ai/uiChats';
 import { useDictation } from '../hooks/useDictation';
-import type { AiAgent, AiAgentId } from '../lib/ai/agents';
 import { isAiReasoning, type AiReasoning } from '../lib/ai/model';
 import { isString, usePersistedState } from '../lib/usePersistedState';
 import { IconButton, Spinner } from '../ui/primitives';
@@ -51,9 +50,6 @@ interface Props {
   width: number;
   tools: ToolSet;
   system: () => string;
-  agents: AiAgent[];
-  agent: AiAgent;
-  onAgentChange: (id: AiAgentId) => void;
   /** Null until the sidecar answers; false keeps the settings hint reachable. */
   configured: boolean | null;
   model: string | null;
@@ -65,12 +61,14 @@ interface Props {
   onOpenSettings: () => void;
   onWidthChange: (width: number) => void;
   onClose: () => void;
+  target: AiScriptTarget | null;
+  /** A legend click asks for a fresh chat on the newly targeted script. */
+  targetRequest: AiScriptTarget | null;
+  onTargetRequestHandled: () => void;
+  onClearTarget: () => void;
 }
 
 interface AiComposerValue {
-  agent: AiAgent;
-  agents: AiAgent[];
-  onAgentChange: (id: AiAgentId) => void;
   selectedModel: string | null;
   configuredModel: string | null;
   reasoning: AiReasoning;
@@ -150,22 +148,8 @@ function ComposerModelControls() {
   );
 }
 
-function ComposerModeControl() {
-  const { agent, agents, onAgentChange, configuredModel } = useAiComposer();
-  return (
-    <AiAgentPicker
-      agent={agent}
-      agents={agents}
-      onAgentChange={onAgentChange}
-      model={configuredModel}
-      compact
-    />
-  );
-}
-
 const COMPOSER_COMPONENTS: ThreadComponents = {
   ComposerExtra: ComposerModelControls,
-  ComposerFooter: ComposerModeControl,
   ToolGroup: ToolActivityGroup,
   ChainOfThought: ChainOfThoughtGroup,
 };
@@ -174,9 +158,6 @@ export function AiSidebar({
   width,
   tools,
   system,
-  agents,
-  agent,
-  onAgentChange,
   configured,
   model,
   transcriptionModel,
@@ -185,6 +166,10 @@ export function AiSidebar({
   onOpenSettings,
   onWidthChange,
   onClose,
+  target,
+  targetRequest,
+  onTargetRequestHandled,
+  onClearTarget,
 }: Props) {
   const [withChart, setWithChart] = useState(true);
   const [view, setView] = useState<'chat' | 'history'>('chat');
@@ -205,8 +190,22 @@ export function AiSidebar({
     isAiReasoning,
   );
   const titlePendingRef = useRef(new Set<string>());
+  const handledTargetRequestRef = useRef<AiScriptTarget | null>(null);
   const activeUiChat =
     uiChats.sessions.find((session) => session.id === uiChats.activeId) ?? uiChats.sessions[0];
+
+  // A legend click must not append to an unrelated transcript.
+  useEffect(() => {
+    if (!targetRequest || handledTargetRequestRef.current === targetRequest) return;
+    handledTargetRequestRef.current = targetRequest;
+    setView('chat');
+    setUiChats((state) => {
+      const active =
+        state.sessions.find((session) => session.id === state.activeId) ?? state.sessions[0];
+      return active && active.messages.length > 0 ? createUiChat(state, contextLabel) : state;
+    });
+    onTargetRequestHandled();
+  }, [contextLabel, onTargetRequestHandled, setUiChats, targetRequest]);
 
   // The legacy key was folded into v2 by loadInitialUiChats; drop the old copy.
   useEffect(() => {
@@ -249,10 +248,12 @@ export function AiSidebar({
   );
 
   const newUiChat = () => {
+    onClearTarget();
     setUiChats((state) => createUiChat(state, contextLabel));
     setView('chat');
   };
   const openUiChat = (id: string) => {
+    onClearTarget();
     setUiChats((state) => selectUiChat(state, id));
     setView('chat');
   };
@@ -269,9 +270,6 @@ export function AiSidebar({
   );
   const composerValue = useMemo<AiComposerValue>(
     () => ({
-      agent,
-      agents,
-      onAgentChange,
       selectedModel: aiModelChoice || null,
       configuredModel: model,
       reasoning: aiReasoning,
@@ -282,12 +280,9 @@ export function AiSidebar({
       transcriptionModel,
     }),
     [
-      agent,
-      agents,
       aiModelChoice,
       aiReasoning,
       model,
-      onAgentChange,
       onModelChange,
       setAiReasoning,
       withChart,
@@ -334,6 +329,24 @@ export function AiSidebar({
         onOpenSettings={onOpenSettings}
         onClose={onClose}
       />
+
+      {target ? (
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-1.5 text-[10px] text-muted-foreground">
+          <Sparkles className="size-3 shrink-0 text-primary" />
+          <span className="min-w-0 truncate">
+            Editing <span className="font-medium text-foreground">{target.name}</span>
+          </span>
+          <button
+            type="button"
+            onClick={onClearTarget}
+            title="Stop targeting this script"
+            aria-label="Clear script target"
+            className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ) : null}
 
       <div className={cn('flex min-h-0 flex-1 flex-col', view !== 'chat' && 'hidden')}>
         {configured === false ? (

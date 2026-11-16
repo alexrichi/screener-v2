@@ -75,7 +75,7 @@ function programOf(run: PineRunResult): PineProgram {
 describe('pine model', () => {
   it('maps price lines, fills and bar colors into the Vela model', () => {
     const run = runResult();
-    const model = modelOf({ program: programOf(run), instanceId: 'inst' }, run, bars, [], {});
+    const model = modelOf({ source: '', instanceId: 'inst', overlay: false }, run, bars, [], {});
 
     expect(model.priceLines).toEqual([
       {
@@ -120,7 +120,7 @@ describe('pine model', () => {
 
   it('anchors hline fills on hidden constant series that stay out of the scale', () => {
     const run = runResult();
-    const model = modelOf({ program: programOf(run), instanceId: 'inst' }, run, bars, [], {});
+    const model = modelOf({ source: '', instanceId: 'inst', overlay: false }, run, bars, [], {});
     const anchors = model.series.filter((series) => series.visible === false);
 
     const upper = anchors.find((series) => series.title === 'hline 0')!;

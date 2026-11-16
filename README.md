@@ -24,7 +24,7 @@ TypeScript app; there is no private backend and no API key.
 The app resolves `@luxalgo/vela`, `@screener/pine-engine` and
 `@screener/pine-editor` to the local `../Vela`, `../pine-engine` and
 `../pine-editor` checkouts, so chart, engine and editor changes run live. A
-small Vite plugin inlines the Pine worker from source.
+Vite bundles the chart engine, scanner and debug workers from source.
 
 ## Run
 
@@ -66,11 +66,11 @@ or picked images and text files, dictated prompts and an optional **Chart**
 capture that attaches the active chart image. A run's activity is folded into a
 `Used N …` line: expand it for the Thoughts and tool cards, and expand those
 further for details. The final answer stays visible. The composer also picks the
-model and reasoning level; the agent mode (Assistant, Chart analyst or Pine
-developer) sits just below it and changes the system prompt and tools. The
-writing agents create a new indicator or strategy in a fresh buffer and apply it
-to the chart; when the editor holds an unsaved draft, they ask whether to save,
-discard or cancel it before replacing the buffer.
+model and reasoning level. The assistant creates a new indicator or strategy in
+a fresh buffer and applies it to the chart; when the editor holds an unsaved
+draft, it asks whether to save, discard or cancel before replacing the buffer. Every Pine indicator's legend
+row has a sparkles action that opens the sidebar already targeting that script;
+the target is shown under the chat tabs and survives switching Pine tabs.
 
 Environment variables still work and win over the stored settings:
 
@@ -144,7 +144,8 @@ the same `build` string.
   context actions (Go to Definition, Discard, New tab, Open script, Save,
   Toggle console) and lint. Apply a script to the active chart or all charts in
   the workspace; an on-chart script updates in place and keeps its inputs and
-  settings. Scripts can draw plots, hlines, fills, markers, lines, boxes,
+  settings. The chart engine runs in a module worker, so a heavy script does not
+  block the UI. Scripts can draw plots, hlines, fills, markers, lines, boxes,
   labels, tables and candles, and recolor chart candles with `barcolor`.
   `request.security` reads higher timeframes, lower intrabar data, and foreign
   instruments such as an SMT pair. An applied script reopens with its saved
@@ -191,8 +192,8 @@ the same `build` string.
   drawing toolbar, above the cursor tool. Chats are kept until deleted, and accept images,
   text files and dictation. The assistant reads the script, rewrites the editor
   buffer, runs a debug pass on the active chart (errors, warnings, plot values,
-  vars) and receives the chart as an image when `Chart` is on. Agent presets
-  switch between general, read-only chart analysis and Pine development. It
+  vars) and receives the chart as an image when `Chart` is on. It reads charts,
+  writes Pine scripts and debugs them on the active chart. It
   works against any OpenAI-compatible model; the key stays in the sidecar.
 - Scanner runs the same script over closed candles in a Web Worker and adds the
   last plot values as table columns. It walks the checked venues sequentially;
