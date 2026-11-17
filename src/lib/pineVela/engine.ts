@@ -95,6 +95,15 @@ const SERIES_KINDS: Record<string, LineLikeKind> = {
   column: 'columns',
   circles: 'circles',
   cross: 'cross',
+  style_line: 'line',
+  style_linebr: 'line',
+  style_stepline: 'step',
+  style_steplinebr: 'step',
+  style_histogram: 'histogram',
+  style_columns: 'columns',
+  style_circles: 'circles',
+  style_cross: 'cross',
+  style_area: 'area',
 };
 
 /** `#RRGGBB` plus Pine's transparency as an alpha suffix. */
@@ -147,6 +156,9 @@ export function modelOf(
       points: plot.values.map((value, index) => ({
         time: bars[index]?.time ?? 0,
         value: Number.isFinite(value) ? value : null,
+        ...(plot.colors?.[index]
+          ? { color: plot.colors[index] as string }
+          : {}),
       })),
       style: {
         color: withTransparency(

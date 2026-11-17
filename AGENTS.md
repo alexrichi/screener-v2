@@ -766,7 +766,11 @@ serve natively (`45`, `180`) are unsupported until the sidecar builds them.
 the last finite numeric value. Keep the cap (12) and the table's dynamic column
 merge stable. Plot keys are the column identity; titles are display only. Titles
 come from the parsed AST, because the transpiled metainfo carries only ids and
-styles.
+styles. A plot's color can be a series (`plot(x, color = cond ? a : b)`): the engine
+evaluates it per bar, the first color becomes the series style, and later
+deviations ride as per-point `SeriesPoint.color`; an explicit `color = na` becomes
+a transparent override. A positional `plot.style_*` is honored like the named
+argument. Static literal colors add no per-point payload.
 
 **Vela only fills between series.** `hline()` becomes a `PriceLine`, so a
 `fill(hline1, hline2)` (or `fill(hline, plot)`) would be dropped. The chart
