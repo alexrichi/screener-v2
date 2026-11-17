@@ -6,6 +6,7 @@ export type MarketFilter =
   | 'all'
   | 'gainers'
   | 'losers'
+  /** Legacy stored value; the table now reads it as `favoritesOnly`. */
   | 'favorites'
   | 'rsiLow'
   | 'rsiHigh'
@@ -185,6 +186,8 @@ export interface ScreenerView {
   columns: ColumnState;
   query: string;
   filter: MarketFilter;
+  /** Show only the rows in the active favorite list; combines with `filter`. */
+  favoritesOnly?: boolean;
 }
 
 export interface PlotValue {

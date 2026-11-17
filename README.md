@@ -144,9 +144,10 @@ the same `build` string.
   Lists are stored at `screener.favorites.v2` per instrument
   (`venue:kind:nativeId`), and the old `screener.favorites` key folds into the
   default list. Create, rename, clear, or delete lists; import a JSON/text file
-  into the active list; export every list as JSON. Favorites stay visible in the
-  `Favorites` tab for every symbol the sidecar watches; a symbol below the volume
-  threshold is not fetched, so it does not appear there.
+  into the active list; export every list as JSON. The star button beside the
+  list dropdown shows only the active list, and the metric filters and search
+  still apply within it. A symbol below the volume threshold is not fetched, so
+  it does not appear there.
   The active list name labels the favorites button in the screener toolbar.
 - Pine editor with tabs, presets and Monaco highlighting, completions, signature
   help, folding, search, semantic colors, outline, formatting, rich hover docs,

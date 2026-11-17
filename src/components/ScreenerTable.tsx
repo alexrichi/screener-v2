@@ -48,6 +48,7 @@ import {
   formatPrice,
 } from '../lib/format';
 import { DEFAULT_FAVORITE_LIST_ID, type FavoriteList } from '../lib/favorites';
+import { filterScreenerRows } from '../lib/screenerFilter';
 import { mergeColumnOrder, nextSort } from '../lib/view';
 import { cn } from '../ui/cn';
 import { Button, Input, Segmented } from '../ui/primitives';
@@ -103,12 +104,6 @@ function scanValue(result: ScanResult | undefined, plotKey: string | undefined):
 
 function timeframeLabel(timeframe: string): string {
   return timeframe === '60' ? '1h' : `${timeframe}m`;
-}
-
-function searchText(row: ScreenerRow): string {
-  return `${row.instrument.nativeId} ${row.instrument.base} ${venueLabel(
-    row.instrument.venue,
-  )}`.toUpperCase();
 }
 
 interface Props {
@@ -173,6 +168,7 @@ export function ScreenerTable({
   onCloseTab,
 }: Props) {
   const { sort, columns, query, filter } = view;
+  const favoritesOnly = view.favoritesOnly === true || filter === 'favorites';
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const [venuesOpen, setVenuesOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
@@ -236,32 +232,15 @@ export function ScreenerTable({
       ? column.width
       : (columns.widths[column.key] ?? column.width);
 
-  const filteredRows = useMemo(() => {
-    const needle = query.trim().toUpperCase();
-    let list = rows;
-    if (filter === 'gainers') list = list.filter((row) => (row.change24h ?? 0) > 0);
-    if (filter === 'losers') list = list.filter((row) => (row.change24h ?? 0) < 0);
-    if (filter === 'favorites') {
-      list = list.filter((row) => favoriteSet.has(row.instrument.key));
-    }
-    if (filter === 'rsiLow') {
-      list = list.filter((row) => (row.metrics.rsi ?? 100) < 30);
-    }
-    if (filter === 'rsiHigh') {
-      list = list.filter((row) => (row.metrics.rsi ?? 0) > 70);
-    }
-    if (filter === 'rvol') {
-      list = list.filter((row) => (row.metrics.rvol ?? 0) >= 1.5);
-    }
-    if (filter === 'aboveVwap') {
-      list = list.filter((row) => (row.metrics.vwapZ ?? 0) > 0);
-    }
-    if (filter === 'belowVwap') {
-      list = list.filter((row) => (row.metrics.vwapZ ?? 0) < 0);
-    }
-    if (needle) list = list.filter((row) => searchText(row).includes(needle));
-    return list;
-  }, [rows, query, filter, favoriteSet]);
+  const filteredRows = useMemo(
+    () =>
+      filterScreenerRows(
+        rows,
+        { filter, favoritesOnly, query },
+        favoriteSet,
+      ),
+    [rows, filter, favoritesOnly, query, favoriteSet],
+  );
 
   const sortedRows = useMemo(() => {
     const activeSort = sort;
@@ -862,6 +841,30 @@ export function ScreenerTable({
               event.currentTarget.value = '';
             }}
           />
+          <button
+            type="button"
+            aria-pressed={favoritesOnly}
+            aria-label={`Show only ${activeFavoriteListName}`}
+            title={
+              favoritesOnly
+                ? `Showing only ${activeFavoriteListName}`
+                : `Show only ${activeFavoriteListName}`
+            }
+            onClick={() =>
+              setView({
+                favoritesOnly: !favoritesOnly,
+                filter: filter === 'favorites' ? 'all' : filter,
+              })
+            }
+            className={cn(
+              'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors',
+              favoritesOnly
+                ? 'border-primary/60 bg-primary-soft text-primary-foreground'
+                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
+            )}
+          >
+            <Star className={cn('size-3.5', favoritesOnly && 'fill-current')} />
+          </button>
           <Popover.Root open={venuesOpen} onOpenChange={setVenuesOpen}>
             <Popover.Trigger
               title={`Filter venues (${venues.length}/${VENUE_IDS.length})`}
@@ -981,7 +984,6 @@ export function ScreenerTable({
                 { value: 'all', label: 'All' },
                 { value: 'gainers', label: 'Gainers' },
                 { value: 'losers', label: 'Losers' },
-                { value: 'favorites', label: 'Favorites' },
                 { value: 'rsiLow', label: 'RSI <30' },
                 { value: 'rsiHigh', label: 'RSI >70' },
                 { value: 'rvol', label: 'RVOL ≥1.5' },
@@ -1052,7 +1054,7 @@ export function ScreenerTable({
 
         {sortedRows.length === 0 ? (
           <div className="flex h-40 flex-col items-center justify-center gap-2 text-muted-foreground">
-            {filter === 'favorites' ? (
+            {favoritesOnly ? (
               <Star className="size-5 opacity-40" />
             ) : venues.length === 0 ? (
               <Filter className="size-5 opacity-40" />
@@ -1066,10 +1068,10 @@ export function ScreenerTable({
                   ? 'Loading markets…'
                   : error
                     ? 'Market data unavailable'
-                    : filter === 'favorites'
+                    : favoritesOnly
                       ? favorites.length === 0
                         ? `No favorites in ${activeFavoriteListName} yet. Click the star next to a symbol.`
-                        : 'No favorites match your search.'
+                        : 'No favorites match your filters.'
                       : 'No markets found'}
             </span>
             {venues.length > 0 && error ? (

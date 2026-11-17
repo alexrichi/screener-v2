@@ -19,6 +19,7 @@ export const DEFAULT_VIEW: ScreenerView = {
   columns: { order: BASE_COLUMN_KEYS, hidden: [], widths: {} },
   query: '',
   filter: 'all',
+  favoritesOnly: false,
 };
 
 /**
@@ -86,6 +87,7 @@ export function isScreenerView(value: unknown): value is ScreenerView {
     Array.isArray(columns.order) &&
     Array.isArray(columns.hidden) &&
     typeof columns.widths === 'object' &&
-    columns.widths !== null
+    columns.widths !== null &&
+    (view.favoritesOnly === undefined || typeof view.favoritesOnly === 'boolean')
   );
 }

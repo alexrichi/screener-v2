@@ -299,14 +299,19 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   Import adds every ticker to the active list; list names in the file are
   ignored. Export writes every list as JSON. The table always shows every watched
   row: a favorite below `minVolume` is not watched, so it is not fetched and not
-  visible. `Favorites` filters the watched rows by the active list.
+  visible. The star button beside the list dropdown shows only the active list
+  and combines with one quick filter and the search; `ScreenerView.favoritesOnly`
+  carries that scope, and the old `filter: 'favorites'` document still reads as
+  the same scope.
 - A table row click opens `instrument.velaSymbol`, so the active cell follows the
   row's venue. The Vela host projects that change through `setSymbol`.
 - The table columns are venue, symbol, last, 24h %, Range 24h, Vol 24h, VolΔ24h,
   RVOL (labeled with `rvolDays`), funding, VWAPσ and RSI (labeled with the
   metrics timeframe), then one column per scan plot. The quick filters are All,
-  Gainers, Losers, Favorites, RSI <30 / >70, RVOL ≥1.5 and above/below VWAP. The
-  venue filter lives at `screener.marketVenues`; unselected venues are not
+  Gainers, Losers, RSI <30 / >70, RVOL ≥1.5 and above/below VWAP; the star button
+  next to the favorites list scopes the table to that list and combines with the
+  selected quick filter and the search. The venue filter lives at
+  `screener.marketVenues`; unselected venues are not
   fetched. `Venue` is a fixed first column with icons only and an empty-but-
   sortable header (globe plus the tri-state sort glyph). Column sort cycles
   descending → ascending → unsorted; `ScreenerView.sort` is nullable.
@@ -894,7 +899,10 @@ Useful browser probes:
   Settings drops rows on the next poll. Range 24h, VolΔ24h, RVOL 7d, VWAPσ and
   RSI 15m show values within a few minutes of the first load, and the sidecar
   log has no venue 429. `RSI <30` narrows the table to the oversold rows and
-  `All` restores it. Changing the metrics timeframe relabels the RSI header and
+  `All` restores it. The star button beside the list dropdown combines with it:
+  starring two rows and leaving `RSI <30` shows only starred oversold rows, and
+  clearing the search and the filter still shows the whole starred list.
+  Changing the metrics timeframe relabels the RSI header and
   recomputes every row without a page reload.
 - Applying the RSI preset and scanning two venues adds RSI / Oversold /
   Overbought columns to both venues' rows; one venue's failure leaves the other

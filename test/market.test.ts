@@ -27,6 +27,7 @@ import {
 } from '../src/lib/universe';
 import type { MarketRow, ScreenerRow, ScreenerStatus, VenueId } from '../src/types';
 import { mergeScreenerRows } from '../src/lib/screenerClient';
+import { filterScreenerRows } from '../src/lib/screenerFilter';
 import { makeInstrument } from '../src/venues/instrument';
 
 function row(venue: VenueId, nativeId: string, quoteVolume: number): MarketRow {
@@ -49,7 +50,11 @@ function row(venue: VenueId, nativeId: string, quoteVolume: number): MarketRow {
   };
 }
 
-function screenerRow(nativeId: string, quoteVolume: number): ScreenerRow {
+function screenerRow(
+  nativeId: string,
+  quoteVolume: number,
+  metrics: Partial<ScreenerRow['metrics']> = {},
+): ScreenerRow {
   return {
     instrument: makeInstrument({
       venue: 'binance',
@@ -70,6 +75,7 @@ function screenerRow(nativeId: string, quoteVolume: number): ScreenerRow {
       rvol: null,
       vwapZ: null,
       rsi: null,
+      ...metrics,
     },
     updatedAt: 0,
     warming: false,
@@ -101,6 +107,60 @@ describe('screener row patches', () => {
       'BTCUSDT',
     ]);
     expect(next[1].quoteVolume).toBe(10);
+  });
+});
+
+describe('screener filters', () => {
+  const oversold = { rsi: 20, rvol: 0.9, vwapZ: -1 };
+  const btc = screenerRow('BTCUSDT', 300, oversold);
+  const eth = screenerRow('ETHUSDT', 200, oversold);
+  const sol = screenerRow('SOLUSDT', 100, { rsi: 55 });
+  const noMetrics = screenerRow('DOGEUSDT', 50);
+  const favorites = new Set([btc.instrument.key]);
+
+  it('combines the favorite scope with a quick filter', () => {
+    const rows = [btc, eth, sol, noMetrics];
+    expect(
+      filterScreenerRows(
+        rows,
+        { filter: 'rsiLow', favoritesOnly: true, query: '' },
+        favorites,
+      ).map((row) => row.instrument.nativeId),
+    ).toEqual(['BTCUSDT']);
+    expect(
+      filterScreenerRows(
+        rows,
+        { filter: 'rsiLow', favoritesOnly: false, query: '' },
+        favorites,
+      ).map((row) => row.instrument.nativeId),
+    ).toEqual(['BTCUSDT', 'ETHUSDT']);
+  });
+
+  it('reads the legacy favorites filter as the star scope', () => {
+    expect(
+      filterScreenerRows(
+        [btc, eth],
+        { filter: 'favorites', query: '' },
+        favorites,
+      ).map((row) => row.instrument.nativeId),
+    ).toEqual(['BTCUSDT']);
+  });
+
+  it('applies the search inside the favorite scope', () => {
+    expect(
+      filterScreenerRows(
+        [btc, eth],
+        { filter: 'all', favoritesOnly: true, query: 'eth' },
+        favorites,
+      ),
+    ).toEqual([]);
+    expect(
+      filterScreenerRows(
+        [btc, eth],
+        { filter: 'all', favoritesOnly: true, query: 'btc' },
+        favorites,
+      ).map((row) => row.instrument.nativeId),
+    ).toEqual(['BTCUSDT']);
   });
 });
 
@@ -176,6 +236,14 @@ describe('screener view persistence', () => {
     ] as const) {
       expect(isScreenerView({ ...DEFAULT_VIEW, filter })).toBe(true);
     }
+  });
+
+  it('accepts the favorite scope and old views without it', () => {
+    expect(isScreenerView({ ...DEFAULT_VIEW, favoritesOnly: true })).toBe(true);
+    expect(isScreenerView({ ...DEFAULT_VIEW, favoritesOnly: false })).toBe(true);
+    expect(isScreenerView({ ...DEFAULT_VIEW, favoritesOnly: 'yes' })).toBe(false);
+    const { favoritesOnly: _unused, ...legacy } = DEFAULT_VIEW;
+    expect(isScreenerView(legacy)).toBe(true);
   });
 
   it('keeps the metric columns in a persisted order', () => {
