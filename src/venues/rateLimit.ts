@@ -53,6 +53,9 @@ export interface RateLimitSnapshot {
  */
 const BACKGROUND_RATE_SHARE = 0.4;
 
+/** Venue-reported usage at or above this share of a bucket stops new grants. */
+const OBSERVE_PAUSE_RATIO = 0.8;
+
 interface BucketState {
   tokens: number;
   at: number;
@@ -182,6 +185,18 @@ export class RateLimiter {
     if (ms <= 0) return;
     this.pausedUntil = Math.max(this.pausedUntil, this.clock.now() + ms);
     this.schedulePump();
+  }
+
+  /**
+   * Venue-reported usage for the current window (for example Binance's
+   * `x-mbx-used-weight-1m`, which also counts other clients on the same IP).
+   * Near the cap, hold the venue until the next window instead of earning a 429.
+   */
+  observe(bucketId: string, used: number): void {
+    const bucket = this.bucketOf(bucketId);
+    if (!Number.isFinite(used) || used < bucket.limit * OBSERVE_PAUSE_RATIO) return;
+    const remaining = bucket.windowMs - (this.clock.now() % bucket.windowMs);
+    this.pauseFor(remaining);
   }
 
   /** A 418-style ban: fail requests fast until it expires. */

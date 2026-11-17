@@ -63,8 +63,27 @@ interface SymbolMeta {
 let metaCache: { at: number; rows: SymbolMeta[] } | null = null;
 const META_TTL_MS = 10 * 60_000;
 
+/** Binance reports the IP's used weight per minute; keep the highest value seen this minute. */
+let usedWeight = { minute: -1, value: 0 };
+
+export function binanceUsedWeight(): number {
+  const minute = Math.floor(Date.now() / 60_000);
+  return usedWeight.minute === minute ? usedWeight.value : 0;
+}
+
+function noteUsedWeight(response: Response): void {
+  const header = Number(response.headers.get('x-mbx-used-weight-1m'));
+  if (!Number.isFinite(header) || header <= 0) return;
+  const minute = Math.floor(Date.now() / 60_000);
+  if (minute !== usedWeight.minute) {
+    usedWeight = { minute, value: 0 };
+  }
+  usedWeight.value = Math.max(usedWeight.value, header);
+}
+
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
+  noteUsedWeight(response);
   if (!response.ok) {
     let detail = '';
     try {

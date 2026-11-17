@@ -1,5 +1,6 @@
 import {
   BinanceHttpError,
+  binanceUsedWeight,
   fetchKlines,
   fetchSymbolMeta,
   fetchUniverse,
@@ -59,7 +60,9 @@ export class BinanceVenueAdapter implements VenueAdapter {
     priority?: RequestPriority,
   ): Promise<T> {
     try {
-      return await this.limiter.run({ bucket: 'weight', cost, signal, priority }, fn);
+      const value = await this.limiter.run({ bucket: 'weight', cost, signal, priority }, fn);
+      this.limiter.observe('weight', binanceUsedWeight());
+      return value;
     } catch (error) {
       if (error instanceof BinanceHttpError && (error.status === 429 || error.status === 418)) {
         const banned = error.status === 418;

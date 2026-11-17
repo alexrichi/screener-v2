@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { binanceUsedWeight, fetchKlines } from '../src/lib/binance';
 import {
   instrumentKey,
   makeInstrument,
@@ -254,6 +255,41 @@ describe('rate limiter', () => {
     );
     // 20 per 2 s refills at 10/s; background work gets 40% of that, one per 250 ms.
     expect(starts).toEqual([0, 250, 500, 750]);
+  });
+
+  it('pauses when the venue reports the shared weight near its cap', async () => {
+    const clock = new FakeClock();
+    clock.time = 400;
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'weight', type: 'weight', limit: 10, windowMs: 1_000 }],
+      },
+      clock,
+    );
+
+    limiter.observe('weight', 7);
+    await limiter.run({ bucket: 'weight' }, async () => undefined);
+    expect(clock.time).toBe(400);
+
+    limiter.observe('weight', 8);
+    await limiter.run({ bucket: 'weight' }, async () => undefined);
+    expect(clock.time).toBe(1_000);
+  });
+
+  it('reads the shared weight header from Binance', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response('[]', {
+        status: 200,
+        headers: { 'x-mbx-used-weight-1m': '2200' },
+      })) as typeof fetch;
+    try {
+      await fetchKlines('BTCUSDT', '15', 2);
+      expect(binanceUsedWeight()).toBe(2200);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 
   it('does not hold a slot while waiting for a bucket', async () => {

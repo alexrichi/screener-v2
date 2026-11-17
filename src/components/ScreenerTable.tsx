@@ -59,6 +59,7 @@ import { VENUE_CATALOG, VENUE_IDS, venueLabel } from '../venues/catalog';
 import { VenueIcon } from '../venues/venueIcons';
 
 type ColumnKind =
+  | 'favorite'
   | 'symbol'
   | 'venue'
   | 'price'
@@ -82,6 +83,7 @@ interface ColumnDef {
 }
 
 const BASE_COLUMNS: ColumnDef[] = [
+  { key: 'favorite', label: '', align: 'left', kind: 'favorite', width: 28 },
   { key: 'venue', label: 'Venue', align: 'left', kind: 'venue', width: 48 },
   { key: 'symbol', label: 'Symbol', align: 'left', kind: 'symbol', width: 140 },
   { key: 'price', label: 'Last', align: 'right', kind: 'price', width: 76 },
@@ -94,6 +96,60 @@ const BASE_COLUMNS: ColumnDef[] = [
   { key: 'vwap', label: 'VWAPσ', align: 'right', kind: 'vwap', width: 70 },
   { key: 'rsi', label: 'RSI', align: 'right', kind: 'rsi', width: 56 },
 ];
+
+/** Deterministic coin badge: no network assets, same coin always gets the same colour. */
+function coinHue(base: string): number {
+  let hash = 0;
+  for (let index = 0; index < base.length; index += 1) {
+    hash = (hash * 31 + base.charCodeAt(index)) % 360;
+  }
+  return hash;
+}
+
+function coinLetter(base: string): string {
+  const stripped = base
+    .replace(/^[0-9]+/, '')
+    .replace(/^k(?=[A-Z])/, '');
+  return (stripped || base).slice(0, 1).toUpperCase();
+}
+
+/** Logo file names on Binance's CDN: the listing symbol, then the multiplier-free base. */
+function coinCandidates(base: string): string[] {
+  const stripped = base.replace(/^[0-9]+/, '').replace(/^k(?=[A-Z])/, '');
+  return [...new Set([base.toUpperCase(), stripped.toUpperCase()])].filter(
+    (code) => code.length > 0,
+  );
+}
+
+function CoinIcon({ base }: { base: string }) {
+  const candidates = coinCandidates(base);
+  const [step, setStep] = useState(0);
+  const code = candidates[step];
+  if (code) {
+    return (
+      <img
+        src={`https://bin.bnbstatic.com/static/assets/logos/${code}.png`}
+        alt=""
+        aria-hidden
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        referrerPolicy="no-referrer"
+        onError={() => setStep((current) => current + 1)}
+        className="size-4 shrink-0 rounded-full bg-muted/40 object-cover"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-bold leading-none text-white"
+      style={{ backgroundColor: `hsl(${coinHue(base)} 45% 42%)` }}
+    >
+      {coinLetter(base)}
+    </span>
+  );
+}
 
 const QUICK_FILTERS: Array<{ key: QuickFilter; label: string }> = [
   { key: 'gainers', label: 'Gainers' },
@@ -238,23 +294,27 @@ export function ScreenerTable({
   const allKeys = useMemo(() => columnDefs.map((column) => column.key), [columnDefs]);
 
   const order = useMemo(
-    () => mergeColumnOrder(columns.order, allKeys).filter((key) => key !== 'venue'),
+    () =>
+      mergeColumnOrder(columns.order, allKeys).filter(
+        (key) => key !== 'venue' && key !== 'favorite',
+      ),
     [columns.order, allKeys],
   );
   const visibleColumns = useMemo(() => {
+    const favorite = columnByKey.get('favorite');
     const venue = columnByKey.get('venue');
     const symbol = columnByKey.get('symbol');
     const rest = order
       .filter((key) => columnByKey.has(key) && !columns.hidden.includes(key))
       .map((key) => columnByKey.get(key)!)
-      .filter((column) => column.kind !== 'symbol');
-    return [venue, symbol, ...rest].filter(
+      .filter((column) => column.kind !== 'symbol' && column.kind !== 'favorite');
+    return [favorite, venue, symbol, ...rest].filter(
       (column): column is ColumnDef => column !== undefined,
     );
   }, [order, columns.hidden, columnByKey]);
 
   const widthOf = (column: ColumnDef) =>
-    column.kind === 'venue'
+    column.kind === 'venue' || column.kind === 'favorite'
       ? column.width
       : (columns.widths[column.key] ?? column.width);
 
@@ -455,6 +515,7 @@ export function ScreenerTable({
 
   const headerCell = (column: ColumnDef) => {
     const isVenue = column.kind === 'venue';
+    const isFavorite = column.kind === 'favorite';
     const sortIcon =
       sort?.key === column.key ? (
         sort.dir === 1 ? (
@@ -466,17 +527,24 @@ export function ScreenerTable({
     return (
       <th
         key={column.key}
-        onClick={() => toggleSort(column.key)}
-        aria-label={isVenue ? 'Venue' : undefined}
-        title={isVenue ? 'Sort by venue' : undefined}
+        onClick={isFavorite ? undefined : () => toggleSort(column.key)}
+        aria-label={isFavorite ? 'Favorite' : isVenue ? 'Venue' : undefined}
+        title={isFavorite ? undefined : isVenue ? 'Sort by venue' : undefined}
         className={cn(
           'group/head relative sticky top-0 z-10 h-7 cursor-pointer select-none whitespace-nowrap border-b border-border bg-card px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground',
           column.align === 'right' ? 'text-right' : 'text-left',
-          column.kind === 'symbol' && 'sticky left-0 z-20 border-r border-border/70',
+          isFavorite && 'sticky left-0 z-30 cursor-default',
+          isVenue && 'sticky left-[28px] z-20',
+          column.kind === 'symbol' &&
+            'sticky left-[76px] z-20 border-r border-border/70',
           sort?.key === column.key && 'text-foreground',
         )}
       >
-        {isVenue ? (
+        {isFavorite ? (
+          <span className="flex items-center justify-center">
+            <Star className="size-2.5 opacity-50" />
+          </span>
+        ) : isVenue ? (
           <span className="flex items-center justify-center gap-1">
             <Globe className="size-3 text-muted-foreground/70" />
             {sortIcon ?? <ArrowUpDown className="size-2.5 opacity-50" />}
@@ -516,7 +584,7 @@ export function ScreenerTable({
             {sortIcon}
           </span>
         )}
-        {isVenue ? null : (
+        {isVenue || isFavorite ? null : (
           <div
             onPointerDown={(event) => startResize(event, column.key)}
             onPointerMove={moveResize}
@@ -533,47 +601,59 @@ export function ScreenerTable({
   const cell = (column: ColumnDef, row: ScreenerRow, selected: boolean) => {
     const instrument = row.instrument;
     switch (column.kind) {
+      case 'favorite':
+        return (
+          <td
+            key={column.key}
+            className={cn(
+              'sticky left-0 z-30 h-7 px-0 text-center',
+              selected ? 'bg-primary-soft' : 'bg-card group-hover:bg-accent',
+            )}
+          >
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleFavorite(instrument.key);
+              }}
+              title={
+                favoriteSet.has(instrument.key)
+                  ? `Remove ${instrument.display} from ${activeFavoriteListName}`
+                  : `Add ${instrument.display} to ${activeFavoriteListName}`
+              }
+              aria-label={
+                favoriteSet.has(instrument.key)
+                  ? `Remove ${instrument.display} from ${activeFavoriteListName}`
+                  : `Add ${instrument.display} to ${activeFavoriteListName}`
+              }
+              className={cn(
+                'inline-flex size-5 items-center justify-center rounded hover:bg-accent',
+                favoriteSet.has(instrument.key)
+                  ? 'text-amber-400'
+                  : 'text-muted-foreground/45 hover:text-amber-300',
+              )}
+            >
+              <Star
+                className={cn(
+                  'size-3',
+                  favoriteSet.has(instrument.key) && 'fill-current',
+                )}
+              />
+            </button>
+          </td>
+        );
       case 'symbol':
         return (
           <td
             key={column.key}
             title={instrument.velaSymbol}
             className={cn(
-              'sticky left-0 z-10 h-7 whitespace-nowrap border-r border-border/70 px-2',
+              'sticky left-[76px] z-10 h-7 whitespace-nowrap border-r border-border/70 px-2',
               selected ? 'bg-primary-soft' : 'bg-card group-hover:bg-accent',
             )}
           >
             <div className="flex min-w-0 items-center gap-1">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleFavorite(instrument.key);
-                }}
-                title={
-                  favoriteSet.has(instrument.key)
-                    ? `Remove ${instrument.display} from ${activeFavoriteListName}`
-                    : `Add ${instrument.display} to ${activeFavoriteListName}`
-                }
-                aria-label={
-                  favoriteSet.has(instrument.key)
-                    ? `Remove ${instrument.display} from ${activeFavoriteListName}`
-                    : `Add ${instrument.display} to ${activeFavoriteListName}`
-                }
-                className={cn(
-                  'inline-flex size-4 shrink-0 items-center justify-center rounded hover:bg-accent',
-                  favoriteSet.has(instrument.key)
-                    ? 'text-amber-400'
-                    : 'text-muted-foreground/45 hover:text-amber-300',
-                )}
-              >
-                <Star
-                  className={cn(
-                    'size-3',
-                    favoriteSet.has(instrument.key) && 'fill-current',
-                  )}
-                />
-              </button>
+              <CoinIcon base={instrument.base} />
               <span className="min-w-0 truncate text-[11px] font-semibold text-foreground">
                 {instrument.base}
               </span>
@@ -595,7 +675,10 @@ export function ScreenerTable({
           <td
             key={column.key}
             title={label}
-            className="h-7 px-0 text-center"
+            className={cn(
+              'sticky left-[28px] z-20 h-7 px-0 text-center',
+              selected ? 'bg-primary-soft' : 'bg-card group-hover:bg-accent',
+            )}
           >
             <div className="flex items-center justify-center">
               <VenueIcon venue={instrument.venue} size={14} />

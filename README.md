@@ -111,8 +111,10 @@ the same `build` string.
 - Binance, OKX, Bybit, Bitget, Hyperliquid, and Coinbase instruments. The
   picker lists all venues, sorted by ticker across exchanges; a chart opens the
   venue of the selected ticker. Coinbase is spot; the rest are perpetuals.
-- One multi-venue screener table with a venue checkbox filter, a leading
-  `Venue` icon column, and a `perp` / `spot` badge per row. A row click opens the
+- One multi-venue screener table with a venue checkbox filter, a narrow leading
+  favorite column, a `Venue` icon column, and a `perp` / `spot` badge per row.
+  The symbol cell starts with the coin logo; stock tokens and unknown assets show
+  a letter badge. A row click opens the
   matching venue's chart. The sidecar watches every instrument whose 24h quote
   volume clears the threshold, so there is no row cap. Clicking a column header
   cycles descending, ascending, and unsorted.

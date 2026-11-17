@@ -318,8 +318,13 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   clear button empties the query. A status bar under the table shows the shown /
   total row count. The venue filter lives at
   `screener.marketVenues`; unselected venues are not
-  fetched. `Venue` is a fixed first column with icons only and an empty-but-
-  sortable header (globe plus the tri-state sort glyph). Column sort cycles
+  fetched. `Favorite`, `Venue` and `Symbol` are pinned at the left: `Favorite` is
+  a narrow star-only column, `Venue` is icons only with a globe/sort header, and
+  `Symbol` starts with a 16 px coin logo from Binance's public CDN
+  (`referrerPolicy="no-referrer"`, `loading="lazy"`; the listing symbol first,
+  then the multiplier-free base). Stock tokens and assets the CDN does not carry
+  fall back to the base initial on a deterministic colour. `Symbol` keeps the
+  search field in its header. Column sort cycles
   descending → ascending → unsorted; `ScreenerView.sort` is nullable.
 - The app mounts one Vela host per **visited** tab and keeps it alive; inactive
   hosts stay in the DOM with `visibility:hidden` (size preserved), so their
@@ -737,7 +742,10 @@ paced evenly. Waiting for a bucket never holds a concurrency slot, and
 `interactive` requests (charts, table, instruments) are granted before
 `background` work. Background work also spends at most 40% of a bucket's
 refill rate, so a screener cold start or a scan cannot exhaust the minute budget
-and starve live charts. Hyperliquid uses a single `weight` bucket (`1200/min`):
+and starve live charts. Binance's `x-mbx-used-weight-1m` header feeds
+`RateLimiter.observe`: at 80% of the shared IP budget the venue holds new work
+until the next minute, so another client on the same IP cannot push the sidecar
+into a 429. Hyperliquid uses a single `weight` bucket (`1200/min`):
 `meta` / `metaAndAssetCtxs` cost 20, `candleSnapshot` costs 20 plus one per 60
 returned candles, debited after the response. Binance keeps its per-request
 klines weight and ticker weight 50. Trading credentials and SDKs belong in the
@@ -849,9 +857,10 @@ Two rules that earn their keep:
 
 Useful browser probes:
 
-- 100+ rows render across the checked venues (1,000+ at the default threshold);
-  the first column shows only the exchange icons, its header shows the globe/sort
-  glyph, and the chart canvas has a non-zero bounding box.
+- The first column holds only the favorite star, the second only the exchange
+  icons with the globe/sort header, the third is `Symbol` with its coin badge and
+  search field; the chart canvas has a non-zero bounding box. Scrolling the table
+  right keeps those three columns pinned.
 - Unchecking a venue removes its rows immediately and survives reload; `All
   venues` can clear the list and the table explains the empty selection.
 - Clicking a venue column header cycles descending → ascending → unsorted; the
