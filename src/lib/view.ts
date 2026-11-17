@@ -1,4 +1,4 @@
-import type { ScreenerView, SortState } from '../types';
+import type { MarketFilter, QuickFilter, ScreenerView, SortState } from '../types';
 
 export const BASE_COLUMN_KEYS = [
   'venue',
@@ -14,11 +14,23 @@ export const BASE_COLUMN_KEYS = [
   'rsi',
 ];
 
+export const QUICK_FILTER_KEYS: QuickFilter[] = [
+  'gainers',
+  'losers',
+  'rsiLow',
+  'rsiHigh',
+  'rvol',
+  'aboveVwap',
+  'belowVwap',
+];
+
+const LEGACY_FILTER_KEYS: MarketFilter[] = ['all', 'favorites', ...QUICK_FILTER_KEYS];
+
 export const DEFAULT_VIEW: ScreenerView = {
   sort: { key: 'quoteVolume', dir: -1 },
   columns: { order: BASE_COLUMN_KEYS, hidden: [], widths: {} },
   query: '',
-  filter: 'all',
+  filters: [],
   favoritesOnly: false,
 };
 
@@ -73,15 +85,10 @@ export function isScreenerView(value: unknown): value is ScreenerView {
   return (
     (view.sort === null || isSortState(view.sort)) &&
     typeof view.query === 'string' &&
-    (view.filter === 'all' ||
-      view.filter === 'gainers' ||
-      view.filter === 'losers' ||
-      view.filter === 'favorites' ||
-      view.filter === 'rsiLow' ||
-      view.filter === 'rsiHigh' ||
-      view.filter === 'rvol' ||
-      view.filter === 'aboveVwap' ||
-      view.filter === 'belowVwap') &&
+    (view.filter === undefined || LEGACY_FILTER_KEYS.includes(view.filter)) &&
+    (view.filters === undefined ||
+      (Array.isArray(view.filters) &&
+        view.filters.every((filter) => QUICK_FILTER_KEYS.includes(filter)))) &&
     typeof columns === 'object' &&
     columns !== null &&
     Array.isArray(columns.order) &&

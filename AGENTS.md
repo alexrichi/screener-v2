@@ -299,18 +299,24 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   Import adds every ticker to the active list; list names in the file are
   ignored. Export writes every list as JSON. The table always shows every watched
   row: a favorite below `minVolume` is not watched, so it is not fetched and not
-  visible. The star button beside the list dropdown shows only the active list
-  and combines with one quick filter and the search; `ScreenerView.favoritesOnly`
-  carries that scope, and the old `filter: 'favorites'` document still reads as
-  the same scope.
+  visible. The `All` / `Favorites` switch before the list dropdown shows only the
+  active list and combines with the active quick filters and the search;
+  `ScreenerView.favoritesOnly` carries that scope, and the old
+  `filter: 'favorites'` document still reads as the same scope.
 - A table row click opens `instrument.velaSymbol`, so the active cell follows the
   row's venue. The Vela host projects that change through `setSymbol`.
 - The table columns are venue, symbol, last, 24h %, Range 24h, Vol 24h, VolΔ24h,
   RVOL (labeled with `rvolDays`), funding, VWAPσ and RSI (labeled with the
-  metrics timeframe), then one column per scan plot. The quick filters are All,
-  Gainers, Losers, RSI <30 / >70, RVOL ≥1.5 and above/below VWAP; the star button
-  next to the favorites list scopes the table to that list and combines with the
-  selected quick filter and the search. The venue filter lives at
+  metrics timeframe), then one column per scan plot. The quick filters are
+  independent on/off chips — Gainers, Losers, RSI <30 / >70, RVOL ≥1.5 and
+  above/below VWAP — combined with AND; turning one of an opposite pair on turns
+  the other off, and no active chip means every row. They live in
+  `ScreenerView.filters`, and an old single `filter` still reads as one chip. The
+  `All` / `Favorites` switch before the list scopes the table to that list and
+  combines with the active chips and the search. The search field lives in the
+  `SYMBOL` header; the header still sorts when the field is not focused, and its
+  clear button empties the query. A status bar under the table shows the shown /
+  total row count. The venue filter lives at
   `screener.marketVenues`; unselected venues are not
   fetched. `Venue` is a fixed first column with icons only and an empty-but-
   sortable header (globe plus the tri-state sort glyph). Column sort cycles
@@ -899,9 +905,10 @@ Useful browser probes:
   Settings drops rows on the next poll. Range 24h, VolΔ24h, RVOL 7d, VWAPσ and
   RSI 15m show values within a few minutes of the first load, and the sidecar
   log has no venue 429. `RSI <30` narrows the table to the oversold rows and
-  `All` restores it. The star button beside the list dropdown combines with it:
-  starring two rows and leaving `RSI <30` shows only starred oversold rows, and
-  clearing the search and the filter still shows the whole starred list.
+  clicking it again restores them; `RSI <30` + `RVOL ≥1.5` keeps only the rows
+  that pass both. The `All` / `Favorites` switch before the list combines with
+  them: starring two rows and leaving `RSI <30` shows only starred oversold rows,
+  and clearing the search and the chips still shows the whole starred list.
   Changing the metrics timeframe relabels the RSI header and
   recomputes every row without a page reload.
 - Applying the RSI preset and scanning two venues adds RSI / Oversold /

@@ -33,6 +33,7 @@ import { toast } from 'sonner';
 import type {
   ColumnState,
   PlotColumn,
+  QuickFilter,
   ScanResult,
   ScreenerRow,
   ScreenerView,
@@ -48,10 +49,10 @@ import {
   formatPrice,
 } from '../lib/format';
 import { DEFAULT_FAVORITE_LIST_ID, type FavoriteList } from '../lib/favorites';
-import { filterScreenerRows } from '../lib/screenerFilter';
+import { activeQuickFilters, filterScreenerRows } from '../lib/screenerFilter';
 import { mergeColumnOrder, nextSort } from '../lib/view';
 import { cn } from '../ui/cn';
-import { Button, Input, Segmented } from '../ui/primitives';
+import { Button, Input } from '../ui/primitives';
 import { Modal, PopoverContent } from '../ui/overlays';
 import { sameVelaSymbol } from '../venues/instrument';
 import { VENUE_CATALOG, VENUE_IDS, venueLabel } from '../venues/catalog';
@@ -82,7 +83,7 @@ interface ColumnDef {
 
 const BASE_COLUMNS: ColumnDef[] = [
   { key: 'venue', label: 'Venue', align: 'left', kind: 'venue', width: 48 },
-  { key: 'symbol', label: 'Symbol', align: 'left', kind: 'symbol', width: 116 },
+  { key: 'symbol', label: 'Symbol', align: 'left', kind: 'symbol', width: 140 },
   { key: 'price', label: 'Last', align: 'right', kind: 'price', width: 76 },
   { key: 'change24h', label: '24h %', align: 'right', kind: 'change', width: 64 },
   { key: 'range', label: 'Range 24h', align: 'right', kind: 'range', width: 76 },
@@ -93,6 +94,26 @@ const BASE_COLUMNS: ColumnDef[] = [
   { key: 'vwap', label: 'VWAPσ', align: 'right', kind: 'vwap', width: 70 },
   { key: 'rsi', label: 'RSI', align: 'right', kind: 'rsi', width: 56 },
 ];
+
+const QUICK_FILTERS: Array<{ key: QuickFilter; label: string }> = [
+  { key: 'gainers', label: 'Gainers' },
+  { key: 'losers', label: 'Losers' },
+  { key: 'rsiLow', label: 'RSI <30' },
+  { key: 'rsiHigh', label: 'RSI >70' },
+  { key: 'rvol', label: 'RVOL ≥1.5' },
+  { key: 'aboveVwap', label: '> VWAP' },
+  { key: 'belowVwap', label: '< VWAP' },
+];
+
+/** Opposite filters replace each other instead of yielding no rows. */
+const FILTER_OPPOSITE: Partial<Record<QuickFilter, QuickFilter>> = {
+  gainers: 'losers',
+  losers: 'gainers',
+  rsiLow: 'rsiHigh',
+  rsiHigh: 'rsiLow',
+  aboveVwap: 'belowVwap',
+  belowVwap: 'aboveVwap',
+};
 
 const MIN_COLUMN_WIDTH = 48;
 
@@ -167,8 +188,9 @@ export function ScreenerTable({
   onOpenTab,
   onCloseTab,
 }: Props) {
-  const { sort, columns, query, filter } = view;
-  const favoritesOnly = view.favoritesOnly === true || filter === 'favorites';
+  const { sort, columns, query } = view;
+  const favoritesOnly = view.favoritesOnly === true || view.filter === 'favorites';
+  const filters = activeQuickFilters(view);
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const [venuesOpen, setVenuesOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
@@ -221,10 +243,14 @@ export function ScreenerTable({
   );
   const visibleColumns = useMemo(() => {
     const venue = columnByKey.get('venue');
+    const symbol = columnByKey.get('symbol');
     const rest = order
       .filter((key) => columnByKey.has(key) && !columns.hidden.includes(key))
-      .map((key) => columnByKey.get(key)!);
-    return venue ? [venue, ...rest] : rest;
+      .map((key) => columnByKey.get(key)!)
+      .filter((column) => column.kind !== 'symbol');
+    return [venue, symbol, ...rest].filter(
+      (column): column is ColumnDef => column !== undefined,
+    );
   }, [order, columns.hidden, columnByKey]);
 
   const widthOf = (column: ColumnDef) =>
@@ -233,13 +259,8 @@ export function ScreenerTable({
       : (columns.widths[column.key] ?? column.width);
 
   const filteredRows = useMemo(
-    () =>
-      filterScreenerRows(
-        rows,
-        { filter, favoritesOnly, query },
-        favoriteSet,
-      ),
-    [rows, filter, favoritesOnly, query, favoriteSet],
+    () => filterScreenerRows(rows, view, favoriteSet),
+    [rows, view, favoriteSet],
   );
 
   const sortedRows = useMemo(() => {
@@ -292,6 +313,13 @@ export function ScreenerTable({
   const setView = (patch: Partial<ScreenerView>) => onViewChange({ ...view, ...patch });
   const setSort = (sort: SortState | null) => setView({ sort });
   const setColumns = (columns: ColumnState) => setView({ columns });
+
+  const toggleFilter = (key: QuickFilter) => {
+    const active = filters.includes(key);
+    const opposite = FILTER_OPPOSITE[key];
+    const rest = filters.filter((filter) => filter !== key && filter !== opposite);
+    setView({ filters: active ? rest : [...rest, key], filter: 'all' });
+  };
 
   const toggleSort = (key: string) => setSort(nextSort(sort, key));
 
@@ -452,6 +480,35 @@ export function ScreenerTable({
           <span className="flex items-center justify-center gap-1">
             <Globe className="size-3 text-muted-foreground/70" />
             {sortIcon ?? <ArrowUpDown className="size-2.5 opacity-50" />}
+          </span>
+        ) : column.kind === 'symbol' ? (
+          <span className="flex select-text items-center gap-1 normal-case tracking-normal">
+            <Search className="size-3 shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setView({ query: event.target.value })}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              placeholder="Search"
+              aria-label="Search symbol or venue"
+              className="h-5 min-w-0 flex-1 cursor-text bg-transparent text-[11px] font-normal text-foreground outline-none placeholder:text-muted-foreground/80"
+            />
+            {query ? (
+              <button
+                type="button"
+                title="Clear search"
+                aria-label="Clear search"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setView({ query: '' });
+                }}
+                className="inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            ) : (
+              (sortIcon ?? <ArrowUpDown className="size-2.5 shrink-0 opacity-40" />)
+            )}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1">
@@ -690,25 +747,54 @@ export function ScreenerTable({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-2 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <div className="relative min-w-28 flex-1">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setView({ query: event.target.value })}
-              placeholder="Search symbol or venue…"
-              className="pl-7 pr-7"
-            />
-            {query ? (
-              <button
-                type="button"
-                onClick={() => setView({ query: '' })}
-                title="Clear search"
-                className="absolute right-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3" />
-              </button>
-            ) : null}
-          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={favoritesOnly}
+            title={`Show only ${activeFavoriteListName}`}
+            onClick={() =>
+              setView({
+                favoritesOnly: !favoritesOnly,
+                filter: 'all',
+              })
+            }
+            className={cn(
+              'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition-colors',
+              favoritesOnly
+                ? 'border-primary/60 bg-primary-soft'
+                : 'border-border hover:bg-accent',
+            )}
+          >
+            <span
+              className={cn(
+                favoritesOnly ? 'text-muted-foreground' : 'font-medium text-foreground',
+              )}
+            >
+              All
+            </span>
+            <span
+              className={cn(
+                'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors',
+                favoritesOnly ? 'border-primary bg-primary' : 'border-border bg-muted/70',
+              )}
+            >
+              <span
+                className={cn(
+                  'inline-block size-3 rounded-full shadow-sm transition-transform',
+                  favoritesOnly
+                    ? 'translate-x-3.5 bg-primary-foreground'
+                    : 'translate-x-0.5 bg-foreground/60',
+                )}
+              />
+            </span>
+            <span
+              className={cn(
+                favoritesOnly ? 'font-medium text-foreground' : 'text-muted-foreground',
+              )}
+            >
+              Favorites
+            </span>
+          </button>
           <Popover.Root open={favoritesOpen} onOpenChange={setFavoritesOpen}>
             <Popover.Trigger
               title={`Favorites: ${activeFavoriteListName}`}
@@ -841,30 +927,6 @@ export function ScreenerTable({
               event.currentTarget.value = '';
             }}
           />
-          <button
-            type="button"
-            aria-pressed={favoritesOnly}
-            aria-label={`Show only ${activeFavoriteListName}`}
-            title={
-              favoritesOnly
-                ? `Showing only ${activeFavoriteListName}`
-                : `Show only ${activeFavoriteListName}`
-            }
-            onClick={() =>
-              setView({
-                favoritesOnly: !favoritesOnly,
-                filter: filter === 'favorites' ? 'all' : filter,
-              })
-            }
-            className={cn(
-              'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors',
-              favoritesOnly
-                ? 'border-primary/60 bg-primary-soft text-primary-foreground'
-                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
-            )}
-          >
-            <Star className={cn('size-3.5', favoritesOnly && 'fill-current')} />
-          </button>
           <Popover.Root open={venuesOpen} onOpenChange={setVenuesOpen}>
             <Popover.Trigger
               title={`Filter venues (${venues.length}/${VENUE_IDS.length})`}
@@ -932,7 +994,7 @@ export function ScreenerTable({
                 Columns
               </div>
               <div className="max-h-72 overflow-y-auto">
-                {order.map((key, index) => {
+                {order.filter((key) => key !== 'symbol').map((key, index) => {
                   const def = columnByKey.get(key);
                   if (!def) return null;
                   return (
@@ -974,28 +1036,26 @@ export function ScreenerTable({
             </PopoverContent>
           </Popover.Root>
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <Segmented
-              value={filter}
-              onChange={(filter) => setView({ filter })}
-              className="h-auto flex-wrap"
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'gainers', label: 'Gainers' },
-                { value: 'losers', label: 'Losers' },
-                { value: 'rsiLow', label: 'RSI <30' },
-                { value: 'rsiHigh', label: 'RSI >70' },
-                { value: 'rvol', label: 'RVOL ≥1.5' },
-                { value: 'aboveVwap', label: '> VWAP' },
-                { value: 'belowVwap', label: '< VWAP' },
-              ]}
-            />
-          </div>
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
-            {sortedRows.length}
-            {rows.length !== sortedRows.length ? ` / ${rows.length}` : ''}
-          </span>
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {QUICK_FILTERS.map((option) => {
+            const active = filters.includes(option.key);
+            return (
+              <button
+                key={option.key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => toggleFilter(option.key)}
+                className={cn(
+                  'h-6 rounded-[4px] border px-2 text-[11px] font-medium transition-colors',
+                  active
+                    ? 'border-primary/50 bg-primary-soft text-primary-foreground'
+                    : 'border-border/70 text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1079,6 +1139,11 @@ export function ScreenerTable({
             ) : null}
           </div>
         ) : null}
+      </div>
+
+      <div className="flex h-6 shrink-0 items-center justify-end border-t border-border bg-card/60 px-2 font-mono text-[10px] tabular-nums text-muted-foreground">
+        {sortedRows.length}
+        {rows.length !== sortedRows.length ? ` / ${rows.length}` : ''}
       </div>
 
       {menu

@@ -2,17 +2,20 @@ import type { Instrument, MarketKind, VenueId } from './venues/types';
 
 export type ThemeMode = 'dark' | 'light';
 
-export type MarketFilter =
-  | 'all'
+export type QuickFilter =
   | 'gainers'
   | 'losers'
-  /** Legacy stored value; the table now reads it as `favoritesOnly`. */
-  | 'favorites'
   | 'rsiLow'
   | 'rsiHigh'
   | 'rvol'
   | 'aboveVwap'
   | 'belowVwap';
+
+export type MarketFilter =
+  | 'all'
+  /** Legacy stored value; the table now reads it as `favoritesOnly`. */
+  | 'favorites'
+  | QuickFilter;
 
 export interface MarketRow {
   /** Full instrument identity: key, venue, native id, display and Vela symbol. */
@@ -185,8 +188,11 @@ export interface ScreenerView {
   sort: SortState | null;
   columns: ColumnState;
   query: string;
-  filter: MarketFilter;
-  /** Show only the rows in the active favorite list; combines with `filter`. */
+  /** Legacy single filter; read only when `filters` is absent. */
+  filter?: MarketFilter;
+  /** Independent quick filters, combined with AND. */
+  filters?: QuickFilter[];
+  /** Show only the rows in the active favorite list; combines with `filters`. */
   favoritesOnly?: boolean;
 }
 

@@ -118,25 +118,37 @@ describe('screener filters', () => {
   const noMetrics = screenerRow('DOGEUSDT', 50);
   const favorites = new Set([btc.instrument.key]);
 
-  it('combines the favorite scope with a quick filter', () => {
+  it('combines the favorite scope with every active quick filter', () => {
     const rows = [btc, eth, sol, noMetrics];
     expect(
       filterScreenerRows(
         rows,
-        { filter: 'rsiLow', favoritesOnly: true, query: '' },
+        { filters: ['rsiLow'], favoritesOnly: true, query: '' },
         favorites,
       ).map((row) => row.instrument.nativeId),
     ).toEqual(['BTCUSDT']);
     expect(
       filterScreenerRows(
         rows,
-        { filter: 'rsiLow', favoritesOnly: false, query: '' },
+        { filters: ['rsiLow'], favoritesOnly: false, query: '' },
         favorites,
       ).map((row) => row.instrument.nativeId),
     ).toEqual(['BTCUSDT', 'ETHUSDT']);
   });
 
-  it('reads the legacy favorites filter as the star scope', () => {
+  it('ANDs independent quick filters', () => {
+    const gainer = screenerRow('SOLUSDT', 100, { rsi: 20, rvol: 2 });
+    const rows = [btc, eth, sol, gainer];
+    expect(
+      filterScreenerRows(
+        rows,
+        { filters: ['rsiLow', 'rvol'], query: '' },
+        favorites,
+      ).map((row) => row.instrument.nativeId),
+    ).toEqual(['SOLUSDT']);
+  });
+
+  it('reads the legacy favorites filter as the favorite scope', () => {
     expect(
       filterScreenerRows(
         [btc, eth],
@@ -144,20 +156,27 @@ describe('screener filters', () => {
         favorites,
       ).map((row) => row.instrument.nativeId),
     ).toEqual(['BTCUSDT']);
+    expect(
+      filterScreenerRows(
+        [btc, eth, sol],
+        { filter: 'rsiLow', query: '' },
+        favorites,
+      ).map((row) => row.instrument.nativeId),
+    ).toEqual(['BTCUSDT', 'ETHUSDT']);
   });
 
   it('applies the search inside the favorite scope', () => {
     expect(
       filterScreenerRows(
         [btc, eth],
-        { filter: 'all', favoritesOnly: true, query: 'eth' },
+        { favoritesOnly: true, query: 'eth' },
         favorites,
       ),
     ).toEqual([]);
     expect(
       filterScreenerRows(
         [btc, eth],
-        { filter: 'all', favoritesOnly: true, query: 'btc' },
+        { favoritesOnly: true, query: 'btc' },
         favorites,
       ).map((row) => row.instrument.nativeId),
     ).toEqual(['BTCUSDT']);
@@ -235,15 +254,21 @@ describe('screener view persistence', () => {
       'belowVwap',
     ] as const) {
       expect(isScreenerView({ ...DEFAULT_VIEW, filter })).toBe(true);
+      expect(isScreenerView({ ...DEFAULT_VIEW, filters: [filter] })).toBe(true);
     }
+    expect(
+      isScreenerView({ ...DEFAULT_VIEW, filters: ['rsiLow', 'rvol'] }),
+    ).toBe(true);
+    expect(isScreenerView({ ...DEFAULT_VIEW, filters: ['all'] })).toBe(false);
+    expect(isScreenerView({ ...DEFAULT_VIEW, filters: 'rsiLow' })).toBe(false);
   });
 
   it('accepts the favorite scope and old views without it', () => {
     expect(isScreenerView({ ...DEFAULT_VIEW, favoritesOnly: true })).toBe(true);
     expect(isScreenerView({ ...DEFAULT_VIEW, favoritesOnly: false })).toBe(true);
     expect(isScreenerView({ ...DEFAULT_VIEW, favoritesOnly: 'yes' })).toBe(false);
-    const { favoritesOnly: _unused, ...legacy } = DEFAULT_VIEW;
-    expect(isScreenerView(legacy)).toBe(true);
+    const { favoritesOnly: _favorites, filters: _filters, ...old } = DEFAULT_VIEW;
+    expect(isScreenerView(old)).toBe(true);
   });
 
   it('keeps the metric columns in a persisted order', () => {

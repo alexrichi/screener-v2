@@ -118,9 +118,10 @@ the same `build` string.
   cycles descending, ascending, and unsorted.
 - Screener metrics: Range 24h, 24h volume change, RVOL against the previous
   `RVOL days` windows, session VWAP z-score, and Wilder RSI on the configured
-  technical timeframe (15m, 30m or 1h). Quick filters pick oversold (`RSI <30`),
-  overbought (`RSI >70`), unusual volume (`RVOL ≥1.5`) and price above/below
-  VWAP. The sidecar keeps one merged candle series per watched instrument, updates
+  technical timeframe (15m, 30m or 1h). Quick filters are on/off chips for
+  oversold (`RSI <30`), overbought (`RSI >70`), unusual volume (`RVOL ≥1.5`) and
+  price above/below VWAP; active chips combine with each other and with the
+  favorites switch. The sidecar keeps one merged candle series per watched instrument, updates
   it from the venue's kline stream (Coinbase through a REST tail) and pushes
   batched row patches to the browser every two seconds; the browser only renders.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
@@ -131,9 +132,9 @@ the same `build` string.
   steps, with a loading badge in the cell. The leftmost button of the chart
   toolbar's right group maximizes the selected chart over the widget and restores
   the grid on a second click.
-- Screener table with search, gainers/losers and metric filters, sorting,
-  resizable and reorderable columns, and per-row actions. Screener, Pine,
-  Library, and Alerts
+- Screener table with search in the `SYMBOL` header, gainers/losers and metric
+  filters, sorting, resizable and reorderable columns, and per-row actions.
+  Screener, Pine, Library, and Alerts
   open as Vela side panels from the chart's right sidebar; the open panel and
   width persist, and script alerts are session-only. The strategy dock sits at
   the foot of the chart column, under the range presets; the drawing toolbar and
@@ -144,10 +145,10 @@ the same `build` string.
   Lists are stored at `screener.favorites.v2` per instrument
   (`venue:kind:nativeId`), and the old `screener.favorites` key folds into the
   default list. Create, rename, clear, or delete lists; import a JSON/text file
-  into the active list; export every list as JSON. The star button beside the
-  list dropdown shows only the active list, and the metric filters and search
-  still apply within it. A symbol below the volume threshold is not fetched, so
-  it does not appear there.
+  into the active list; export every list as JSON. The `All` / `Favorites` switch
+  before the list shows only the active list, and the metric filters and
+  search still apply within it. A symbol below the volume threshold is not
+  fetched, so it does not appear there.
   The active list name labels the favorites button in the screener toolbar.
 - Pine editor with tabs, presets and Monaco highlighting, completions, signature
   help, folding, search, semantic colors, outline, formatting, rich hover docs,
