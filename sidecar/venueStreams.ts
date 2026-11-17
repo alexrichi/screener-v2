@@ -31,7 +31,9 @@ function okxCandleArgs(tokens: string[]): Array<{ channel: string; instId: strin
 
 export const OKX_STREAM: WsSpec = {
   label: 'okx',
-  url: 'wss://ws.okx.com:8443/ws/v5/business',
+  // OKX retired port 8443 for WebSocket on 2026-10-31; use the default 443.
+  url: 'wss://ws.okx.com/ws/v5/business',
+  batchSize: 100,
   token(instrument: Instrument, timeframe: string): string {
     const channel = OKX_CHANNELS[canonical(timeframe)];
     if (!channel) throw new Error(`Unsupported timeframe: ${timeframe}`);
@@ -76,6 +78,7 @@ function bybitInterval(timeframe: string): string {
 export const BYBIT_STREAM: WsSpec = {
   label: 'bybit',
   url: 'wss://stream.bybit.com/v5/public/linear',
+  batchSize: 100,
   token(instrument: Instrument, timeframe: string): string {
     return `kline.${bybitInterval(timeframe)}.${instrument.nativeId}`;
   },
@@ -141,6 +144,7 @@ function bitgetArgs(tokens: string[]): Array<{
 export const BITGET_STREAM: WsSpec = {
   label: 'bitget',
   url: 'wss://ws.bitget.com/v2/ws/public',
+  batchSize: 50,
   token(instrument: Instrument, timeframe: string): string {
     const channel = BITGET_CHANNELS[canonical(timeframe)];
     if (!channel) throw new Error(`Unsupported timeframe: ${timeframe}`);
@@ -198,6 +202,7 @@ function hlToken(token: string): { interval: string; coin: string } {
 export const HYPERLIQUID_STREAM: WsSpec = {
   label: 'hyperliquid',
   url: 'wss://api.hyperliquid.xyz/ws',
+  batchSize: 100,
   token(instrument: Instrument, timeframe: string): string {
     const interval = HL_INTERVALS[canonical(timeframe)];
     if (!interval) throw new Error(`Unsupported timeframe: ${timeframe}`);

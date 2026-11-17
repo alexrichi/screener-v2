@@ -18,7 +18,10 @@ export const OKX_RATE_LIMIT: RateLimitPolicy = {
   maxConcurrent: 4,
   buckets: [
     { id: 'market', type: 'requests', limit: 20, windowMs: 2_000 },
-    { id: 'candles', type: 'requests', limit: 20, windowMs: 2_000 },
+    // GET /market/candles: 40 requests / 2 s.
+    { id: 'candles', type: 'requests', limit: 40, windowMs: 2_000 },
+    // GET /market/history-candles has its own, lower budget.
+    { id: 'candles-history', type: 'requests', limit: 20, windowMs: 2_000 },
   ],
 };
 
@@ -341,42 +344,34 @@ export class OkxVenueAdapter implements VenueAdapter {
     const wanted = Math.max(1, Math.min(100_000, Math.floor(bars)));
     const confirmedOnly = opts.includeForming !== true;
 
-    // Newest window: the capped `/candles` endpoint is enough and returns the
-    // forming candle.
-    if (opts.to == null && wanted <= 300) {
-      const rows = (await this.request(
-        'candles',
-        () =>
-          this.client.getCandles({
-            instId: instrument.nativeId,
-            bar,
-            limit: String(wanted),
-          }),
-        signal,
-        opts.priority,
-      )) as OkxCandle[];
-      return rows
-        .filter((row) => !confirmedOnly || isConfirmed(row))
-        .map((row) => toBar(row, timeframe))
-        .sort((a, b) => a.openTime - b.openTime);
-    }
-
-    // Older windows and deep history: walk backward in 100-row pages.
+    // The latest 1,440 entries come from the regular `/candles` endpoint; each
+    // response page is capped at 300 rows. Older history uses the history
+    // endpoint, also 300 rows per page.
     const pages: VenueBar[][] = [];
     let remaining = wanted;
+    let regular = opts.to == null;
+    let regularRemaining = 1_440;
     let after: string | undefined =
       opts.to != null ? String(Math.floor(opts.to) + 1) : undefined;
     while (remaining > 0) {
-      const limit = Math.min(remaining, 300);
+      const limit = Math.min(regular ? Math.min(regularRemaining, 300) : 300, remaining);
+      if (limit <= 0) break;
       const rows = (await this.request(
-        'candles',
+        regular ? 'candles' : 'candles-history',
         () =>
-          this.client.getHistoricCandles({
-            instId: instrument.nativeId,
-            bar,
-            limit: String(limit),
-            after,
-          }),
+          regular
+            ? this.client.getCandles({
+                instId: instrument.nativeId,
+                bar,
+                limit: String(limit),
+                ...(after != null ? { after } : {}),
+              })
+            : this.client.getHistoricCandles({
+                instId: instrument.nativeId,
+                bar,
+                limit: String(limit),
+                ...(after != null ? { after } : {}),
+              }),
         signal,
         opts.priority,
       )) as OkxCandle[];
@@ -384,12 +379,19 @@ export class OkxVenueAdapter implements VenueAdapter {
       const mapped = rows
         .filter((row) => !confirmedOnly || isConfirmed(row))
         .map((row) => toBar(row, timeframe))
-        .filter((row) => opts.to == null || row.openTime <= opts.to)
+        .filter(
+          (row) =>
+            (opts.from == null || row.openTime >= opts.from) &&
+            (opts.to == null || row.openTime <= opts.to),
+        )
         .sort((a, b) => a.openTime - b.openTime);
       if (mapped.length === 0) break;
       pages.push(mapped);
       remaining -= mapped.length;
+      if (regular) regularRemaining -= rows.length;
+      if (regular && regularRemaining <= 0) regular = false;
       const oldest = mapped[0]!.openTime;
+      if (opts.from != null && oldest <= opts.from) break;
       if (after != null && Number(after) <= oldest) break;
       after = String(oldest);
       if (rows.length < limit) break;

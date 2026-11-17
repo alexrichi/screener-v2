@@ -234,6 +234,28 @@ describe('rate limiter', () => {
     expect(Math.max(...starts)).toBe(100);
   });
 
+  it('paces background work below the bucket rate', async () => {
+    const clock = new FakeClock();
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'weight', type: 'weight', limit: 20, windowMs: 2_000 }],
+      },
+      clock,
+    );
+
+    const starts: number[] = [];
+    await Promise.all(
+      Array.from({ length: 4 }, () =>
+        limiter.run({ bucket: 'weight', priority: 'background' }, async () => {
+          starts.push(clock.time);
+        }),
+      ),
+    );
+    // 20 per 2 s refills at 10/s; background work gets 40% of that, one per 250 ms.
+    expect(starts).toEqual([0, 250, 500, 750]);
+  });
+
   it('does not hold a slot while waiting for a bucket', async () => {
     const clock = new ManualClock();
     const limiter = new RateLimiter(
@@ -421,6 +443,56 @@ describe('venue hub', () => {
       resolve: (bars) => resolveBars?.(bars),
     };
   }
+
+  it('merges a refreshed tail into the cached series', async () => {
+    const requested: number[] = [];
+    let next: VenueBar[] = [];
+    const adapter = {
+      fetchBars: (
+        _instrument: unknown,
+        _timeframe: unknown,
+        bars: number,
+      ): Promise<VenueBar[]> => {
+        requested.push(bars);
+        return Promise.resolve(next);
+      },
+    } as unknown as VenueAdapter;
+    const hub = new VenueHub(adapter);
+    const tf = 15 * 60_000;
+    const makeBars = (from: number, to: number): VenueBar[] =>
+      Array.from({ length: to - from + 1 }, (_, index) => {
+        const openTime = (from + index) * tf;
+        return {
+          openTime,
+          closeTime: openTime + tf - 1,
+          open: 100 + index,
+          high: 101 + index,
+          low: 99 + index,
+          close: 100 + index,
+          volume: 1,
+        };
+      });
+
+    next = makeBars(1, 10);
+    const first = await hub.getSeries(instrument, '15', { limit: 10 });
+    expect(requested).toEqual([10]);
+    expect(first).toHaveLength(10);
+
+    const cached = await hub.getSeries(instrument, '15', { limit: 10 });
+    expect(requested).toEqual([10]);
+    expect(cached).toHaveLength(10);
+
+    next = makeBars(10, 12);
+    const refreshed = await hub.getSeries(instrument, '15', {
+      limit: 10,
+      refresh: true,
+      refreshBars: 3,
+    });
+    expect(requested).toEqual([10, 3]);
+    expect(refreshed).toHaveLength(10);
+    expect(refreshed.at(-1)?.openTime).toBe(12 * tf);
+    expect(refreshed[0]?.openTime).toBe(3 * tf);
+  });
 
   it('reuses an in-flight bars request beyond the cache TTL', async () => {
     let now = 0;

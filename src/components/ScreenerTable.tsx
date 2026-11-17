@@ -32,9 +32,9 @@ import {
 import { toast } from 'sonner';
 import type {
   ColumnState,
-  MarketRow,
   PlotColumn,
   ScanResult,
+  ScreenerRow,
   ScreenerView,
   SortState,
   VenueId,
@@ -63,6 +63,11 @@ type ColumnKind =
   | 'change'
   | 'volume'
   | 'funding'
+  | 'range'
+  | 'volumeChange'
+  | 'rvol'
+  | 'vwap'
+  | 'rsi'
   | 'plot';
 
 interface ColumnDef {
@@ -79,8 +84,13 @@ const BASE_COLUMNS: ColumnDef[] = [
   { key: 'symbol', label: 'Symbol', align: 'left', kind: 'symbol', width: 116 },
   { key: 'price', label: 'Last', align: 'right', kind: 'price', width: 76 },
   { key: 'change24h', label: '24h %', align: 'right', kind: 'change', width: 64 },
+  { key: 'range', label: 'Range 24h', align: 'right', kind: 'range', width: 76 },
   { key: 'quoteVolume', label: 'Vol 24h', align: 'right', kind: 'volume', width: 68 },
+  { key: 'volumeChange', label: 'VolΔ24h', align: 'right', kind: 'volumeChange', width: 76 },
+  { key: 'rvol', label: 'RVOL', align: 'right', kind: 'rvol', width: 64 },
   { key: 'funding', label: 'Funding', align: 'right', kind: 'funding', width: 74 },
+  { key: 'vwap', label: 'VWAPσ', align: 'right', kind: 'vwap', width: 70 },
+  { key: 'rsi', label: 'RSI', align: 'right', kind: 'rsi', width: 56 },
 ];
 
 const MIN_COLUMN_WIDTH = 48;
@@ -91,14 +101,19 @@ function scanValue(result: ScanResult | undefined, plotKey: string | undefined):
   return plot?.value ?? null;
 }
 
-function searchText(row: MarketRow): string {
+function timeframeLabel(timeframe: string): string {
+  return timeframe === '60' ? '1h' : `${timeframe}m`;
+}
+
+function searchText(row: ScreenerRow): string {
   return `${row.instrument.nativeId} ${row.instrument.base} ${venueLabel(
     row.instrument.venue,
   )}`.toUpperCase();
 }
 
 interface Props {
-  rows: MarketRow[];
+  rows: ScreenerRow[];
+  metricsConfig: { timeframe: string; rvolDays: number };
   view: ScreenerView;
   onViewChange: (view: ScreenerView) => void;
   venues: VenueId[];
@@ -129,6 +144,7 @@ interface Props {
 
 export function ScreenerTable({
   rows,
+  metricsConfig,
   view,
   onViewChange,
   venues,
@@ -185,8 +201,17 @@ export function ScreenerTable({
       width: 76,
       plotKey: plot.plotKey,
     }));
-    return [...BASE_COLUMNS, ...plots];
-  }, [plotColumns]);
+    const base = BASE_COLUMNS.map((column) => {
+      if (column.key === 'rvol') {
+        return { ...column, label: `RVOL ${metricsConfig.rvolDays}d` };
+      }
+      if (column.key === 'rsi') {
+        return { ...column, label: `RSI ${timeframeLabel(metricsConfig.timeframe)}` };
+      }
+      return column;
+    });
+    return [...base, ...plots];
+  }, [plotColumns, metricsConfig.rvolDays, metricsConfig.timeframe]);
 
   const columnByKey = useMemo(
     () => new Map(columnDefs.map((column) => [column.key, column])),
@@ -219,6 +244,21 @@ export function ScreenerTable({
     if (filter === 'favorites') {
       list = list.filter((row) => favoriteSet.has(row.instrument.key));
     }
+    if (filter === 'rsiLow') {
+      list = list.filter((row) => (row.metrics.rsi ?? 100) < 30);
+    }
+    if (filter === 'rsiHigh') {
+      list = list.filter((row) => (row.metrics.rsi ?? 0) > 70);
+    }
+    if (filter === 'rvol') {
+      list = list.filter((row) => (row.metrics.rvol ?? 0) >= 1.5);
+    }
+    if (filter === 'aboveVwap') {
+      list = list.filter((row) => (row.metrics.vwapZ ?? 0) > 0);
+    }
+    if (filter === 'belowVwap') {
+      list = list.filter((row) => (row.metrics.vwapZ ?? 0) < 0);
+    }
     if (needle) list = list.filter((row) => searchText(row).includes(needle));
     return list;
   }, [rows, query, filter, favoriteSet]);
@@ -226,7 +266,7 @@ export function ScreenerTable({
   const sortedRows = useMemo(() => {
     const activeSort = sort;
     if (!activeSort) return filteredRows;
-    const value = (row: MarketRow): string | number | null => {
+    const value = (row: ScreenerRow): string | number | null => {
       switch (activeSort.key) {
         case 'symbol':
           return row.instrument.nativeId;
@@ -240,6 +280,16 @@ export function ScreenerTable({
           return row.quoteVolume;
         case 'funding':
           return row.funding;
+        case 'range':
+          return row.metrics.sessionRangePct;
+        case 'volumeChange':
+          return row.metrics.volumeChange24hPct;
+        case 'rvol':
+          return row.metrics.rvol;
+        case 'vwap':
+          return row.metrics.vwapZ;
+        case 'rsi':
+          return row.metrics.rsi;
         default: {
           const column = columnByKey.get(activeSort.key);
           if (column?.kind !== 'plot') return null;
@@ -444,7 +494,7 @@ export function ScreenerTable({
     );
   };
 
-  const cell = (column: ColumnDef, row: MarketRow, selected: boolean) => {
+  const cell = (column: ColumnDef, row: ScreenerRow, selected: boolean) => {
     const instrument = row.instrument;
     switch (column.kind) {
       case 'symbol':
@@ -560,6 +610,82 @@ export function ScreenerTable({
             {formatFunding(row.funding)}
           </td>
         );
+      case 'range':
+        return (
+          <td
+            key={column.key}
+            title="Price position inside the UTC session range"
+            className="h-7 whitespace-nowrap px-2 text-right font-mono text-[11px] tabular-nums text-foreground/80"
+          >
+            {row.metrics.sessionRangePct === null
+              ? '-'
+              : `${row.metrics.sessionRangePct.toFixed(2)}%`}
+          </td>
+        );
+      case 'volumeChange': {
+        const value = row.metrics.volumeChange24hPct;
+        return (
+          <td
+            key={column.key}
+            title="Current 24h volume against the previous 24h"
+            className={cn(
+              'h-7 whitespace-nowrap px-2 text-right font-mono text-[11px] tabular-nums',
+              (value ?? 0) >= 0 ? 'text-positive' : 'text-negative',
+            )}
+          >
+            {formatPct(value)}
+          </td>
+        );
+      }
+      case 'rvol':
+        return (
+          <td
+            key={column.key}
+            title={`Volume against the ${metricsConfig.rvolDays}-day average`}
+            className={cn(
+              'h-7 whitespace-nowrap px-2 text-right font-mono text-[11px] tabular-nums',
+              (row.metrics.rvol ?? 0) >= 1.5 ? 'text-positive' : 'text-muted-foreground',
+            )}
+          >
+            {row.metrics.rvol === null ? '-' : row.metrics.rvol.toFixed(2)}
+          </td>
+        );
+      case 'vwap':
+        return (
+          <td
+            key={column.key}
+            title="Session VWAP z-score"
+            className={cn(
+              'h-7 whitespace-nowrap px-2 text-right font-mono text-[11px] tabular-nums',
+              (row.metrics.vwapZ ?? 0) >= 0 ? 'text-positive/90' : 'text-negative/90',
+            )}
+          >
+            {row.metrics.vwapZ === null
+              ? '-'
+              : `${row.metrics.vwapZ >= 0 ? '+' : ''}${row.metrics.vwapZ.toFixed(2)}`}
+          </td>
+        );
+      case 'rsi': {
+        const value = row.metrics.rsi;
+        return (
+          <td
+            key={column.key}
+            title={`Wilder RSI ${timeframeLabel(metricsConfig.timeframe)}`}
+            className={cn(
+              'h-7 whitespace-nowrap px-2 text-right font-mono text-[11px] tabular-nums',
+              value === null
+                ? 'text-muted-foreground'
+                : value < 30
+                  ? 'text-positive'
+                  : value > 70
+                    ? 'text-negative'
+                    : 'text-foreground/80',
+            )}
+          >
+            {value === null ? '-' : value.toFixed(1)}
+          </td>
+        );
+      }
       case 'plot': {
         const value = scanValue(scanResults.get(instrument.key), column.plotKey);
         const signal = value === 1 ? 'positive' : value === 0 ? 'muted' : 'neutral';
@@ -846,16 +972,24 @@ export function ScreenerTable({
           </Popover.Root>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <Segmented
-            value={filter}
-            onChange={(filter) => setView({ filter })}
-            options={[
-              { value: 'all', label: 'All' },
-              { value: 'gainers', label: 'Gainers' },
-              { value: 'losers', label: 'Losers' },
-              { value: 'favorites', label: 'Favorites' },
-            ]}
-          />
+          <div className="min-w-0">
+            <Segmented
+              value={filter}
+              onChange={(filter) => setView({ filter })}
+              className="h-auto flex-wrap"
+              options={[
+                { value: 'all', label: 'All' },
+                { value: 'gainers', label: 'Gainers' },
+                { value: 'losers', label: 'Losers' },
+                { value: 'favorites', label: 'Favorites' },
+                { value: 'rsiLow', label: 'RSI <30' },
+                { value: 'rsiHigh', label: 'RSI >70' },
+                { value: 'rvol', label: 'RVOL ≥1.5' },
+                { value: 'aboveVwap', label: '> VWAP' },
+                { value: 'belowVwap', label: '< VWAP' },
+              ]}
+            />
+          </div>
           <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
             {sortedRows.length}
             {rows.length !== sortedRows.length ? ` / ${rows.length}` : ''}

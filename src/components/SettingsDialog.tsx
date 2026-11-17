@@ -202,7 +202,7 @@ export function SettingsDialog({
 
       {tab === 'screener' ? (
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Min 24h volume" hint="Per venue, in quote currency">
+        <Field label="Watch threshold" hint="Min 24h quote volume per venue">
           <Input
             type="number"
             min={0}
@@ -211,15 +211,37 @@ export function SettingsDialog({
             onChange={(event) => patch({ minVolume: Math.max(0, Number(event.target.value) || 0) })}
           />
         </Field>
-        <Field label="Top symbols" hint="Per venue, after the volume filter">
+        <Field label="Metrics timeframe" hint="Technical TF for RSI, VWAP, Range and RVOL">
+          <Select
+            value={draft.metricsTimeframe ?? '15'}
+            onChange={(event) => patch({ metricsTimeframe: event.target.value })}
+          >
+            <option value="15">15m</option>
+            <option value="30">30m</option>
+            <option value="60">1h</option>
+          </Select>
+        </Field>
+        <Field label="RVOL days" hint="Previous 24h windows in the average">
           <Input
             type="number"
             min={1}
-            max={500}
-            step={10}
-            value={draft.topN}
+            max={30}
+            step={1}
+            value={draft.rvolDays ?? 7}
             onChange={(event) =>
-              patch({ topN: Math.max(1, Math.min(500, Number(event.target.value) || 1)) })
+              patch({ rvolDays: Math.max(1, Math.min(30, Number(event.target.value) || 7)) })
+            }
+          />
+        </Field>
+        <Field label="RSI period" hint="Wilder RSI period">
+          <Input
+            type="number"
+            min={2}
+            max={50}
+            step={1}
+            value={draft.rsiPeriod ?? 14}
+            onChange={(event) =>
+              patch({ rsiPeriod: Math.max(2, Math.min(50, Number(event.target.value) || 14)) })
             }
           />
         </Field>
@@ -233,16 +255,6 @@ export function SettingsDialog({
                 {layout.label}
               </option>
             ))}
-          </Select>
-        </Field>
-        <Field label="Refresh interval" hint="Binance tickers">
-          <Select
-            value={String(draft.refreshSeconds)}
-            onChange={(event) => patch({ refreshSeconds: Number(event.target.value) })}
-          >
-            <option value="5">5 seconds</option>
-            <option value="10">10 seconds</option>
-            <option value="30">30 seconds</option>
           </Select>
         </Field>
         <Field label="Scan timeframe" hint="Used by the Pine scanner">

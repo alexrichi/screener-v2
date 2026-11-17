@@ -242,6 +242,8 @@ export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarket
 export interface KlineOptions {
   /** Keep the in-progress candle (charts); the scanner never does. */
   includeForming?: boolean;
+  /** Start of the window (epoch ms). Binance `startTime`. */
+  from?: number;
   /** End of the window (epoch ms). Binance `endTime`. */
   to?: number;
 }
@@ -267,6 +269,7 @@ export async function fetchKlines(
     interval,
     limit: String(limit),
   });
+  if (opts.from != null) query.set('startTime', String(Math.floor(opts.from)));
   if (opts.to != null) query.set('endTime', String(Math.floor(opts.to)));
   const url = `${FUTURES}/klines?${query.toString()}`;
   const raw = await fetchJson<Array<Array<string | number>>>(url, signal);

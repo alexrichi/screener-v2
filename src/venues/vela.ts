@@ -84,7 +84,7 @@ export class SidecarVelaProvider implements DataProvider {
       timeframe,
       range.limit ?? 500,
       undefined,
-      { includeForming: true, to: range.to },
+      { includeForming: true, from: range.from, to: range.to },
     );
     return bars.map(toVelaBar);
   }

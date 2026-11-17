@@ -216,11 +216,16 @@ export class BitgetVenueAdapter implements VenueAdapter {
         opts.priority,
       );
       if (chunk.length === 0) break;
-      const filtered = chunk.filter((bar) => opts.to == null || bar.openTime <= opts.to);
+      const filtered = chunk.filter(
+        (bar) =>
+          (opts.from == null || bar.openTime >= opts.from) &&
+          (opts.to == null || bar.openTime <= opts.to),
+      );
       if (filtered.length === 0) break;
       pages.push(filtered);
       remaining -= filtered.length;
       const oldest = filtered[0]!.openTime;
+      if (opts.from != null && oldest <= opts.from) break;
       if (end != null && oldest >= end) break;
       end = oldest - 1;
       if (chunk.length < limit) break;

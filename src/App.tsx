@@ -67,14 +67,14 @@ import {
   type PickerEntry,
   type PickerPrefs,
 } from './lib/indicatorPicker';
-import { useMarketRows } from './hooks/useMarketRows';
+import { useScreener } from './hooks/useScreener';
 import {
   isBoolean,
   isNumber,
   isString,
   usePersistedState,
 } from './lib/usePersistedState';
-import { scanTargetsFor, trimRowsPerVenue } from './lib/universe';
+import { scanTargetsFor } from './lib/universe';
 import {
   activeFavoriteList,
   addFavoriteList,
@@ -138,6 +138,9 @@ const DEFAULT_SETTINGS: Settings = {
   scanBars: 500,
   refreshSeconds: 5,
   defaultLayout: '1',
+  metricsTimeframe: '15',
+  rvolDays: 7,
+  rsiPeriod: 14,
 };
 
 const LAYOUTS = new Set(['1', '2h', '2v', '4', '8']);
@@ -235,7 +238,7 @@ const TIMEFRAME_NAMES: Record<string, string> = {
 
 function defaultLayoutName(tab: WorkspaceTab): string {
   const timeframe = TIMEFRAME_NAMES[tab.timeframe] ?? tab.timeframe;
-  return `${symbolLabel(tab.symbol)} ${layoutLabel(tab.layout)} · ${timeframe}`;
+  return `${symbolLabel(tab.symbol)} ${layoutLabel(tab.layout)} Â· ${timeframe}`;
 }
 
 function layoutFileName(name: string): string {
@@ -295,10 +298,35 @@ export default function App() {
     },
     [setMarketVenues],
   );
-  const { rows, loading, error, venueErrors, updatedAt, refresh } = useMarketRows(
-    settings.refreshSeconds,
-    selectedVenues,
+  const metricsConfig = useMemo(
+    () => ({
+      timeframe: settings.metricsTimeframe ?? '15',
+      rvolDays: settings.rvolDays ?? 7,
+      rsiPeriod: settings.rsiPeriod ?? 14,
+      minVolume: settings.minVolume,
+      venues: selectedVenues,
+    }),
+    [
+      selectedVenues,
+      settings.metricsTimeframe,
+      settings.minVolume,
+      settings.rsiPeriod,
+      settings.rvolDays,
+    ],
   );
+  const { rows, status, loading, error, refresh } = useScreener({
+    config: metricsConfig,
+  });
+  const venueErrors = useMemo(
+    () =>
+      Object.fromEntries(
+        (status?.venues ?? [])
+          .filter((venue) => venue.message)
+          .map((venue) => [venue.venue, venue.message!]),
+      ),
+    [status],
+  );
+  const updatedAt = status?.lastUpdate ?? null;
 
   const [tabs, setTabs] = usePersistedState<WorkspaceTab[]>(
     'screener.tabs',
@@ -678,27 +706,10 @@ export default function App() {
     toast.error('Market data unavailable', { description: error });
   }, [error]);
 
-  const filteredRows = useMemo(
-    () => trimRowsPerVenue(rows, settings.minVolume, Math.max(1, settings.topN)),
-    [rows, settings.minVolume, settings.topN],
-  );
-
   const favoriteSymbols = useMemo(
     () => [...new Set(activeFavorites.items)],
     [activeFavorites.items],
   );
-  const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols]);
-
-  // The table keeps favorites visible even when they fall outside topN/minVolume.
-  // The scanner still uses the trimmed universe above.
-  const tableRows = useMemo(() => {
-    const seen = new Set(filteredRows.map((row) => row.instrument.key));
-    const extra = rows.filter(
-      (row) =>
-        favoriteSet.has(row.instrument.key) && !seen.has(row.instrument.key),
-    );
-    return [...filteredRows, ...extra];
-  }, [filteredRows, favoriteSet, rows]);
 
   const toggleFavorite = useCallback(
     (key: string) => {
@@ -775,7 +786,7 @@ export default function App() {
           parsed.skipped ? `${parsed.skipped} entries skipped` : null,
         ]
           .filter(Boolean)
-          .join(' · ');
+          .join(' Â· ');
         toast.success(
           `Imported ${imported} favorite${imported === 1 ? '' : 's'}`,
           { description: details || undefined },
@@ -948,13 +959,13 @@ export default function App() {
         toast.error('Select at least one venue');
         return;
       }
-      const targets = scanTargetsFor(filteredRows, selectedVenues);
+      const targets = scanTargetsFor(rows, selectedVenues);
       const total = targets.reduce(
         (sum, target) => sum + target.instruments.length,
         0,
       );
       if (total === 0) {
-        toast.error('No symbols match the universe filter');
+        toast.error('No watched symbols for the selected venues');
         return;
       }
       setScanResults(new Map());
@@ -991,7 +1002,7 @@ export default function App() {
       );
     },
     [
-      filteredRows,
+      rows,
       scanner,
       script,
       selectedVenues,
@@ -2121,11 +2132,11 @@ export default function App() {
     }
     if (context) {
       lines.push(
-        `Active chart: ${context.symbol} · ${context.timeframe} · layout ${context.layout} · ${context.indicators.length} indicator(s): ${context.indicators.join(', ') || 'none'}.`,
+        `Active chart: ${context.symbol} Â· ${context.timeframe} Â· layout ${context.layout} Â· ${context.indicators.length} indicator(s): ${context.indicators.join(', ') || 'none'}.`,
       );
     } else if (activeTab) {
       lines.push(
-        `Active workspace: ${activeTab.symbol} · ${activeTab.timeframe} · layout ${activeTab.layout}.`,
+        `Active workspace: ${activeTab.symbol} Â· ${activeTab.timeframe} Â· layout ${activeTab.layout}.`,
       );
     }
     return lines.join('\n');
@@ -2176,8 +2187,8 @@ export default function App() {
             transcriptionModel={aiStatus?.transcriptionModel ?? null}
             contextLabel={
               activeTab
-                ? `${activeTab.symbol} · ${activeTab.timeframe}${
-                    activeTab.pineName ? ` · ${activeTab.pineName}` : ''
+                ? `${activeTab.symbol} Â· ${activeTab.timeframe}${
+                    activeTab.pineName ? ` Â· ${activeTab.pineName}` : ''
                   }`
                 : 'No chart open'
             }
@@ -2251,7 +2262,8 @@ export default function App() {
           panels={{
             screener: (
               <ScreenerTable
-                rows={tableRows}
+                rows={rows}
+                metricsConfig={metricsConfig}
                 view={view}
                 onViewChange={setView}
                 venues={selectedVenues}
@@ -2545,7 +2557,7 @@ export default function App() {
                 )
               }
               rows={3}
-              placeholder="What this indicator does, inputs, caveats…"
+              placeholder="What this indicator does, inputs, caveatsâ€¦"
               className="w-full resize-y rounded-md border border-border bg-muted/40 p-2 text-[12px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </label>

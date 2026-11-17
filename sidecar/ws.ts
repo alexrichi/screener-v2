@@ -21,6 +21,8 @@ export interface WsSpec {
   /** Human label for logs. */
   label: string;
   url: string;
+  /** Maximum tokens per subscribe/unsubscribe message. */
+  batchSize?: number;
   /** Subscription token for one instrument/timeframe. */
   token(instrument: Instrument, timeframe: string): string;
   subscribe(tokens: string[]): unknown | unknown[];
@@ -34,6 +36,7 @@ interface Entry {
   instrument: Instrument;
   timeframe: string;
   listeners: Set<(bar: VenueBar) => void>;
+  fallbackListeners: number;
   live: boolean;
   stallTimer: NodeJS.Timeout | null;
   pollTimer: NodeJS.Timeout | null;
@@ -51,6 +54,9 @@ export class VenueKlineStream implements BarsStream {
   private forwarded = 0;
   private polls = 0;
   private readonly streams = new Map<string, Entry>();
+  private readonly pendingSubscribe = new Set<string>();
+  private readonly pendingUnsubscribe = new Set<string>();
+  private batchTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly spec: WsSpec,
@@ -76,6 +82,7 @@ export class VenueKlineStream implements BarsStream {
     instrument: Instrument,
     timeframe: string,
     onBar: (bar: VenueBar) => void,
+    opts?: { fallbackPoll?: boolean },
   ): Unsubscribe {
     const token = this.spec.token(instrument, timeframe);
     let entry = this.streams.get(token);
@@ -85,6 +92,7 @@ export class VenueKlineStream implements BarsStream {
         instrument,
         timeframe,
         listeners: new Set(),
+        fallbackListeners: 0,
         live: false,
         stallTimer: null,
         pollTimer: null,
@@ -92,10 +100,13 @@ export class VenueKlineStream implements BarsStream {
       this.streams.set(token, entry);
     }
     entry.listeners.add(onBar);
+    const fallback = opts?.fallbackPoll !== false;
+    if (fallback) entry.fallbackListeners += 1;
     this.open();
+    if (fallback) this.watch(entry);
     if (first) {
       console.log(`[stream:${this.spec.label}] ${token}`);
-      this.sendAll(this.spec.subscribe([token]));
+      this.queue('SUBSCRIBE', token);
       this.watch(entry);
     }
 
@@ -103,16 +114,59 @@ export class VenueKlineStream implements BarsStream {
       const current = this.streams.get(token);
       if (!current) return;
       current.listeners.delete(onBar);
+      if (fallback) current.fallbackListeners = Math.max(0, current.fallbackListeners - 1);
       if (current.listeners.size > 0) return;
       this.stopTimers(current);
       this.streams.delete(token);
-      this.sendAll(this.spec.unsubscribe([token]));
+      this.queue('UNSUBSCRIBE', token);
       if (this.streams.size === 0) this.close();
     };
   }
 
+  private queue(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', token: string): void {
+    if (method === 'SUBSCRIBE') {
+      this.pendingUnsubscribe.delete(token);
+      this.pendingSubscribe.add(token);
+    } else {
+      this.pendingSubscribe.delete(token);
+      this.pendingUnsubscribe.add(token);
+    }
+    if (this.batchTimer) return;
+    this.batchTimer = setTimeout(() => {
+      this.batchTimer = null;
+      this.flushQueue();
+    }, 50);
+  }
+
+  private flushQueue(): void {
+    for (const [method, pending] of [
+      ['SUBSCRIBE', this.pendingSubscribe],
+      ['UNSUBSCRIBE', this.pendingUnsubscribe],
+    ] as const) {
+      if (pending.size === 0) continue;
+      const tokens = [...pending];
+      pending.clear();
+      this.sendTokens(method, tokens);
+    }
+  }
+
+  private sendTokens(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', tokens: readonly string[]): void {
+    const size = Math.max(1, this.spec.batchSize ?? 100);
+    for (let index = 0; index < tokens.length; index += size) {
+      const chunk = tokens.slice(index, index + size);
+      this.sendAll(method === 'SUBSCRIBE' ? this.spec.subscribe(chunk) : this.spec.unsubscribe(chunk));
+    }
+  }
+
   private watch(entry: Entry): void {
-    if (entry.live || entry.stallTimer || entry.listeners.size === 0) return;
+    if (
+      entry.live ||
+      entry.stallTimer ||
+      entry.listeners.size === 0 ||
+      entry.fallbackListeners === 0
+    ) {
+      return;
+    }
     entry.stallTimer = setTimeout(() => {
       entry.stallTimer = null;
       this.startPolling(entry);
@@ -120,7 +174,14 @@ export class VenueKlineStream implements BarsStream {
   }
 
   private startPolling(entry: Entry): void {
-    if (entry.live || entry.pollTimer || entry.listeners.size === 0) return;
+    if (
+      entry.live ||
+      entry.pollTimer ||
+      entry.listeners.size === 0 ||
+      entry.fallbackListeners === 0
+    ) {
+      return;
+    }
     console.log(`[poll:${this.spec.label}] ${entry.instrument.key}|${entry.timeframe}`);
     entry.pollTimer = setInterval(() => void this.poll(entry), POLL_MS);
     void this.poll(entry);
@@ -138,7 +199,7 @@ export class VenueKlineStream implements BarsStream {
   }
 
   private async poll(entry: Entry): Promise<void> {
-    if (entry.live || entry.listeners.size === 0) return;
+    if (entry.live || entry.listeners.size === 0 || entry.fallbackListeners === 0) return;
     this.polls += 1;
     try {
       const bars = await this.fetchLatest(entry.instrument, entry.timeframe);
@@ -160,7 +221,9 @@ export class VenueKlineStream implements BarsStream {
 
     socket.on('open', () => {
       console.log(`[stream:${this.spec.label}] connected`);
-      if (this.streams.size > 0) this.sendAll(this.spec.subscribe([...this.streams.keys()]));
+      this.pendingSubscribe.clear();
+      this.pendingUnsubscribe.clear();
+      if (this.streams.size > 0) this.sendTokens('SUBSCRIBE', [...this.streams.keys()]);
       if (this.spec.ping) {
         this.pingTimer = setInterval(
           () => this.sendOne(this.spec.ping!.message),
@@ -207,7 +270,7 @@ export class VenueKlineStream implements BarsStream {
       }
       for (const entry of this.streams.values()) {
         entry.live = false;
-        this.startPolling(entry);
+        if (entry.fallbackListeners > 0) this.startPolling(entry);
       }
       if (this.streams.size > 0) this.scheduleReconnect();
     });
@@ -248,6 +311,10 @@ export class VenueKlineStream implements BarsStream {
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
+    }
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
     }
     if (this.pingTimer) {
       clearInterval(this.pingTimer);

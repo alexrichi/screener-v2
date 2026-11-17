@@ -213,7 +213,7 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
     const interval = hlInterval(timeframe);
     const wanted = Math.max(1, Math.min(5000, Math.floor(bars)));
     const end = opts.to ?? Date.now();
-    const start = end - (wanted + 2) * timeframeMs(timeframe);
+    const start = opts.from ?? end - (wanted + 2) * timeframeMs(timeframe);
     const candles = await this.request<HlCandle[]>(
       'candleSnapshot',
       {
@@ -247,6 +247,7 @@ export class HyperliquidVenueAdapter implements VenueAdapter {
       .filter(
         (bar) =>
           (!confirmedOnly || bar.closeTime <= now) &&
+          (opts.from == null || bar.openTime >= opts.from) &&
           (opts.to == null || bar.openTime <= opts.to),
       )
       .sort((a, b) => a.openTime - b.openTime)

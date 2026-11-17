@@ -193,7 +193,7 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
 
     while (remaining > 0) {
       const limit = Math.min(300, remaining);
-      const start = end - limit * tfMs;
+      const start = Math.max(opts.from ?? 0, end - limit * tfMs);
       const query = new URLSearchParams({
         granularity: String(granularity),
         start: new Date(start).toISOString(),
@@ -222,6 +222,7 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
         .filter(
           (bar) =>
             (!confirmedOnly || bar.closeTime <= now) &&
+            (opts.from == null || bar.openTime >= opts.from) &&
             (opts.to == null || bar.openTime <= opts.to),
         )
         .sort((a, b) => a.openTime - b.openTime);
@@ -229,6 +230,7 @@ export class CoinbaseVenueAdapter implements VenueAdapter {
       pages.push(mapped);
       remaining -= mapped.length;
       const oldest = mapped[0]!.openTime;
+      if (opts.from != null && oldest <= opts.from) break;
       if (oldest >= end) break;
       end = oldest - 1;
       if (rows.length < limit) break;

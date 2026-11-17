@@ -114,6 +114,7 @@ export class SidecarVenueAdapter implements VenueAdapter {
       bars: String(bars),
     });
     if (opts.includeForming) query.set('live', '1');
+    if (opts.from != null) query.set('from', String(Math.floor(opts.from)));
     if (opts.to != null) query.set('to', String(Math.floor(opts.to)));
     if (opts.priority === 'background') query.set('priority', 'background');
     return getJson<VenueBar[]>(

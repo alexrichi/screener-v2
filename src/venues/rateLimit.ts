@@ -46,9 +46,18 @@ export interface RateLimitSnapshot {
   }>;
 }
 
+/**
+ * Bulk work (screener warm-up, scans) may spend only this share of a bucket's
+ * refill rate. The rest stays available for charts, tickers and the same IP's
+ * other traffic, so a cold start cannot spend the whole minute budget at once.
+ */
+const BACKGROUND_RATE_SHARE = 0.4;
+
 interface BucketState {
   tokens: number;
   at: number;
+  /** Last background grant; paces bulk work at the share above. */
+  bgAt: number;
 }
 
 interface Pending {
@@ -98,7 +107,11 @@ export class RateLimiter {
       if (!(bucket.limit > 0) || !(bucket.windowMs > 0)) {
         throw new Error(`RateLimit bucket "${bucket.id}" needs positive limit/window`);
       }
-      this.buckets.set(bucket.id, { tokens: bucket.limit, at: now });
+      this.buckets.set(bucket.id, {
+        tokens: bucket.limit,
+        at: now,
+        bgAt: Number.NEGATIVE_INFINITY,
+      });
     }
   }
 
@@ -271,28 +284,43 @@ export class RateLimiter {
     return this.pending.some((entry) => entry.priority === 'interactive');
   }
 
-  private nextGrantable(): Pending | null {
+  private nextGrantable(now: number): Pending | null {
     const interactive = this.hasInteractive();
     for (const entry of this.pending) {
       if (interactive && entry.priority !== 'interactive') continue;
-      if (this.buckets.get(entry.bucket)!.tokens >= entry.cost) return entry;
+      if (this.buckets.get(entry.bucket)!.tokens < entry.cost) continue;
+      if (this.backgroundWait(entry, now) > 0) continue;
+      return entry;
     }
     return null;
   }
 
-  private nextWait(): number | null {
+  private nextWait(now: number): number | null {
     const interactive = this.hasInteractive();
     let wait = Number.POSITIVE_INFINITY;
     for (const entry of this.pending) {
       if (interactive && entry.priority !== 'interactive') continue;
-      const bucket = this.policy.buckets.find((item) => item.id === entry.bucket)!;
+      const bucket = this.bucketOf(entry.bucket);
       const tokens = this.buckets.get(entry.bucket)!.tokens;
       const deficit = entry.cost - tokens;
-      const ms = deficit <= 0 ? 0 : deficit / (bucket.limit / bucket.windowMs);
-      wait = Math.min(wait, ms);
+      const tokenWait = deficit <= 0 ? 0 : deficit / (bucket.limit / bucket.windowMs);
+      wait = Math.min(wait, Math.max(tokenWait, this.backgroundWait(entry, now)));
     }
     if (!Number.isFinite(wait)) return null;
     return Math.max(0, Math.ceil(wait));
+  }
+
+  private bucketOf(id: string): RateLimitBucket {
+    const bucket = this.policy.buckets.find((item) => item.id === id);
+    if (!bucket) throw new Error(`Unknown rate limit bucket "${id}"`);
+    return bucket;
+  }
+
+  private backgroundWait(entry: Pending, now: number): number {
+    if (entry.priority !== 'background') return 0;
+    const bucket = this.bucketOf(entry.bucket);
+    const interval = (entry.cost * bucket.windowMs) / (bucket.limit * BACKGROUND_RATE_SHARE);
+    return Math.max(0, this.buckets.get(entry.bucket)!.bgAt + interval - now);
   }
 
   private schedulePump(): void {
@@ -340,10 +368,12 @@ export class RateLimiter {
         }
 
         while (this.active < this.policy.maxConcurrent) {
-          const entry = this.nextGrantable();
+          const entry = this.nextGrantable(now);
           if (!entry) break;
           this.removePending(entry);
-          this.buckets.get(entry.bucket)!.tokens -= entry.cost;
+          const state = this.buckets.get(entry.bucket)!;
+          state.tokens -= entry.cost;
+          if (entry.priority === 'background') state.bgAt = now;
           this.active += 1;
           entry.resolve();
         }
@@ -351,7 +381,7 @@ export class RateLimiter {
         if (this.pending.length === 0) return;
         if (this.active >= this.policy.maxConcurrent) return;
 
-        const wait = this.nextWait();
+        const wait = this.nextWait(now);
         if (wait === null) return;
         if (wait > 0) await this.sleepUntil(this.clock.now() + wait);
       }

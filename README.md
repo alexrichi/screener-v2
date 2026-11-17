@@ -113,9 +113,16 @@ the same `build` string.
   venue of the selected ticker. Coinbase is spot; the rest are perpetuals.
 - One multi-venue screener table with a venue checkbox filter, a leading
   `Venue` icon column, and a `perp` / `spot` badge per row. A row click opens the
-  matching venue's chart. `topN` and the volume floor apply per venue before the
-  lists merge. Clicking a column header cycles descending, ascending, and
-  unsorted.
+  matching venue's chart. The sidecar watches every instrument whose 24h quote
+  volume clears the threshold, so there is no row cap. Clicking a column header
+  cycles descending, ascending, and unsorted.
+- Screener metrics: Range 24h, 24h volume change, RVOL against the previous
+  `RVOL days` windows, session VWAP z-score, and Wilder RSI on the configured
+  technical timeframe (15m, 30m or 1h). Quick filters pick oversold (`RSI <30`),
+  overbought (`RSI >70`), unusual volume (`RVOL ≥1.5`) and price above/below
+  VWAP. The sidecar keeps one merged candle series per watched instrument, updates
+  it from the venue's kline stream (Coinbase through a REST tail) and pushes
+  batched row patches to the browser every two seconds; the browser only renders.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
   own symbol and timeframe, and the active cell survives a reload. Panning is
   session-only: a reload frames the latest bars at the same zoom level, keeping
@@ -124,8 +131,9 @@ the same `build` string.
   steps, with a loading badge in the cell. The leftmost button of the chart
   toolbar's right group maximizes the selected chart over the widget and restores
   the grid on a second click.
-- Screener table with search, gainers/losers filters, sorting, resizable and
-  reorderable columns, and per-row actions. Screener, Pine, Library, and Alerts
+- Screener table with search, gainers/losers and metric filters, sorting,
+  resizable and reorderable columns, and per-row actions. Screener, Pine,
+  Library, and Alerts
   open as Vela side panels from the chart's right sidebar; the open panel and
   width persist, and script alerts are session-only. The strategy dock sits at
   the foot of the chart column, under the range presets; the drawing toolbar and
@@ -137,7 +145,8 @@ the same `build` string.
   (`venue:kind:nativeId`), and the old `screener.favorites` key folds into the
   default list. Create, rename, clear, or delete lists; import a JSON/text file
   into the active list; export every list as JSON. Favorites stay visible in the
-  `Favorites` tab even when a symbol falls outside `topN` or the volume filter.
+  `Favorites` tab for every symbol the sidecar watches; a symbol below the volume
+  threshold is not fetched, so it does not appear there.
   The active list name labels the favorites button in the screener toolbar.
 - Pine editor with tabs, presets and Monaco highlighting, completions, signature
   help, folding, search, semantic colors, outline, formatting, rich hover docs,

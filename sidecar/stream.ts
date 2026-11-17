@@ -28,6 +28,7 @@ interface StreamEntry {
   instrument: Instrument;
   timeframe: string;
   listeners: Set<(bar: VenueBar) => void>;
+  fallbackListeners: number;
   live: boolean;
   pollFailed: boolean;
   stallTimer: NodeJS.Timeout | null;
@@ -46,6 +47,11 @@ export function klineToBar(kline: BinanceKline): VenueBar {
   };
 }
 
+export interface BarsSubscriptionOptions {
+  /** Charts keep the 1/s REST fallback; bulk screener subscriptions do not. */
+  fallbackPoll?: boolean;
+}
+
 export interface BarsStream {
   readonly streamCount: number;
   readonly barCount: number;
@@ -54,6 +60,7 @@ export interface BarsStream {
     instrument: Instrument,
     timeframe: string,
     onBar: (bar: VenueBar) => void,
+    opts?: BarsSubscriptionOptions,
   ): Unsubscribe;
 }
 
@@ -70,6 +77,9 @@ export class BinanceKlineStream implements BarsStream {
   private forwarded = 0;
   private polls = 0;
   private readonly streams = new Map<string, StreamEntry>();
+  private readonly pendingSubscribe = new Set<string>();
+  private readonly pendingUnsubscribe = new Set<string>();
+  private batchTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly fetchLatest: (
@@ -96,6 +106,7 @@ export class BinanceKlineStream implements BarsStream {
     instrument: Instrument,
     timeframe: string,
     onBar: (bar: VenueBar) => void,
+    opts?: BarsSubscriptionOptions,
   ): Unsubscribe {
     const interval = binanceInterval(timeframe);
     const name = `${instrument.nativeId.toLowerCase()}@kline_${interval}`;
@@ -106,6 +117,7 @@ export class BinanceKlineStream implements BarsStream {
         instrument,
         timeframe,
         listeners: new Set(),
+        fallbackListeners: 0,
         live: false,
         pollFailed: false,
         stallTimer: null,
@@ -114,10 +126,13 @@ export class BinanceKlineStream implements BarsStream {
       this.streams.set(name, entry);
     }
     entry.listeners.add(onBar);
+    const fallback = opts?.fallbackPoll !== false;
+    if (fallback) entry.fallbackListeners += 1;
     this.open();
+    if (fallback) this.watch(entry);
     if (first) {
       console.log(`[stream] ${name}`);
-      this.send('SUBSCRIBE', [name]);
+      this.queue('SUBSCRIBE', name);
       this.watch(entry);
     }
 
@@ -125,16 +140,57 @@ export class BinanceKlineStream implements BarsStream {
       const current = this.streams.get(name);
       if (!current) return;
       current.listeners.delete(onBar);
+      if (fallback) current.fallbackListeners = Math.max(0, current.fallbackListeners - 1);
       if (current.listeners.size > 0) return;
       this.stopTimers(current);
       this.streams.delete(name);
-      this.send('UNSUBSCRIBE', [name]);
+      this.queue('UNSUBSCRIBE', name);
       if (this.streams.size === 0) this.close();
     };
   }
 
+  private queue(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', token: string): void {
+    if (method === 'SUBSCRIBE') {
+      this.pendingUnsubscribe.delete(token);
+      this.pendingSubscribe.add(token);
+    } else {
+      this.pendingSubscribe.delete(token);
+      this.pendingUnsubscribe.add(token);
+    }
+    if (this.batchTimer) return;
+    this.batchTimer = setTimeout(() => {
+      this.batchTimer = null;
+      this.flushQueue();
+    }, 50);
+  }
+
+  private flushQueue(): void {
+    for (const [method, pending] of [
+      ['SUBSCRIBE', this.pendingSubscribe],
+      ['UNSUBSCRIBE', this.pendingUnsubscribe],
+    ] as const) {
+      if (pending.size === 0) continue;
+      const tokens = [...pending];
+      pending.clear();
+      this.sendTokens(method, tokens);
+    }
+  }
+
+  private sendTokens(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', tokens: readonly string[]): void {
+    for (let index = 0; index < tokens.length; index += 100) {
+      this.send(method, tokens.slice(index, index + 100));
+    }
+  }
+
   private watch(entry: StreamEntry): void {
-    if (entry.live || entry.stallTimer || entry.listeners.size === 0) return;
+    if (
+      entry.live ||
+      entry.stallTimer ||
+      entry.listeners.size === 0 ||
+      entry.fallbackListeners === 0
+    ) {
+      return;
+    }
     entry.stallTimer = setTimeout(() => {
       entry.stallTimer = null;
       this.startPolling(entry);
@@ -142,7 +198,14 @@ export class BinanceKlineStream implements BarsStream {
   }
 
   private startPolling(entry: StreamEntry): void {
-    if (entry.live || entry.pollTimer || entry.listeners.size === 0) return;
+    if (
+      entry.live ||
+      entry.pollTimer ||
+      entry.listeners.size === 0 ||
+      entry.fallbackListeners === 0
+    ) {
+      return;
+    }
     entry.pollTimer = setInterval(() => void this.poll(entry), POLL_MS);
     void this.poll(entry);
   }
@@ -159,7 +222,7 @@ export class BinanceKlineStream implements BarsStream {
   }
 
   private async poll(entry: StreamEntry): Promise<void> {
-    if (entry.live || entry.listeners.size === 0) return;
+    if (entry.live || entry.listeners.size === 0 || entry.fallbackListeners === 0) return;
     this.polls += 1;
     try {
       const bars = await this.fetchLatest(entry.instrument, entry.timeframe);
@@ -188,7 +251,9 @@ export class BinanceKlineStream implements BarsStream {
 
     socket.on('open', () => {
       console.log('[stream] connected');
-      if (this.streams.size > 0) this.send('SUBSCRIBE', [...this.streams.keys()]);
+      this.pendingSubscribe.clear();
+      this.pendingUnsubscribe.clear();
+      if (this.streams.size > 0) this.sendTokens('SUBSCRIBE', [...this.streams.keys()]);
     });
 
     socket.on('message', (raw) => {
@@ -216,7 +281,7 @@ export class BinanceKlineStream implements BarsStream {
       for (const entry of this.streams.values()) {
         entry.live = false;
         // Keep charts moving while the venue socket reconnects.
-        this.startPolling(entry);
+        if (entry.fallbackListeners > 0) this.startPolling(entry);
       }
       if (this.streams.size > 0) this.scheduleReconnect();
     });
@@ -246,6 +311,10 @@ export class BinanceKlineStream implements BarsStream {
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
+    }
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
     }
     socket?.close();
   }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   baseFromSymbol,
   binanceInterval,
@@ -14,6 +14,7 @@ import {
   layoutLabel,
 } from '../src/lib/format';
 import {
+  BASE_COLUMN_KEYS,
   DEFAULT_VIEW,
   isScreenerView,
   mergeColumnOrder,
@@ -23,11 +24,9 @@ import { isStringArray } from '../src/lib/usePersistedState';
 import {
   favoriteKey,
   scanTargetsFor,
-  trimRowsPerVenue,
 } from '../src/lib/universe';
-import { fetchMarketRows } from '../src/lib/marketData';
-import type { MarketRow, VenueId } from '../src/types';
-import { SidecarVenueAdapter } from '../src/venues/sidecar';
+import type { MarketRow, ScreenerRow, ScreenerStatus, VenueId } from '../src/types';
+import { mergeScreenerRows } from '../src/lib/screenerClient';
 import { makeInstrument } from '../src/venues/instrument';
 
 function row(venue: VenueId, nativeId: string, quoteVolume: number): MarketRow {
@@ -49,6 +48,61 @@ function row(venue: VenueId, nativeId: string, quoteVolume: number): MarketRow {
     nextFunding: null,
   };
 }
+
+function screenerRow(nativeId: string, quoteVolume: number): ScreenerRow {
+  return {
+    instrument: makeInstrument({
+      venue: 'binance',
+      kind: 'perp',
+      nativeId,
+      base: 'BTC',
+      quote: 'USDT',
+      velaSymbol: `BINANCE:${nativeId}.P`,
+    }),
+    price: 1,
+    change24h: 1,
+    quoteVolume,
+    funding: null,
+    nextFunding: null,
+    metrics: {
+      sessionRangePct: null,
+      volumeChange24hPct: null,
+      rvol: null,
+      vwapZ: null,
+      rsi: null,
+    },
+    updatedAt: 0,
+    warming: false,
+    missing: [],
+    staleMetrics: [],
+  };
+}
+
+describe('screener row patches', () => {
+  it('upserts, removes and keeps the 24h-volume order', () => {
+    const btc = screenerRow('BTCUSDT', 100);
+    const eth = screenerRow('ETHUSDT', 50);
+    const status: ScreenerStatus = {
+      ready: true,
+      watched: 2,
+      warming: 0,
+      lastUpdate: 1,
+      venues: [],
+    };
+
+    const next = mergeScreenerRows([btc, eth], {
+      rows: [screenerRow('SOLUSDT', 200), { ...btc, quoteVolume: 10 }],
+      removed: [eth.instrument.key],
+      status,
+    });
+
+    expect(next.map((item) => item.instrument.nativeId)).toEqual([
+      'SOLUSDT',
+      'BTCUSDT',
+    ]);
+    expect(next[1].quoteVolume).toBe(10);
+  });
+});
 
 describe('binance symbols and intervals', () => {
   it('maps Vela futures symbols both ways', () => {
@@ -112,6 +166,37 @@ describe('screener view persistence', () => {
     expect(isScreenerView(null)).toBe(false);
   });
 
+  it('keeps the metric quick filters', () => {
+    for (const filter of [
+      'rsiLow',
+      'rsiHigh',
+      'rvol',
+      'aboveVwap',
+      'belowVwap',
+    ] as const) {
+      expect(isScreenerView({ ...DEFAULT_VIEW, filter })).toBe(true);
+    }
+  });
+
+  it('keeps the metric columns in a persisted order', () => {
+    expect(BASE_COLUMN_KEYS).toEqual([
+      'venue',
+      'symbol',
+      'price',
+      'change24h',
+      'range',
+      'quoteVolume',
+      'volumeChange',
+      'rvol',
+      'funding',
+      'vwap',
+      'rsi',
+    ]);
+    expect(
+      mergeColumnOrder(['symbol', 'quoteVolume'], [...BASE_COLUMN_KEYS, 'plot:rsi']),
+    ).toEqual([...BASE_COLUMN_KEYS, 'plot:rsi']);
+  });
+
   it('cycles a column through descending, ascending and unsorted', () => {
     const desc = nextSort(null, 'price');
     expect(desc).toEqual({ key: 'price', dir: -1 });
@@ -153,20 +238,6 @@ describe('multi-venue universe', () => {
     expect(favoriteKey('okx:perp:BTC-USDT-SWAP')).toBe('okx:perp:BTC-USDT-SWAP');
   });
 
-  it('applies minVolume and topN per venue before merging', () => {
-    const rows = [
-      row('binance', 'A', 500),
-      row('binance', 'B', 300),
-      row('binance', 'C', 250),
-      row('okx', 'A', 400),
-      row('okx', 'B', 200),
-    ];
-    const kept = trimRowsPerVenue(rows, 260, 2);
-    expect(
-      kept.map((item) => `${item.instrument.venue}:${item.instrument.nativeId}`),
-    ).toEqual(['binance:A', 'okx:A', 'binance:B']);
-  });
-
   it('groups scanner targets in venue order', () => {
     const rows = [row('binance', 'A', 500), row('okx', 'A', 400), row('okx', 'B', 300)];
     const targets = scanTargetsFor(rows, ['okx', 'binance']);
@@ -175,40 +246,5 @@ describe('multi-venue universe', () => {
       'A',
       'B',
     ]);
-  });
-});
-
-describe('multi-venue market rows', () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it('keeps healthy venues when one venue fails', async () => {
-    vi.spyOn(SidecarVenueAdapter.prototype, 'fetchTickers').mockImplementation(
-      async function (this: SidecarVenueAdapter) {
-        if (this.id === 'okx') throw new Error('OKX is down');
-        const instrument = makeInstrument({
-          venue: 'binance',
-          kind: 'perp',
-          nativeId: 'BTCUSDT',
-          base: 'BTC',
-          quote: 'USDT',
-          velaSymbol: 'BINANCE:BTCUSDT.P',
-        });
-        return [
-          {
-            instrument,
-            last: 1,
-            change24h: 1,
-            quoteVolume: 100,
-            funding: null,
-            nextFunding: null,
-          },
-        ];
-      },
-    );
-
-    const result = await fetchMarketRows(['binance', 'okx']);
-    expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.instrument.key).toBe('binance:perp:BTCUSDT');
-    expect(result.errors.okx).toBe('OKX is down');
   });
 });

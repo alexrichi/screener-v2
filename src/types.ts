@@ -2,7 +2,16 @@ import type { Instrument, MarketKind, VenueId } from './venues/types';
 
 export type ThemeMode = 'dark' | 'light';
 
-export type MarketFilter = 'all' | 'gainers' | 'losers' | 'favorites';
+export type MarketFilter =
+  | 'all'
+  | 'gainers'
+  | 'losers'
+  | 'favorites'
+  | 'rsiLow'
+  | 'rsiHigh'
+  | 'rvol'
+  | 'aboveVwap'
+  | 'belowVwap';
 
 export interface MarketRow {
   /** Full instrument identity: key, venue, native id, display and Vela symbol. */
@@ -12,6 +21,57 @@ export interface MarketRow {
   quoteVolume: number | null;
   funding: number | null;
   nextFunding: number | null;
+}
+
+export interface ScreenerMetrics {
+  sessionRangePct: number | null;
+  volumeChange24hPct: number | null;
+  rvol: number | null;
+  vwapZ: number | null;
+  rsi: number | null;
+}
+
+/** One row of the server-side screener. The table only sees watched rows. */
+export interface ScreenerRow extends MarketRow {
+  metrics: ScreenerMetrics;
+  updatedAt: number;
+  warming: boolean;
+  missing: string[];
+  staleMetrics: string[];
+}
+
+export interface ScreenerStatus {
+  ready: boolean;
+  watched: number;
+  warming: number;
+  lastUpdate: number | null;
+  venues: Array<{
+    venue: VenueId;
+    state: 'ok' | 'degraded' | 'error';
+    watched: number;
+    lastUpdate: number | null;
+    message?: string;
+  }>;
+}
+
+export interface ScreenerSnapshot {
+  rows: ScreenerRow[];
+  status: ScreenerStatus;
+}
+
+export interface ScreenerPatch {
+  rows: ScreenerRow[];
+  removed: string[];
+  status: ScreenerStatus;
+}
+
+export interface ScreenerConfig {
+  timeframe: string;
+  rvolDays: number;
+  rsiPeriod: number;
+  minVolume: number;
+  /** Checked venues; omitted means every venue the sidecar serves. */
+  venues?: VenueId[];
 }
 
 /** One row of the active chart's indicator picker. */
@@ -167,11 +227,17 @@ export interface ScanTarget {
 
 export interface Settings {
   minVolume: number;
+  /** Kept for old stored settings; the screener table no longer trims by it. */
   topN: number;
   scanTimeframe: string;
   scanBars: number;
+  /** Kept for old stored settings; the sidecar owns the ticker poll now. */
   refreshSeconds: number;
   defaultLayout: string;
+  /** Server-side screener technical timeframe; defaults to 15m. */
+  metricsTimeframe?: string;
+  rvolDays?: number;
+  rsiPeriod?: number;
 }
 
 export interface ScanRequest {

@@ -67,6 +67,8 @@ export type RequestPriority = 'interactive' | 'background';
 
 export interface VenueFetchOptions {
   includeForming?: boolean;
+  /** Start of the window (epoch ms); adapters that support it pass startTime/after. */
+  from?: number;
   to?: number;
   priority?: RequestPriority;
 }

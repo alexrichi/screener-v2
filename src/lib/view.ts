@@ -5,8 +5,13 @@ export const BASE_COLUMN_KEYS = [
   'symbol',
   'price',
   'change24h',
+  'range',
   'quoteVolume',
+  'volumeChange',
+  'rvol',
   'funding',
+  'vwap',
+  'rsi',
 ];
 
 export const DEFAULT_VIEW: ScreenerView = {
@@ -70,7 +75,12 @@ export function isScreenerView(value: unknown): value is ScreenerView {
     (view.filter === 'all' ||
       view.filter === 'gainers' ||
       view.filter === 'losers' ||
-      view.filter === 'favorites') &&
+      view.filter === 'favorites' ||
+      view.filter === 'rsiLow' ||
+      view.filter === 'rsiHigh' ||
+      view.filter === 'rvol' ||
+      view.filter === 'aboveVwap' ||
+      view.filter === 'belowVwap') &&
     typeof columns === 'object' &&
     columns !== null &&
     Array.isArray(columns.order) &&

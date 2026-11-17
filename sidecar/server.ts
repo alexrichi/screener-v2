@@ -9,6 +9,7 @@ import { HyperliquidVenueAdapter } from '../src/venues/hyperliquid';
 import { OkxVenueAdapter } from '../src/venues/okx';
 import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
+import type { ScreenerConfig, VenueId } from '../src/types';
 import { handleAi } from './ai';
 import { VenueHub } from './hub';
 import { librarySource } from './luxalgo';
@@ -21,6 +22,7 @@ import {
   HYPERLIQUID_STREAM,
   OKX_STREAM,
 } from './venueStreams';
+import { ScreenerService } from './screener';
 
 const hubs = new Map<string, VenueHub>([
   ['binance', new VenueHub(new BinanceVenueAdapter())],
@@ -73,6 +75,17 @@ const streams = new Map<string, BarsStream>([
 const host = process.env.SIDECAR_HOST ?? '127.0.0.1';
 const port = Number(process.env.SIDECAR_PORT ?? 8787);
 
+const screener = new ScreenerService({
+  hubs,
+  streams,
+  config: {
+    timeframe: process.env.SCREENER_TIMEFRAME ?? '15',
+    rvolDays: Number(process.env.SCREENER_RVOL_DAYS ?? 7),
+    rsiPeriod: Number(process.env.SCREENER_RSI_PERIOD ?? 14),
+    minVolume: Number(process.env.SCREENER_MIN_VOLUME ?? 1_000_000),
+  },
+});
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -91,6 +104,31 @@ function json(res: http.ServerResponse, status: number, body: unknown, headers: 
 
 function fail(res: http.ServerResponse, status: number, error: unknown, headers: Record<string, string> = {}): void {
   json(res, status, { error: errorMessage(error) }, headers);
+}
+
+function readJson(req: http.IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 64_000) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve(text ? JSON.parse(text) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
 }
 
 async function findInstrument(
@@ -124,6 +162,24 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   if (await handleAi(req, res, path)) return;
+
+  if (path === '/screener/snapshot' && req.method === 'GET') {
+    screener.start();
+    json(res, 200, screener.snapshot());
+    return;
+  }
+
+  if (path === '/screener/config' && req.method === 'POST') {
+    try {
+      screener.start();
+      const body = await readJson(req);
+      screener.setConfig(body as Partial<ScreenerConfig>);
+      json(res, 200, { ok: true, status: screener.snapshot().status });
+    } catch (error) {
+      fail(res, 400, error);
+    }
+    return;
+  }
 
   if (req.method !== 'GET') {
     fail(res, 405, 'Method not allowed');
@@ -187,6 +243,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       const timeframe = url.searchParams.get('timeframe') ?? '15';
       const bars = Math.max(1, Math.min(100_000, Number(url.searchParams.get('bars') ?? 300) || 300));
       const live = url.searchParams.get('live') === '1';
+      const from = Number(url.searchParams.get('from'));
       const to = Number(url.searchParams.get('to'));
       const priority = url.searchParams.get('priority') === 'background' ? 'background' : 'interactive';
       const controller = new AbortController();
@@ -197,6 +254,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       try {
         const rows = await hub.getBars(instrument, timeframe, bars, {
           includeForming: live,
+          from: Number.isFinite(from) && from > 0 ? from : undefined,
           to: Number.isFinite(to) && to > 0 ? to : undefined,
           priority,
           signal: controller.signal,
@@ -282,14 +340,19 @@ async function onStreamMessage(ws: WebSocket, subscriptions: Subscriptions, raw:
 }
 
 const wss = new WebSocketServer({ noServer: true });
+const screenerWss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
-  if (url.pathname !== '/stream') {
-    socket.destroy();
+  if (url.pathname === '/stream') {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  if (url.pathname === '/screener') {
+    screenerWss.handleUpgrade(req, socket, head, (ws) => screenerWss.emit('connection', ws, req));
+    return;
+  }
+  socket.destroy();
 });
 
 wss.on('connection', (ws) => {
@@ -302,6 +365,73 @@ wss.on('connection', (ws) => {
     for (const unsubscribe of subscriptions.values()) unsubscribe();
     subscriptions.clear();
     console.log('[sidecar] ws closed');
+  });
+});
+
+screenerWss.on('connection', (ws) => {
+  screener.start();
+  const send = (payload: unknown): void => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  };
+  console.log('[sidecar] screener ws connected');
+  send({ op: 'screener.snapshot', ...screener.snapshot() });
+  const unsubscribe = screener.onPatch((patch) => {
+    send({ op: 'screener.patch', ...patch });
+  });
+
+  ws.on('message', (raw) => {
+    try {
+      const message = JSON.parse(raw.toString()) as {
+        op?: string;
+        keys?: unknown;
+        venues?: unknown;
+        timeframe?: unknown;
+        rvolDays?: unknown;
+        rsiPeriod?: unknown;
+        minVolume?: unknown;
+      };
+      if (message.op === 'screener.viewport' && Array.isArray(message.keys)) {
+        screener.setViewport(
+          message.keys.filter((key): key is string => typeof key === 'string'),
+        );
+        return;
+      }
+      if (message.op === 'screener.config') {
+        screener.setConfig({
+          ...(Array.isArray(message.venues)
+            ? {
+                venues: message.venues.filter(
+                  (venue): venue is VenueId => typeof venue === 'string',
+                ),
+              }
+            : {}),
+          ...(typeof message.timeframe === 'string'
+            ? { timeframe: message.timeframe }
+            : {}),
+          ...(Number.isFinite(message.rvolDays)
+            ? { rvolDays: Number(message.rvolDays) }
+            : {}),
+          ...(Number.isFinite(message.rsiPeriod)
+            ? { rsiPeriod: Number(message.rsiPeriod) }
+            : {}),
+          ...(Number.isFinite(message.minVolume)
+            ? { minVolume: Number(message.minVolume) }
+            : {}),
+        });
+        send({ op: 'screener.snapshot', ...screener.snapshot() });
+        return;
+      }
+      if (message.op === 'screener.refresh') {
+        send({ op: 'screener.snapshot', ...screener.snapshot() });
+      }
+    } catch {
+      // Ignore malformed control frames; the next snapshot recovers.
+    }
+  });
+
+  ws.on('close', () => {
+    unsubscribe();
+    console.log('[sidecar] screener ws closed');
   });
 });
 

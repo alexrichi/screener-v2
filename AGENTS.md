@@ -106,13 +106,14 @@ src/
     ui/                           shadcn shims used by the registry kit (Base UI)
     VelaWorkspaceHost.tsx         Vela workspace per tab; cells, active-cell sync, Pine apply,
                                   source-code legend action
-    ScreenerTable.tsx             market table, filters, favorites, column actions
+    ScreenerTable.tsx             server-owned market table, metric columns, quick filters,
+                                  favorites, column actions
     PinePanel.tsx                 script editor with tabs, saved scripts, apply and scan controls;
                                   lazy-loads the Monaco editor from `@screener/pine-editor/monaco/react`
     LibraryPanel.tsx              saved indicator list, import/export and actions
-    SettingsDialog.tsx            universe and scan defaults
+    SettingsDialog.tsx            watch threshold, metrics timeframe, scan defaults
   hooks/
-    useMarketRows.ts              market-row poll loop via the venue layer
+    useScreener.ts                server-owned screener: snapshot, WS patches, viewport, config
     useDictation.ts               microphone recording and sidecar transcription
   lib/
     ai/debug.worker.ts            disposable pine-engine debug run over sidecar bars
@@ -132,7 +133,6 @@ src/
     indicatorPicker.ts            picker entries, relevance filter, favorites/recents
     luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
-    marketData.ts                 market rows for the checked venues via the sidecar
     pineDraft.ts                  saved/source dirty comparison and starter templates
     pineTabs.ts                   Pine editor tab model, source normalization, legacy migration and validators
     pineVela/engine.ts            Vela ScriptingEngine: worker orchestration and result mapping
@@ -140,7 +140,9 @@ src/
     pineVela/engine.worker.ts     module worker: compile and run sessions off the main thread
     pineVela/protocol.ts          structured-clone worker messages
     pineVela/workerClient.ts      worker lifecycle and needs/resume fetching
-    universe.ts                   per-venue trim, scan target grouping, favorites key
+    screenerClient.ts             screener snapshot/config REST calls and row patch merge
+    screenerMetrics.ts            Range 24h, VolΔ24h, RVOL, VWAPσ and Wilder RSI formulas
+    universe.ts                   scan target grouping and the favorites key
     velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
     velaLayouts.ts                topbar Layouts action and popover bridge
     velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
@@ -182,6 +184,7 @@ sidecar/
   ai.ts                           AI key-injecting proxy for an OpenAI-compatible model
   hub.ts                          one adapter per venue; shared caches/fan-out
   luxalgo.ts                      LuxAlgo Library source fetch and cache
+  screener.ts                     server-owned watched table: activation, warm-up, metrics, patches
   stream.ts                       Binance kline WS plus a REST-polling stream for
                                   venues without a WS feed
   ws.ts                           generic ref-counted venue WebSocket stream
@@ -239,16 +242,27 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   indicator (`library-<codeId>`). Several Library scripts can sit on one chart
   and the tab's own Pine script is not replaced. Sources are fetched on demand,
   never bulk-copied into the repo.
-- `useMarketRows` calls `fetchMarketRows` every `settings.refreshSeconds` for
-  the checked venues, in parallel through `Promise.allSettled`. Rows come from
-  the sidecar only; its `VenueHub` owns one adapter, ticker/bars caches and
-  in-flight de-duplication. A failed venue keeps the others visible and surfaces
-  as a per-venue warning. `App` applies `minVolume` and `topN` **per venue**
-  (`lib/universe.ts`), then merges by 24h quote volume before the table and
-  scanner see the rows. OKX has no bulk REST funding endpoint: its adapter keeps
-  one `funding-rate` WebSocket subscription for every USDT swap and reads the
-  cached rates into `VenueTicker`. A socket failure leaves funding null without
-  failing the tickers.
+- The screener table is server-owned. `sidecar/screener.ts` polls venue tickers
+  (`VenueHub` owns the adapters, caches and in-flight de-duplication), watches
+  every instrument whose 24h quote volume clears `minVolume`, and backfills
+  `rvolDays + 1` days of `metricsTimeframe` candles for each one. Watched
+  instruments subscribe to their venue's kline stream in batches; Coinbase has no
+  candle WS, so its rows refresh through a slow REST tail. `topN` no longer trims
+  the table or the scanner. Warm-up runs as `background` work, visible rows
+  first, then the highest-volume rows; the browser sends its top 100 row keys as
+  `screener.viewport`. The service computes Range 24h, VolΔ24h, RVOL, VWAPσ and
+  Wilder RSI (`lib/screenerMetrics.ts`) and pushes batched patches every 2 s.
+- `useScreener` fetches `/screener/snapshot` once, then reads `screener.patch`
+  frames from the single `/screener` WebSocket and merges them by `instrument.key`
+  in 24h-volume order. Configuration (threshold, timeframe, RVOL days, RSI
+  period, checked venues) is replayed on reconnect and on every change; dropping
+  a venue unsubscribes and removes its rows, and the remaining rows stay. The
+  service starts on the first snapshot or socket connection, not when the sidecar
+  boots. A failed venue
+  keeps the other venues' rows and surfaces as a per-venue warning. OKX has no
+  bulk REST funding endpoint: its adapter keeps one `funding-rate` WebSocket
+  subscription for every USDT swap and reads the cached rates into
+  `VenueTicker`. A socket failure leaves funding null without failing the tickers.
 - Vela charts use `SidecarVelaProvider(venueId)`, one provider per entry in
   `venues/catalog.ts`. History, live candles and ranged backfills all go through
   the sidecar: the provider sends the requested depth (and `to` for older
@@ -283,13 +297,16 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   `screener.favorites` items fold into the default list on first read. The active
   list name labels the favorites button, while the panel title stays `Screener`.
   Import adds every ticker to the active list; list names in the file are
-  ignored. Export writes every list as JSON. The table receives the trimmed
-  universe plus any active-list favorite outside it, so favorites stay visible in
-  the `Favorites` tab regardless of `topN`/`minVolume`; the scanner still uses the
-  trimmed universe only.
+  ignored. Export writes every list as JSON. The table always shows every watched
+  row: a favorite below `minVolume` is not watched, so it is not fetched and not
+  visible. `Favorites` filters the watched rows by the active list.
 - A table row click opens `instrument.velaSymbol`, so the active cell follows the
   row's venue. The Vela host projects that change through `setSymbol`.
-- The venue filter lives at `screener.marketVenues`; unselected venues are not
+- The table columns are venue, symbol, last, 24h %, Range 24h, Vol 24h, VolΔ24h,
+  RVOL (labeled with `rvolDays`), funding, VWAPσ and RSI (labeled with the
+  metrics timeframe), then one column per scan plot. The quick filters are All,
+  Gainers, Losers, Favorites, RSI <30 / >70, RVOL ≥1.5 and above/below VWAP. The
+  venue filter lives at `screener.marketVenues`; unselected venues are not
   fetched. `Venue` is a fixed first column with icons only and an empty-but-
   sortable header (globe plus the tri-state sort glyph). Column sort cycles
   descending → ascending → unsorted; `ScreenerView.sort` is nullable.
@@ -707,7 +724,9 @@ identity is `venue:kind:nativeId`; display is `BTCUSDT.P` for perps and
 with one scheduler. Under budget requests go immediately; over budget they are
 paced evenly. Waiting for a bucket never holds a concurrency slot, and
 `interactive` requests (charts, table, instruments) are granted before
-`background` scans. Hyperliquid uses a single `weight` bucket (`1200/min`):
+`background` work. Background work also spends at most 40% of a bucket's
+refill rate, so a screener cold start or a scan cannot exhaust the minute budget
+and starve live charts. Hyperliquid uses a single `weight` bucket (`1200/min`):
 `meta` / `metaAndAssetCtxs` cost 20, `candleSnapshot` costs 20 plus one per 60
 returned candles, debited after the response. Binance keeps its per-request
 klines weight and ticker weight 50. Trading credentials and SDKs belong in the
@@ -819,9 +838,9 @@ Two rules that earn their keep:
 
 Useful browser probes:
 
-- 100+ rows render across the checked venues; the first column shows only the
-  exchange icons, its header shows the globe/sort glyph, and the chart canvas has
-  a non-zero bounding box.
+- 100+ rows render across the checked venues (1,000+ at the default threshold);
+  the first column shows only the exchange icons, its header shows the globe/sort
+  glyph, and the chart canvas has a non-zero bounding box.
 - Unchecking a venue removes its rows immediately and survives reload; `All
   venues` can clear the list and the table explains the empty selection.
 - Clicking a venue column header cycles descending → ascending → unsorted; the
@@ -862,14 +881,21 @@ Useful browser probes:
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label; the
   selected row is matched by its venue-qualified symbol.
-- Starring a row keeps it in the active list after reload and after lowering
-  `topN` so it falls out of the trimmed universe; the star click does not change
-  the active workspace symbol. The default list starts empty, can be renamed or
-  cleared, cannot be deleted, and legacy bare favorites migrate to
+- Starring a row keeps it in the active list after reload; the star click does not
+  change the active workspace symbol. The default list starts empty, can be
+  renamed or cleared, cannot be deleted, and legacy bare favorites migrate to
   `binance:perp:...`. Creating `Majors`, switching to it, and starring an OKX row
   keeps the lists separate; the favorites button follows the active list, the
   panel title stays `Screener`, import lands in the active list, and export
-  writes every list.
+  writes every list. A favorite below the watch threshold stays out of the
+  table, because the sidecar never fetched it.
+- At the default 1M threshold the table lists every watched instrument from all
+  checked venues (1,000+ rows) and grows no `TopN` cap; raising the threshold in
+  Settings drops rows on the next poll. Range 24h, VolΔ24h, RVOL 7d, VWAPσ and
+  RSI 15m show values within a few minutes of the first load, and the sidecar
+  log has no venue 429. `RSI <30` narrows the table to the oversold rows and
+  `All` restores it. Changing the metrics timeframe relabels the RSI header and
+  recomputes every row without a page reload.
 - Applying the RSI preset and scanning two venues adds RSI / Oversold /
   Overbought columns to both venues' rows; one venue's failure leaves the other
   values intact.
