@@ -248,8 +248,12 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   `rvolDays + 1` days of `metricsTimeframe` candles for each one. Watched
   instruments subscribe to their venue's kline stream in batches; Coinbase has no
   candle WS, so its rows refresh through a slow REST tail. `topN` no longer trims
-  the table or the scanner. Warm-up runs as `background` work, visible rows
-  first, then the highest-volume rows; the browser sends its top 100 row keys as
+  the table or the scanner. Ticker polls run in parallel: every venue applies its
+  own tickers as soon as its call settles, so one slow or failing exchange does
+  not delay the others' activation. Warm-up and refresh keep one queue and one
+  slot pool (4) per venue, so a venue's rate limiter never holds another venue's
+  rows; warm-up runs as `background` work, visible rows first, then the
+  highest-volume rows per venue. The browser sends its top 100 row keys as
   `screener.viewport`. The service computes Range 24h, VolΔ24h, RVOL, VWAPσ and
   Wilder RSI (`lib/screenerMetrics.ts`) and pushes batched patches every 2 s.
 - `useScreener` fetches `/screener/snapshot` once, then reads `screener.patch`
@@ -740,12 +744,17 @@ identity is `venue:kind:nativeId`; display is `BTCUSDT.P` for perps and
 with one scheduler. Under budget requests go immediately; over budget they are
 paced evenly. Waiting for a bucket never holds a concurrency slot, and
 `interactive` requests (charts, table, instruments) are granted before
-`background` work. Background work also spends at most 40% of a bucket's
-refill rate, so a screener cold start or a scan cannot exhaust the minute budget
-and starve live charts. Binance's `x-mbx-used-weight-1m` header feeds
-`RateLimiter.observe`: at 80% of the shared IP budget the venue holds new work
-until the next minute, so another client on the same IP cannot push the sidecar
-into a 429. Hyperliquid uses a single `weight` bucket (`1200/min`):
+`background` work. The scheduler also tracks our grants and the venue-reported
+usage per window, so the full starting bucket cannot spend two windows' worth in
+the first minute. Background work stops at 90% of a window's budget and
+interactive work may spend the rest, so a screener cold start or a scan cannot
+starve live charts. Binance's `x-mbx-used-weight-1m` header feeds
+`RateLimiter.observe`: that IP-wide number counts as already spent in the
+current window, and at 90% background work waits for the next window while
+charts keep the tail; only a real 429 pauses every priority. An observation
+that lands right after a window boundary is ignored because it belongs to the
+closing window. Hyperliquid uses a
+single `weight` bucket (`1200/min`):
 `meta` / `metaAndAssetCtxs` cost 20, `candleSnapshot` costs 20 plus one per 60
 returned candles, debited after the response. Binance keeps its per-request
 klines weight and ticker weight 50. Trading credentials and SDKs belong in the

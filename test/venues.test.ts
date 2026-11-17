@@ -210,10 +210,11 @@ describe('rate limiter', () => {
 
     await limiter.run({ bucket: 'weight', cost: 3 }, async () => undefined);
     await limiter.run({ bucket: 'weight', cost: 3 }, async () => undefined);
-    expect(clock.time).toBe(12_000);
+    // 3 + 3 exceeds the 5-weight window, so the second request waits for the next one.
+    expect(clock.time).toBe(60_000);
   });
 
-  it('bursts up to the limit and then paces evenly', async () => {
+  it('bursts up to the window budget and then waits for the next window', async () => {
     const clock = new FakeClock();
     const limiter = new RateLimiter(
       {
@@ -232,10 +233,10 @@ describe('rate limiter', () => {
       ),
     );
     expect(starts.filter((time) => time === 0)).toHaveLength(20);
-    expect(Math.max(...starts)).toBe(100);
+    expect(Math.max(...starts)).toBe(2_000);
   });
 
-  it('paces background work below the bucket rate', async () => {
+  it('lets background work use the whole window budget', async () => {
     const clock = new FakeClock();
     const limiter = new RateLimiter(
       {
@@ -253,11 +254,33 @@ describe('rate limiter', () => {
         }),
       ),
     );
-    // 20 per 2 s refills at 10/s; background work gets 40% of that, one per 250 ms.
-    expect(starts).toEqual([0, 250, 500, 750]);
+    // No fixed background share: four light requests fit the 20-weight window.
+    expect(starts).toEqual([0, 0, 0, 0]);
   });
 
-  it('pauses when the venue reports the shared weight near its cap', async () => {
+  it('keeps background work below the window reserve', async () => {
+    const clock = new FakeClock();
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'weight', type: 'weight', limit: 10, windowMs: 1_000 }],
+      },
+      clock,
+    );
+
+    const starts: number[] = [];
+    await Promise.all(
+      Array.from({ length: 6 }, () =>
+        limiter.run({ bucket: 'weight', cost: 2, priority: 'background' }, async () => {
+          starts.push(clock.time);
+        }),
+      ),
+    );
+    // 90% of a 10-weight window leaves room for four 2-weight requests only.
+    expect(starts).toEqual([0, 0, 0, 0, 1_000, 1_000]);
+  });
+
+  it('pauses background work when the shared weight is near its cap', async () => {
     const clock = new FakeClock();
     clock.time = 400;
     const limiter = new RateLimiter(
@@ -268,12 +291,49 @@ describe('rate limiter', () => {
       clock,
     );
 
-    limiter.observe('weight', 7);
-    await limiter.run({ bucket: 'weight' }, async () => undefined);
-    expect(clock.time).toBe(400);
+    limiter.observe('weight', 9);
+    await limiter.run({ bucket: 'weight', priority: 'background' }, async () => undefined);
+    expect(clock.time).toBe(1_000);
 
-    limiter.observe('weight', 8);
+    // Interactive work still has the tail of the window.
+    clock.time = 1_400;
+    limiter.observe('weight', 9);
     await limiter.run({ bucket: 'weight' }, async () => undefined);
+    expect(clock.time).toBe(1_400);
+  });
+
+  it('ignores a header that belongs to the closing window', async () => {
+    const clock = new FakeClock();
+    clock.time = 1_005;
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'weight', type: 'weight', limit: 10, windowMs: 1_000 }],
+      },
+      clock,
+    );
+
+    // Sent at 999 ms, so this 10/10 belongs to the window that just ended.
+    limiter.observe('weight', 10);
+    await limiter.run({ bucket: 'weight', priority: 'background' }, async () => undefined);
+    expect(clock.time).toBe(1_005);
+  });
+
+  it('counts other clients on the IP against the window budget', async () => {
+    const clock = new FakeClock();
+    clock.time = 400;
+    const limiter = new RateLimiter(
+      {
+        maxConcurrent: 1,
+        buckets: [{ id: 'weight', type: 'weight', limit: 10, windowMs: 1_000 }],
+      },
+      clock,
+    );
+
+    // Another client spent 7 of the 10 weights: background may not fit 3 more,
+    // interactive may.
+    limiter.observe('weight', 7);
+    await limiter.run({ bucket: 'weight', cost: 3, priority: 'background' }, async () => undefined);
     expect(clock.time).toBe(1_000);
   });
 

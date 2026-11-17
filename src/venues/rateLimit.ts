@@ -47,20 +47,31 @@ export interface RateLimitSnapshot {
 }
 
 /**
- * Bulk work (screener warm-up, scans) may spend only this share of a bucket's
- * refill rate. The rest stays available for charts, tickers and the same IP's
- * other traffic, so a cold start cannot spend the whole minute budget at once.
+ * Bulk work (screener warm-up, scans) stops at this share of a window's
+ * budget. The rest stays for charts and the same IP's other clients;
+ * interactive work may spend the whole window.
  */
-const BACKGROUND_RATE_SHARE = 0.4;
+const BACKGROUND_WINDOW_SHARE = 0.9;
 
-/** Venue-reported usage at or above this share of a bucket stops new grants. */
-const OBSERVE_PAUSE_RATIO = 0.8;
+/**
+ * A response sent at the end of a window can arrive after the next one starts
+ * with the closing window's usage. Ignore observations from this opening slice.
+ */
+const OBSERVE_GRACE_RATIO = 0.02;
 
 interface BucketState {
   tokens: number;
   at: number;
-  /** Last background grant; paces bulk work at the share above. */
-  bgAt: number;
+  /** Our granted weight in the venue's current window. */
+  spent: number;
+  /** Venue-reported weight for that window, other clients on the IP included. */
+  observed: number;
+  /** Venue window this accounting belongs to. */
+  window: number;
+}
+
+function windowOf(bucket: RateLimitBucket, now: number): number {
+  return Math.floor(now / bucket.windowMs);
 }
 
 interface Pending {
@@ -85,14 +96,18 @@ function abortError(): Error {
  * A bucket starts full (`tokens = limit`) and refills continuously at
  * `limit / windowMs`. Under budget a request is granted immediately; beyond it
  * the scheduler paces requests evenly instead of letting a burst exhaust the
- * window and then freezing. Waiting for tokens never holds a concurrency slot,
- * and interactive work is granted before background scans.
+ * window and then freezing. The scheduler also keeps our grants plus the
+ * venue-reported IP usage inside the venue's own window, so a bucket that
+ * starts full cannot spend two windows' worth in the first minute. Waiting for
+ * a bucket never holds a concurrency slot, and interactive work is granted
+ * before background scans.
  */
 export class RateLimiter {
   private readonly buckets = new Map<string, BucketState>();
   private readonly pending: Pending[] = [];
   private active = 0;
   private pausedUntil = 0;
+  private backgroundPausedUntil = 0;
   private bannedUntil = 0;
   private pumping = false;
   private wakeRequested = false;
@@ -113,7 +128,9 @@ export class RateLimiter {
       this.buckets.set(bucket.id, {
         tokens: bucket.limit,
         at: now,
-        bgAt: Number.NEGATIVE_INFINITY,
+        spent: 0,
+        observed: 0,
+        window: windowOf(bucket, now),
       });
     }
   }
@@ -190,13 +207,25 @@ export class RateLimiter {
   /**
    * Venue-reported usage for the current window (for example Binance's
    * `x-mbx-used-weight-1m`, which also counts other clients on the same IP).
-   * Near the cap, hold the venue until the next window instead of earning a 429.
+   * It is treated as already spent, and near the cap background work waits for
+   * the next window while interactive work keeps the remaining budget.
    */
   observe(bucketId: string, used: number): void {
     const bucket = this.bucketOf(bucketId);
-    if (!Number.isFinite(used) || used < bucket.limit * OBSERVE_PAUSE_RATIO) return;
-    const remaining = bucket.windowMs - (this.clock.now() % bucket.windowMs);
-    this.pauseFor(remaining);
+    if (!Number.isFinite(used)) return;
+    const state = this.buckets.get(bucketId)!;
+    const now = this.clock.now();
+    this.roll(bucket, state, now);
+    // The header of a request sent just before the boundary belongs to the
+    // closing window; counting it again would pause bulk work for a whole
+    // extra window.
+    if (now % bucket.windowMs < bucket.windowMs * OBSERVE_GRACE_RATIO) return;
+    state.observed = Math.max(state.observed, used);
+    if (used >= bucket.limit * BACKGROUND_WINDOW_SHARE) {
+      const remaining = bucket.windowMs - (now % bucket.windowMs);
+      this.backgroundPausedUntil = Math.max(this.backgroundPausedUntil, now + remaining);
+    }
+    this.schedulePump();
   }
 
   /** A 418-style ban: fail requests fast until it expires. */
@@ -217,7 +246,10 @@ export class RateLimiter {
     if (!bucket) throw new Error(`Unknown rate limit bucket "${bucketId}"`);
     const now = this.clock.now();
     this.refill(bucket, now);
-    this.buckets.get(bucketId)!.tokens -= cost;
+    const state = this.buckets.get(bucketId)!;
+    this.roll(bucket, state, now);
+    state.tokens -= cost;
+    state.spent += cost;
   }
 
   get banRemainingMs(): number {
@@ -277,7 +309,18 @@ export class RateLimiter {
 
   private refund(bucket: RateLimitBucket, cost: number): void {
     const state = this.buckets.get(bucket.id);
-    if (state) state.tokens = Math.min(bucket.limit, state.tokens + cost);
+    if (!state) return;
+    state.tokens = Math.min(bucket.limit, state.tokens + cost);
+    state.spent = Math.max(0, state.spent - cost);
+  }
+
+  /** Start the venue's next window with an empty spent/observed budget. */
+  private roll(bucket: RateLimitBucket, state: BucketState, now: number): void {
+    const window = windowOf(bucket, now);
+    if (state.window === window) return;
+    state.window = window;
+    state.spent = 0;
+    state.observed = 0;
   }
 
   private refill(bucket: RateLimitBucket, now: number): void {
@@ -303,11 +346,27 @@ export class RateLimiter {
     const interactive = this.hasInteractive();
     for (const entry of this.pending) {
       if (interactive && entry.priority !== 'interactive') continue;
-      if (this.buckets.get(entry.bucket)!.tokens < entry.cost) continue;
-      if (this.backgroundWait(entry, now) > 0) continue;
+      if (!this.grantable(entry, now)) continue;
       return entry;
     }
     return null;
+  }
+
+  private grantable(entry: Pending, now: number): boolean {
+    const bucket = this.bucketOf(entry.bucket);
+    const state = this.buckets.get(entry.bucket)!;
+    if (state.tokens < entry.cost) return false;
+    this.roll(bucket, state, now);
+    if (entry.priority === 'background' && now < this.backgroundPausedUntil) return false;
+    const cap = this.windowCap(entry);
+    return Math.max(state.spent, state.observed) + entry.cost <= cap;
+  }
+
+  /** Background leaves the tail of the window to charts and other clients. */
+  private windowCap(entry: Pending): number {
+    const bucket = this.bucketOf(entry.bucket);
+    const share = entry.priority === 'background' ? BACKGROUND_WINDOW_SHARE : 1;
+    return Math.max(entry.cost, bucket.limit * share);
   }
 
   private nextWait(now: number): number | null {
@@ -316,10 +375,18 @@ export class RateLimiter {
     for (const entry of this.pending) {
       if (interactive && entry.priority !== 'interactive') continue;
       const bucket = this.bucketOf(entry.bucket);
-      const tokens = this.buckets.get(entry.bucket)!.tokens;
-      const deficit = entry.cost - tokens;
+      const state = this.buckets.get(entry.bucket)!;
+      const deficit = entry.cost - state.tokens;
       const tokenWait = deficit <= 0 ? 0 : deficit / (bucket.limit / bucket.windowMs);
-      wait = Math.min(wait, Math.max(tokenWait, this.backgroundWait(entry, now)));
+      const windowWait = bucket.windowMs - (now % bucket.windowMs);
+      const pauseWait =
+        entry.priority === 'background' ? Math.max(0, this.backgroundPausedUntil - now) : 0;
+      this.roll(bucket, state, now);
+      const capWait =
+        Math.max(state.spent, state.observed) + entry.cost <= this.windowCap(entry)
+          ? 0
+          : windowWait;
+      wait = Math.min(wait, Math.max(tokenWait, capWait, pauseWait));
     }
     if (!Number.isFinite(wait)) return null;
     return Math.max(0, Math.ceil(wait));
@@ -329,13 +396,6 @@ export class RateLimiter {
     const bucket = this.policy.buckets.find((item) => item.id === id);
     if (!bucket) throw new Error(`Unknown rate limit bucket "${id}"`);
     return bucket;
-  }
-
-  private backgroundWait(entry: Pending, now: number): number {
-    if (entry.priority !== 'background') return 0;
-    const bucket = this.bucketOf(entry.bucket);
-    const interval = (entry.cost * bucket.windowMs) / (bucket.limit * BACKGROUND_RATE_SHARE);
-    return Math.max(0, this.buckets.get(entry.bucket)!.bgAt + interval - now);
   }
 
   private schedulePump(): void {
@@ -388,7 +448,7 @@ export class RateLimiter {
           this.removePending(entry);
           const state = this.buckets.get(entry.bucket)!;
           state.tokens -= entry.cost;
-          if (entry.priority === 'background') state.bgAt = now;
+          state.spent += entry.cost;
           this.active += 1;
           entry.resolve();
         }

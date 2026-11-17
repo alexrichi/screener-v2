@@ -18,6 +18,7 @@ import type { VenueHub } from './hub';
 import type { BarsStream } from './stream';
 
 const TICKER_INTERVAL_MS = 5_000;
+const TICKER_TIMEOUT_MS = 30_000;
 const PATCH_INTERVAL_MS = 2_000;
 const TAIL_REFRESH_MS = 120_000;
 const VISIBLE_REFRESH_MS = 20_000;
@@ -84,6 +85,17 @@ function emptyMetrics(): ScreenerMetrics {
   };
 }
 
+/** A venue call that never settles must not stall the ticker poll loop. */
+function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 function invalidConfig(config: ScreenerConfig): string | null {
   if (!['15', '30', '60'].includes(config.timeframe)) {
     return `Unsupported screener timeframe: ${config.timeframe}`;
@@ -128,11 +140,13 @@ export class ScreenerService {
   /** A completed poll changed the venue status even if no row did. */
   private statusDirty = false;
   private readonly listeners = new Set<PatchListener>();
-  private readonly warmQueue: Instrument[] = [];
-  private readonly refreshQueue: Instrument[] = [];
+  /** One queue and one slot pool per venue: rate limits never cross exchanges. */
+  private readonly warmQueues = new Map<VenueId, Instrument[]>();
+  private readonly refreshQueues = new Map<VenueId, Instrument[]>();
+  private readonly warmActive = new Map<VenueId, number>();
+  private readonly refreshActive = new Map<VenueId, number>();
+  private readonly refreshing = new Set<string>();
   private readonly venueErrors = new Map<VenueId, string>();
-  private warmActive = 0;
-  private refreshActive = 0;
   private tickerTimer: NodeJS.Timeout | null = null;
   private patchTimer: NodeJS.Timeout | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
@@ -217,7 +231,9 @@ export class ScreenerService {
     if (!timeframeChanged && !periodChanged) return;
 
     this.warmGeneration += 1;
-    this.warmQueue.length = 0;
+    this.warmQueues.clear();
+    this.refreshQueues.clear();
+    this.refreshing.clear();
     for (const unsubscribe of this.subscriptions.values()) unsubscribe();
     this.subscriptions.clear();
     this.series.clear();
@@ -329,18 +345,22 @@ export class ScreenerService {
 
   private enqueueWarm(instrument: Instrument): void {
     if (!this.watched.has(instrument.key)) return;
-    if (this.warmQueue.some((item) => item.key === instrument.key)) return;
-    this.warmQueue.push(instrument);
-    this.pumpWarm();
+    const queue = this.warmQueues.get(instrument.venue) ?? [];
+    if (queue.some((item) => item.key === instrument.key)) return;
+    queue.push(instrument);
+    this.warmQueues.set(instrument.venue, queue);
+    this.pumpWarm(instrument.venue);
   }
 
-  private pumpWarm(): void {
-    while (this.warmActive < WARMUP_CONCURRENCY && this.warmQueue.length > 0) {
-      const instrument = this.takeWarm();
+  private pumpWarm(venue: VenueId): void {
+    const queue = this.warmQueues.get(venue);
+    if (!queue) return;
+    while ((this.warmActive.get(venue) ?? 0) < WARMUP_CONCURRENCY && queue.length > 0) {
+      const instrument = this.takeWarm(queue);
       if (!instrument) return;
-      const hub = this.hubs.get(instrument.venue);
+      const hub = this.hubs.get(venue);
       if (!hub) continue;
-      this.warmActive += 1;
+      this.warmActive.set(venue, (this.warmActive.get(venue) ?? 0) + 1);
       const generation = this.warmGeneration;
       void hub
         .getSeries(instrument, this.config.timeframe, {
@@ -370,16 +390,19 @@ export class ScreenerService {
           }
         })
         .finally(() => {
-          this.warmActive -= 1;
-          this.pumpWarm();
+          this.warmActive.set(
+            venue,
+            Math.max(0, (this.warmActive.get(venue) ?? 0) - 1),
+          );
+          this.pumpWarm(venue);
         });
     }
   }
 
   /** Rows on screen first, then the queue's order (highest volume first). */
-  private takeWarm(): Instrument | undefined {
-    const visible = this.warmQueue.findIndex((item) => this.visible.has(item.key));
-    return this.warmQueue.splice(visible < 0 ? 0 : visible, 1)[0];
+  private takeWarm(queue: Instrument[]): Instrument | undefined {
+    const visible = queue.findIndex((item) => this.visible.has(item.key));
+    return queue.splice(visible < 0 ? 0 : visible, 1)[0];
   }
 
   private ensureStream(instrument: Instrument): void {
@@ -425,19 +448,26 @@ export class ScreenerService {
       const age = now - series.at;
       const maxAge = this.visible.has(key) ? VISIBLE_REFRESH_MS : TAIL_REFRESH_MS;
       if (age < maxAge) continue;
-      if (this.refreshQueue.some((item) => item.key === key)) continue;
-      this.refreshQueue.push(instrument);
+      if (this.refreshing.has(key)) continue;
+      const queue = this.refreshQueues.get(instrument.venue) ?? [];
+      if (queue.some((item) => item.key === key)) continue;
+      queue.push(instrument);
+      this.refreshQueues.set(instrument.venue, queue);
     }
-    this.pumpRefresh();
+    for (const venue of this.refreshQueues.keys()) this.pumpRefresh(venue);
   }
 
-  private pumpRefresh(): void {
-    while (this.refreshActive < REFRESH_CONCURRENCY && this.refreshQueue.length > 0) {
-      const instrument = this.refreshQueue.shift();
+  private pumpRefresh(venue: VenueId): void {
+    const queue = this.refreshQueues.get(venue);
+    if (!queue) return;
+    while ((this.refreshActive.get(venue) ?? 0) < REFRESH_CONCURRENCY && queue.length > 0) {
+      const instrument = queue.shift();
       if (!instrument) return;
-      const hub = this.hubs.get(instrument.venue);
+      const hub = this.hubs.get(venue);
       if (!hub) continue;
-      this.refreshActive += 1;
+      this.refreshActive.set(venue, (this.refreshActive.get(venue) ?? 0) + 1);
+      this.refreshing.add(instrument.key);
+      const generation = this.warmGeneration;
       void hub
         .getSeries(instrument, this.config.timeframe, {
           limit: this.maxBars(),
@@ -447,6 +477,7 @@ export class ScreenerService {
           priority: this.visible.has(instrument.key) ? 'interactive' : 'background',
         })
         .then((bars) => {
+          if (generation !== this.warmGeneration) return;
           const entry = { bars: bars.map(metricBar), at: Date.now() };
           this.series.set(instrument.key, entry);
           const row = this.rows.get(instrument.key);
@@ -459,8 +490,12 @@ export class ScreenerService {
           // Keep the last known series; the next tick retries.
         })
         .finally(() => {
-          this.refreshActive -= 1;
-          this.pumpRefresh();
+          this.refreshing.delete(instrument.key);
+          this.refreshActive.set(
+            venue,
+            Math.max(0, (this.refreshActive.get(venue) ?? 0) - 1),
+          );
+          this.pumpRefresh(venue);
         });
     }
   }
@@ -483,56 +518,68 @@ export class ScreenerService {
     if (this.polling) return;
     this.polling = true;
     try {
-      const now = Date.now();
-      for (const [venue, hub] of this.hubs) {
-        if (!this.wants(venue)) continue;
-        let tickers: VenueTicker[];
-        try {
-          tickers = await hub.getTickers();
-          this.venueErrors.delete(venue);
-        } catch (error) {
-          this.venueErrors.set(venue, error instanceof Error ? error.message : String(error));
-          continue;
-        }
-        for (const ticker of tickers) {
-          const instrument = ticker.instrument;
-          const row = this.rows.get(instrument.key);
-          const next = row
-            ? {
-                ...row,
-                price: ticker.last,
-                change24h: ticker.change24h,
-                quoteVolume: ticker.quoteVolume,
-                funding: ticker.funding,
-                nextFunding: ticker.nextFunding,
-                updatedAt: Date.now(),
-              }
-            : this.baseRow(instrument, ticker);
-          this.rows.set(instrument.key, next);
-
-          if (
-            (ticker.quoteVolume ?? 0) >= this.config.minVolume &&
-            !this.watched.has(instrument.key)
-          ) {
-            this.activate(instrument, ticker);
-          } else if (this.watched.has(instrument.key)) {
-            this.patches.set(instrument.key, next);
+      // One slow or failing venue must not delay the others' activation, so
+      // each venue applies its tickers as soon as its own call settles.
+      const venues = [...this.hubs].filter(([venue]) => this.wants(venue));
+      await Promise.allSettled(
+        venues.map(async ([venue, hub]) => {
+          try {
+            const tickers = await withTimeout(
+              hub.getTickers(),
+              TICKER_TIMEOUT_MS,
+              'ticker fetch timed out',
+            );
+            this.venueErrors.delete(venue);
+            this.applyTickers(venue, tickers);
+          } catch (error) {
+            this.venueErrors.set(
+              venue,
+              error instanceof Error ? error.message : String(error),
+            );
           }
-        }
-      }
-      // The table is sorted by 24h volume; warm its top rows first.
-      this.warmQueue.sort(
-        (left, right) =>
-          (this.rows.get(right.key)?.quoteVolume ?? 0) -
-          (this.rows.get(left.key)?.quoteVolume ?? 0),
+        }),
       );
-      this.lastUpdate = now;
+      this.lastUpdate = Date.now();
       this.statusDirty = true;
     } catch (error) {
       console.error('[screener] poll failed', error);
     } finally {
       this.polling = false;
     }
+  }
+
+  private applyTickers(venue: VenueId, tickers: readonly VenueTicker[]): void {
+    for (const ticker of tickers) {
+      const instrument = ticker.instrument;
+      const row = this.rows.get(instrument.key);
+      const next = row
+        ? {
+            ...row,
+            price: ticker.last,
+            change24h: ticker.change24h,
+            quoteVolume: ticker.quoteVolume,
+            funding: ticker.funding,
+            nextFunding: ticker.nextFunding,
+            updatedAt: Date.now(),
+          }
+        : this.baseRow(instrument, ticker);
+      this.rows.set(instrument.key, next);
+
+      if (
+        (ticker.quoteVolume ?? 0) >= this.config.minVolume &&
+        !this.watched.has(instrument.key)
+      ) {
+        this.activate(instrument, ticker);
+      } else if (this.watched.has(instrument.key)) {
+        this.patches.set(instrument.key, next);
+      }
+    }
+    // The table is sorted by 24h volume; warm its top rows first.
+    this.warmQueues.get(venue)?.sort(
+      (left, right) =>
+        (this.rows.get(right.key)?.quoteVolume ?? 0) -
+        (this.rows.get(left.key)?.quoteVolume ?? 0),
+    );
   }
 
   private flushPatches(): void {

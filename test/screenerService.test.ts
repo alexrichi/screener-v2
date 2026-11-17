@@ -3,6 +3,7 @@ import { ScreenerService } from '../sidecar/screener';
 import type { VenueHub } from '../sidecar/hub';
 import type { BarsStream } from '../sidecar/stream';
 import type { Instrument, VenueBar, VenueTicker } from '../src/venues/types';
+import type { VenueId } from '../src/types';
 import { makeInstrument } from '../src/venues/instrument';
 
 const instrument: Instrument = makeInstrument({
@@ -273,6 +274,138 @@ describe('screener service', () => {
     expect(before).not.toBeNull();
     expect(after).not.toBeNull();
     expect(after).not.toBe(before);
+    service.stop();
+  });
+
+  it('warms one venue while another venue is stuck', async () => {
+    const stuck = (base: string): Instrument =>
+      makeInstrument({
+        venue: 'binance',
+        kind: 'perp',
+        nativeId: `${base}USDT`,
+        base,
+        quote: 'USDT',
+        velaSymbol: `BINANCE:${base}USDT.P`,
+      });
+    const binanceItems = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA'].map(stuck);
+    const binanceHub = {
+      getInstruments: async () => binanceItems,
+      getTickers: async () =>
+        binanceItems.map((item) => ({
+          instrument: item,
+          last: 1,
+          change24h: 0,
+          quoteVolume: 2_000_000,
+          funding: null,
+          nextFunding: null,
+        })),
+      getSeries: () => new Promise<VenueBar[]>(() => {}),
+    } as unknown as VenueHub;
+
+    const okxItem = makeInstrument({
+      venue: 'okx',
+      kind: 'perp',
+      nativeId: 'BTC-USDT-SWAP',
+      base: 'BTC',
+      quote: 'USDT',
+      velaSymbol: 'OKX:BTC-USDT-SWAP',
+    });
+    const okxHub = {
+      getInstruments: async () => [okxItem],
+      getTickers: async () => [
+        {
+          instrument: okxItem,
+          last: 1,
+          change24h: 0,
+          quoteVolume: 2_000_000,
+          funding: null,
+          nextFunding: null,
+        },
+      ],
+      getSeries: async () => bars(),
+    } as unknown as VenueHub;
+
+    const service = new ScreenerService({
+      hubs: new Map<VenueId, VenueHub>([
+        ['binance', binanceHub],
+        ['okx', okxHub],
+      ]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000 },
+    });
+
+    await service.poll();
+    await settle();
+
+    const rows = service.snapshot().rows;
+    const okxRow = rows.find((row) => row.instrument.venue === 'okx');
+    expect(okxRow?.warming).toBe(false);
+    expect(okxRow?.metrics.rsi).not.toBeNull();
+    // Binance slots are all parked on the hung requests; that must not hold OKX.
+    expect(
+      rows.filter((row) => row.instrument.venue === 'binance').every((row) => row.warming),
+    ).toBe(true);
+    service.stop();
+  });
+
+  it('polls venues in parallel', async () => {
+    let releaseBinance!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseBinance = resolve;
+    });
+    const binanceHub = {
+      getInstruments: async () => [instrument],
+      getTickers: async () => {
+        await gate;
+        return [ticker(2_000_000)];
+      },
+      getSeries: async () => bars(),
+    } as unknown as VenueHub;
+
+    const okxItem = makeInstrument({
+      venue: 'okx',
+      kind: 'perp',
+      nativeId: 'BTC-USDT-SWAP',
+      base: 'BTC',
+      quote: 'USDT',
+      velaSymbol: 'OKX:BTC-USDT-SWAP',
+    });
+    const okxHub = {
+      getInstruments: async () => [okxItem],
+      getTickers: async () => [
+        {
+          instrument: okxItem,
+          last: 1,
+          change24h: 0,
+          quoteVolume: 2_000_000,
+          funding: null,
+          nextFunding: null,
+        },
+      ],
+      getSeries: async () => bars(),
+    } as unknown as VenueHub;
+
+    const service = new ScreenerService({
+      hubs: new Map<VenueId, VenueHub>([
+        ['binance', binanceHub],
+        ['okx', okxHub],
+      ]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000 },
+    });
+
+    const polled = service.poll();
+    await settle();
+    // Binance still hangs; OKX must already be watched.
+    expect(service.snapshot().rows.map((row) => row.instrument.venue)).toEqual(['okx']);
+
+    releaseBinance();
+    await polled;
+    await settle();
+    expect(service.snapshot().rows.map((row) => row.instrument.venue).sort()).toEqual([
+      'binance',
+      'okx',
+    ]);
     service.stop();
   });
 });
