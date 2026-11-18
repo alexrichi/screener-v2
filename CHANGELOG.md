@@ -4,12 +4,14 @@ The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
 ## 0.1.4 — 2026-11-18
+Commit: eb0d43e
 
 - Bar replay: the `Replay` button after `Indicators` opens a control bar. Pick a
   bar or type a date, then play/pause, step, change speed, or stop. Every cell
   rewinds on one clock; Vela pauses live updates and mutes alerts. Session-only.
 
 ## 0.1.3 — 2026-11-18
+Commit: 3170f99
 
 - A title bar button appears when an update has downloaded. The app no longer
   opens a modal on its own; clicking the button asks before restarting.
@@ -17,16 +19,19 @@ the build stamp; the updater compares only the version.
   button reads the current state when the window opens.
 
 ## 0.1.2 — 2026-11-18
+Commit: 6267dcb
 
 - About shows the package version (`Version 0.1.2`) next to the build stamp
   (`Build 0.2026...`).
 - Verified a differential update from 0.1.1.
 
 ## 0.1.1 — 2026-11-18
+Commit: bf550c9
 
 - Patch release used to verify the GitHub release update path.
 
 ## 0.1.0 — 2026-11-18
+Commit: 308c490
 
 - First public NSIS installer for Windows.
 - GitHub release updater with `latest.yml` and background downloads.

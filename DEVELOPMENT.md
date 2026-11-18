@@ -127,6 +127,8 @@ The script passes `--publish never`; nothing is uploaded.
 
 7. On GitHub, create a release for the tag, upload the `.exe`, `.blockmap` and
    `latest.yml`, and publish it. A draft release is ignored by the updater.
+   The matching `CHANGELOG.md` entry (version, date, commit, bullet list) is the
+   release record; the GitHub body can be a short summary or link.
 
 8. Install an older version, launch it, wait about ten seconds, and confirm the
    update prompt. The first install is always manual; later ones update

@@ -1300,3 +1300,14 @@ across runs.
 - Use targeted `git add`; never commit `node_modules/`, `dist/`, `.scratchpad/`, or
   unrelated local files.
 - Keep commit messages user-readable, in English, and free of other products' names.
+- Do not push commits or tags to any remote, and do not create, publish, or upload
+  assets to a GitHub release, without an explicit command in the conversation.
+  Approval to commit is not approval to push or release.
+
+## Release notes
+
+`CHANGELOG.md` is the release record. Every version entry carries the version,
+date, release commit (short SHA) and a bullet list of what changed. Keep it
+updated before publishing; the GitHub release body can be a short summary or a
+link to the changelog. Do not publish a release without the matching changelog
+entry.
