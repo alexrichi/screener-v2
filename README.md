@@ -263,6 +263,14 @@ the same `build` string.
   back to the same REST polling until a bar arrives. The instrument picker lists
   every venue and opens the selected exchange's chart.
 
+## Updates
+
+The installed app checks the public GitHub releases after startup and every four
+hours. It downloads in the background and asks before restarting; scan results
+and alerts are session-only. Build the installer with `npm run electron:dist`
+and attach the `.exe`, `.blockmap` and `latest.yml` to a published GitHub
+release.
+
 ## License
 
 The app code is MIT; see `LICENSE`. Third-party components keep their own

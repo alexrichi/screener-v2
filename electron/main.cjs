@@ -449,6 +449,14 @@ if (!gotLock) {
       return;
     }
     await createWindow();
+    if (app.isPackaged) {
+      try {
+        const { initUpdater } = require('./updater.cjs');
+        initUpdater(mainWindow);
+      } catch (error) {
+        console.error('[updater] failed to load:', error);
+      }
+    }
   });
 
   app.on('before-quit', stopSidecar);
