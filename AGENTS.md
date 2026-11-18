@@ -834,9 +834,9 @@ result includes `titlebar.bridge`, `paddingRight`, `appRegion`, and `build`.
 `major` from `package.json`, `built` = Vite build minute (UTC), and `git` =
 short HEAD plus `-dirty` when the tree is dirty. A packaged app replaces `built`
 with the executable's mtime minute over `screener:build-built`, so a repack from
-the same bundle still gets a new stamp. `lib/buildVersion.ts` formats
-`major.BUILT.HASH`; the About dialog shows it and `<html data-build-version>`
-carries it for the smoke result.
+the same bundle still gets a new stamp. `lib/buildVersion.ts` exposes the
+package version and formats `major.BUILT.HASH`; the About dialog shows both,
+and `<html data-build-version>` carries the stamp for the smoke result.
 
 **Theme changes touch two files.** App tokens live in `src/index.css`; the Vela
 theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will drift

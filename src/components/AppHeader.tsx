@@ -13,7 +13,7 @@ import {
 import type { MarketRow, VenueId, WorkspaceTab } from '../types';
 import { symbolLabel } from '../lib/binance';
 import { formatClock, formatPrice, layoutLabel } from '../lib/format';
-import { BUILD_VERSION } from '../lib/buildVersion';
+import { APP_VERSION, BUILD_VERSION } from '../lib/buildVersion';
 import { openVelaPanel } from '../lib/velaPanels';
 import { openPartner } from '../lib/partner';
 import { VENUE_CATALOG, venueLabel } from '../venues/catalog';
@@ -495,8 +495,9 @@ export function AppHeader({
         </p>
         <p>Vite + React + Vela + a local Pine engine. No account, no trading.</p>
         <p className="font-mono text-[10px]">
-          Version {BUILD_VERSION} · {windowApi ? 'Electron desktop build' : 'Browser build'}
+          Version {APP_VERSION} · {windowApi ? 'Electron desktop build' : 'Browser build'}
         </p>
+        <p className="font-mono text-[10px]">Build {BUILD_VERSION}</p>
       </div>
     </Modal>
   </>

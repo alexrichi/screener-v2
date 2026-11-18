@@ -25,7 +25,12 @@ function buildStamp() {
   }
   const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   const built = new Date().toISOString().slice(0, 16).replace(/[-T:]/g, '');
-  return { major: String(version).split('.')[0] ?? '0', built, git };
+  return {
+    version: String(version),
+    major: String(version).split('.')[0] ?? '0',
+    built,
+    git,
+  };
 }
 
 const build = buildStamp();
@@ -59,7 +64,8 @@ function velaUiSource(): import('vite').Plugin {
 
 export default defineConfig({
   define: {
-    __BUILD_STAMP__: JSON.stringify(build),
+    __APP_VERSION__: JSON.stringify(build.version),
+    __BUILD_STAMP__: JSON.stringify({ major: build.major, built: build.built, git: build.git }),
   },
   plugins: [velaUiSource(), react(), tailwindcss()],
   resolve: {
