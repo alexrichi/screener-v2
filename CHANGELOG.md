@@ -4,6 +4,7 @@ The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
 ## 0.1.5 — 2026-11-18
+Commit: fd61db9
 
 - Replay bar matches the reference: `Start bar` re-arms the chart picker,
   `Select date` is the alternate start, speed is a multiplier, the panel is
