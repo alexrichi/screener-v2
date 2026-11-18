@@ -48,6 +48,7 @@ import {
   formatPct,
   formatPrice,
 } from '../lib/format';
+import { coinIconCode, coinIconUrl } from '../lib/coinIcon';
 import { DEFAULT_FAVORITE_LIST_ID, type FavoriteList } from '../lib/favorites';
 import { activeQuickFilters, filterScreenerRows } from '../lib/screenerFilter';
 import { mergeColumnOrder, nextSort } from '../lib/view';
@@ -107,35 +108,23 @@ function coinHue(base: string): number {
 }
 
 function coinLetter(base: string): string {
-  const stripped = base
-    .replace(/^[0-9]+/, '')
-    .replace(/^k(?=[A-Z])/, '');
-  return (stripped || base).slice(0, 1).toUpperCase();
-}
-
-/** Logo file names on Binance's CDN: the listing symbol, then the multiplier-free base. */
-function coinCandidates(base: string): string[] {
-  const stripped = base.replace(/^[0-9]+/, '').replace(/^k(?=[A-Z])/, '');
-  return [...new Set([base.toUpperCase(), stripped.toUpperCase()])].filter(
-    (code) => code.length > 0,
-  );
+  return (coinIconCode(base) || base).slice(0, 1).toUpperCase();
 }
 
 function CoinIcon({ base }: { base: string }) {
-  const candidates = coinCandidates(base);
-  const [step, setStep] = useState(0);
-  const code = candidates[step];
-  if (code) {
+  const [failed, setFailed] = useState(false);
+  const src = coinIconUrl(base);
+  if (src && !failed) {
     return (
       <img
-        src={`https://bin.bnbstatic.com/static/assets/logos/${code}.png`}
+        src={src}
         alt=""
         aria-hidden
         loading="lazy"
         decoding="async"
         draggable={false}
         referrerPolicy="no-referrer"
-        onError={() => setStep((current) => current + 1)}
+        onError={() => setFailed(true)}
         className="size-4 shrink-0 rounded-full bg-muted/40 object-cover"
       />
     );

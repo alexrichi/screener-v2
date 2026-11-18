@@ -27,7 +27,9 @@ const ticker = (quoteVolume: number): VenueTicker => ({
 
 function bars(count = 200): VenueBar[] {
   const tf = 15 * 60_000;
-  const started = Date.now() - (count + 1) * tf;
+  // End on the last closed bar so the UTC session always has at least one bar;
+  // an older tail leaves the session metrics empty right after midnight.
+  const started = Date.now() - count * tf;
   return Array.from({ length: count }, (_, index) => {
     const openTime = started + index * tf;
     return {
@@ -251,6 +253,10 @@ describe('screener service', () => {
   });
 
   it('updates a row from a streamed bar', async () => {
+    // Session metrics are empty for the first bars after UTC midnight, so pin
+    // the clock to noon to keep this independent of when the suite runs.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-18T12:00:00Z'));
     const { hub } = fakeHub();
     const stream = fakeStream();
     const service = new ScreenerService({
@@ -258,23 +264,27 @@ describe('screener service', () => {
       streams: new Map([['binance', stream.stream]]),
       config: { minVolume: 1_000_000 },
     });
-    await service.poll();
-    await settle();
-    const before = service.snapshot().rows[0]!.metrics.vwapZ;
-    stream.push({
-      openTime: Date.now() - 15 * 60_000,
-      closeTime: Date.now() - 1,
-      open: 300,
-      high: 301,
-      low: 299,
-      close: 300,
-      volume: 10,
-    });
-    const after = service.snapshot().rows[0]!.metrics.vwapZ;
-    expect(before).not.toBeNull();
-    expect(after).not.toBeNull();
-    expect(after).not.toBe(before);
-    service.stop();
+    try {
+      await service.poll();
+      await settle();
+      const before = service.snapshot().rows[0]!.metrics.vwapZ;
+      stream.push({
+        openTime: Date.now() - 15 * 60_000,
+        closeTime: Date.now() - 1,
+        open: 300,
+        high: 301,
+        low: 299,
+        close: 300,
+        volume: 10,
+      });
+      const after = service.snapshot().rows[0]!.metrics.vwapZ;
+      expect(before).not.toBeNull();
+      expect(after).not.toBeNull();
+      expect(after).not.toBe(before);
+    } finally {
+      service.stop();
+      vi.useRealTimers();
+    }
   });
 
   it('warms one venue while another venue is stuck', async () => {

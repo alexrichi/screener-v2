@@ -12,6 +12,7 @@ import type { Instrument, Unsubscribe } from '../src/venues/types';
 import type { ScreenerConfig, VenueId } from '../src/types';
 import { handleAi } from './ai';
 import { VenueHub } from './hub';
+import { resolveIcon } from './icons';
 import { librarySource } from './luxalgo';
 import { BinanceKlineStream, PollingBarsStream } from './stream';
 import type { BarsStream } from './stream';
@@ -211,6 +212,27 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return;
     }
     json(res, 200, { code: await librarySource(codeId) });
+    return;
+  }
+
+  if (path.startsWith('/icon/')) {
+    const code = decodeURIComponent(path.slice('/icon/'.length));
+    if (!/^[A-Za-z0-9]{1,24}$/.test(code)) {
+      fail(res, 400, 'Invalid icon code');
+      return;
+    }
+    const image = await resolveIcon(code);
+    if (!image) {
+      fail(res, 404, 'No icon');
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': image.contentType,
+      'content-length': String(image.body.length),
+      'access-control-allow-origin': '*',
+      'cache-control': 'public, max-age=86400',
+    });
+    res.end(image.body);
     return;
   }
 

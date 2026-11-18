@@ -6,6 +6,7 @@ import type {
   SymbolDescriptor,
   SymbolInfo,
 } from '@luxalgo/vela/plugin';
+import { coinIconUrl } from '../lib/coinIcon';
 import { SidecarVenueAdapter } from './sidecar';
 import { subscribeSidecarBar } from './sidecarStream';
 import type { Instrument, Unsubscribe } from './types';
@@ -34,10 +35,22 @@ function tickerOf(instrument: Instrument): string {
   return at >= 0 ? instrument.velaSymbol.slice(at + 1) : instrument.nativeId;
 }
 
+/** Suffixes a listing adds on top of the base asset, stripped until none is left. */
+const TICKER_SUFFIX = /[-_/]?(SWAP|PERP|USDT|USDC|USD1|USDS|BUSD|FDUSD|USD|EUR)$/i;
+
 function baseOf(symbol: SymbolDescriptor): string {
   const fromDescription = symbol.description?.split('/')[0]?.trim();
   if (fromDescription) return fromDescription.replace(/\s+Perpetual$/i, '');
-  return symbol.ticker.replace(/[-_/]?(USDT|USDC|BUSD|FDUSD|USD|PERP)$/i, '') || symbol.ticker;
+  // Vela spells a perp `BTCUSDT.P`; strip that before the quote suffixes.
+  let code = symbol.ticker.replace(/\.P$/i, '');
+  // `BTC-USDT-SWAP` needs both suffixes gone; a single replace leaves `BTC-USDT`.
+  while (TICKER_SUFFIX.test(code)) code = code.replace(TICKER_SUFFIX, '');
+  return code || symbol.ticker;
+}
+
+function iconOf(symbol: SymbolDescriptor): string | undefined {
+  const base = baseOf(symbol).trim();
+  return base ? coinIconUrl(base) : undefined;
 }
 
 /**
@@ -90,9 +103,7 @@ export class SidecarVelaProvider implements DataProvider {
   }
 
   resolveSymbolIcon(symbol: SymbolDescriptor): string | undefined {
-    const base = baseOf(symbol).trim().toUpperCase();
-    if (!base) return undefined;
-    return `https://crypto-icons.ledger.com/${encodeURIComponent(base)}.png`;
+    return iconOf(symbol);
   }
 
   subscribe(

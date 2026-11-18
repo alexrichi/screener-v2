@@ -324,10 +324,15 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   `screener.marketVenues`; unselected venues are not
   fetched. `Favorite`, `Venue` and `Symbol` are pinned at the left: `Favorite` is
   a narrow star-only column, `Venue` is icons only with a globe/sort header, and
-  `Symbol` starts with a 16 px coin logo from Binance's public CDN
-  (`referrerPolicy="no-referrer"`, `loading="lazy"`; the listing symbol first,
-  then the multiplier-free base). Stock tokens and assets the CDN does not carry
-  fall back to the base initial on a deterministic colour. `Symbol` keeps the
+  `Symbol` starts with a 16 px coin logo from the sidecar's `/icon/<code>`
+  route (`loading="lazy"`). That route chains the symbol-logo S3 CDN, OKX,
+  Binance, CoinCap, Financial Modeling Prep and Ledger, caches the first hit,
+  and drops contract multipliers and venue suffixes (`1000PEPE`, `kPEPE` →
+  `PEPE`; `BTC-USDT-SWAP`, `BTCUSDT.P` → `BTC`). Charts resolve the same route
+  through the provider's `resolveSymbolIcon`, so the table and the chart agree;
+  Vela needs it CORS-clean for the PNG export. Assets no source carries (some
+  tokenized stocks and new listings) fall back to the base initial on a
+  deterministic colour. `Symbol` keeps the
   search field in its header. Column sort cycles
   descending → ascending → unsorted; `ScreenerView.sort` is nullable.
 - The app mounts one Vela host per **visited** tab and keeps it alive; inactive
