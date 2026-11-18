@@ -242,7 +242,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       <ThreadPrimitive.Viewport
         turnAnchor="top"
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
+        className="relative flex flex-1 flex-col overflow-x-hidden overflow-y-scroll scroll-smooth"
       >
         <div
           className={cn(
@@ -568,16 +568,16 @@ const ComposerAction: FC = () => {
   );
 
   return (
-    <div className="aui-composer-action-wrapper relative flex items-center justify-between">
+    <div className="aui-composer-action-wrapper relative flex flex-wrap items-center justify-between gap-x-1.5 gap-y-1">
       {ComposerExtra ? (
-        <div className="aui-composer-action-start flex items-center gap-1.5">
+        <div className="aui-composer-action-start flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <ComposerAddAttachment />
           <ComposerExtra />
         </div>
       ) : (
         <ComposerAddAttachment />
       )}
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate asChild>
