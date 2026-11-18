@@ -149,7 +149,7 @@ the same `build` string.
   venue's kline stream (Coinbase through a REST tail) and pushes batched row
   patches to the browser every two seconds; the browser only renders. A failing
   venue keeps the other venues' rows and shows a per-venue warning.
-- Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
+- Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`, `...`,  max `4x4`; cells keep their
   own symbol and timeframe, and the active cell survives a reload. Panning is
   session-only: a reload frames the latest bars at the same zoom level, keeping
   the chart's configured right margin.
@@ -157,6 +157,10 @@ the same `build` string.
   steps, with a loading badge in the cell. The leftmost button of the chart
   toolbar's right group maximizes the selected chart over the widget and restores
   the grid on a second click.
+- Bar replay: the `Replay` button after `Indicators` opens a control bar. Click a
+  bar to pick the start (or type a date), then play/pause, step, change speed, or
+  stop. Every cell rewinds on the same clock; Vela pauses live updates and mutes
+  alerts while replaying.
 - Quick filters are on/off chips - Gainers, Losers, `RSI <30` / `>70`,
   `RVOL ≥1.5` and price above/below VWAP - combined with AND when several are
   on, and with the `All` / `Favorites` switch. Turning on one of an opposite

@@ -513,6 +513,43 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   }
 }
 
+/* Bar replay: a separate topbar control after the Indicators group. */
+.screener-replay-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin-left: 2px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.screener-replay-action:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.screener-replay-action:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.screener-replay-action svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+[data-layout='mobile'] .screener-replay-action {
+  border-left: 0;
+}
+
 /* HashHedge partner button in the app title bar. */
 .screener-hashhedge {
   display: inline-flex;

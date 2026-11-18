@@ -17,6 +17,7 @@ import { SettingsTemplateHost } from './components/SettingsTemplateHost';
 import { IndicatorWindow } from './components/IndicatorWindow';
 import { FavoritesMenu } from './components/FavoritesMenu';
 import { LibraryPanel } from './components/LibraryPanel';
+import { ReplayBar } from './components/ReplayBar';
 import { AlertsPanel } from './components/AlertsPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
@@ -49,6 +50,7 @@ import {
   type VelaWorkspaceHandle,
 } from './components/VelaWorkspaceHost';
 import { openVelaPanel, setActiveVelaTab, VelaPanelPortals } from './lib/velaPanels';
+import { setReplayBridge } from './lib/velaReplay';
 import './lib/velaStrategyDock';
 import { clearStrategyRuns } from './lib/strategyRuns';
 import { setFavoritesMenuBridge, setIndicatorWindowBridge } from './lib/velaIndicators';
@@ -461,6 +463,7 @@ export default function App() {
   const [layoutsMenuOpen, setLayoutsMenuOpen] = useState(false);
   const [layoutsAnchor, setLayoutsAnchor] = useState<HTMLElement | null>(null);
   const [layoutsDialogOpen, setLayoutsDialogOpen] = useState(false);
+  const [replayOpen, setReplayOpen] = useState(false);
   const [layoutNameRequest, setLayoutNameRequest] = useState<LayoutNameRequest | null>(null);
   const [layoutNameError, setLayoutNameError] = useState<string | null>(null);
   const [layoutDelete, setLayoutDelete] = useState<LayoutItem | null>(null);
@@ -510,6 +513,17 @@ export default function App() {
     () => activeWorkspace()?.workspace() ?? null,
     [activeWorkspace],
   );
+
+  const closeReplay = useCallback(() => setReplayOpen(false), []);
+
+  useEffect(() => {
+    setReplayBridge(() => setReplayOpen((open) => !open));
+    return () => setReplayBridge(null);
+  }, []);
+
+  useEffect(() => {
+    setReplayOpen(false);
+  }, [activeTabId]);
 
   const refreshIndicatorRows = useCallback(() => {
     setIndicatorRows(activeWorkspace()?.indicatorRows() ?? []);
@@ -2393,6 +2407,13 @@ export default function App() {
           }}
         />
       </main>
+
+      <ReplayBar
+        open={replayOpen}
+        tabId={activeTabId}
+        getWorkspace={getVelaWorkspace}
+        onClose={closeReplay}
+      />
 
       <LayoutsMenu
         open={layoutsMenuOpen}

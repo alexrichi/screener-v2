@@ -3,6 +3,12 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## 0.1.4 — 2026-11-18
+
+- Bar replay: the `Replay` button after `Indicators` opens a control bar. Pick a
+  bar or type a date, then play/pause, step, change speed, or stop. Every cell
+  rewinds on one clock; Vela pauses live updates and mutes alerts. Session-only.
+
 ## 0.1.3 — 2026-11-18
 
 - A title bar button appears when an update has downloaded. The app no longer
@@ -27,6 +33,7 @@ the build stamp; the updater compares only the version.
 - HashHedge partner button in the title bar.
 - MIT license and the workspace screenshot in the README.
 
+[0.1.4]: https://github.com/alexrichi/screener-v2/releases/tag/v0.1.4
 [0.1.3]: https://github.com/alexrichi/screener-v2/releases/tag/v0.1.3
 [0.1.2]: https://github.com/alexrichi/screener-v2/releases/tag/v0.1.2
 [0.1.1]: https://github.com/alexrichi/screener-v2/releases/tag/v0.1.1

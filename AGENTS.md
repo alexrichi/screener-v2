@@ -440,6 +440,14 @@ refreshed on `cell:maximized` and `layout:changed`. Siblings stay alive
 underneath; the state is never persisted, and a layout switch or state restore
 clears it.
 
+**Bar replay is app UI over Vela's workspace replay.** The `Replay` topbar
+action (`lib/velaReplay.ts`, left cluster after Indicators) toggles the floating
+`ReplayBar`. Picking a start uses `chart.renderer.onClick` with a crosshair
+override and `drawingsInteractive: false`; the bar drives `ws.replay`
+(`start`/`play`/`pause`/`step`/`stop`). It covers every cell, is session-only,
+and Vela pauses live updates and mutes alerts while replaying. Closing the bar
+stops the replay; switching tabs closes it.
+
 **Seed cells, never pre-collapse.** Create the workspace directly with the tab's
 layout and pass seeds for `main`, `alt`, and extra slots. Expanding later hydrates
 `altSymbol` from those seeds. Do not seed a wider grid and collapse it: destroying
