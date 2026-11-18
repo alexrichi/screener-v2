@@ -111,23 +111,39 @@ the same `build` string.
 - Binance, OKX, Bybit, Bitget, Hyperliquid, and Coinbase instruments. The
   picker lists all venues, sorted by ticker across exchanges; a chart opens the
   venue of the selected ticker. Coinbase is spot; the rest are perpetuals.
-- One multi-venue screener table with a venue checkbox filter, a narrow leading
-  favorite column, a `Venue` icon column, and a `perp` / `spot` badge per row.
-  The symbol cell starts with the coin logo; stock tokens and unknown assets show
-  a letter badge. A row click opens the
-  matching venue's chart. The sidecar watches every instrument whose 24h quote
-  volume clears the watch threshold, so there is no row cap. The Screener panel's
-  gear opens Settings on the screener tab, where each venue can override the
-  default threshold for itself. Clicking a column header
-  cycles descending, ascending, and unsorted.
-- Screener metrics: Range 24h, 24h volume change, RVOL against the previous
-  `RVOL days` windows, session VWAP z-score, and Wilder RSI on the configured
-  technical timeframe (15m, 30m or 1h). Quick filters are on/off chips for
-  oversold (`RSI <30`), overbought (`RSI >70`), unusual volume (`RVOL ≥1.5`) and
-  price above/below VWAP; active chips combine with each other and with the
-  favorites switch. The sidecar keeps one merged candle series per watched instrument, updates
-  it from the venue's kline stream (Coinbase through a REST tail) and pushes
-  batched row patches to the browser every two seconds; the browser only renders.
+- One multi-venue screener table. Columns: a favorite star, the venue icon,
+  `Symbol` with its coin badge and `perp` / `spot` tag, `Last`, `24h %`,
+  `Range 24h`, `Vol 24h`, `VolΔ24h`, `RVOL 7d`, `Funding`, `VWAPσ`, `RSI 15m`,
+  then one column per scan plot. The `RVOL` and `RSI` headers name the window
+  that produced them. Star, venue and symbol stay pinned at the left; the
+  `Columns` menu hides and reorders the rest, and dragging a header edge
+  resizes a column. Clicking a header cycles descending, ascending, unsorted;
+  unsorted keeps the 24h-volume order.
+- `Funding` is the current rate on perpetuals and `-` on spot; hovering it
+  shows the next funding time. The symbol cell starts with the coin logo; stock
+  tokens and unknown assets show a letter badge. A row click opens the matching
+  venue's chart; right-click offers `Open in new tab`, `Close tab` when that
+  tab is open, and `Copy symbol`.
+- The sidecar watches an instrument the first time its 24h quote volume clears
+  the watch threshold and keeps it for the session: there is no row cap,
+  raising the threshold only changes which new rows activate, and falling
+  volume never drops a watched row. A favorite below the threshold is not
+  fetched, so it does not appear. The Screener panel's gear opens Settings on
+  the screener tab, where each venue can override the default threshold for
+  itself.
+- Screener metrics run on one technical candle series per watched instrument
+  (15m, 30m or 1h) and include the forming candle: its close follows the
+  ticker's last price and its high and low widen with it, so RSI, `Range 24h`
+  and `VWAPσ` move between closed bars and every value is provisional until the
+  bar closes. `Range 24h` is the price's position inside the current day's
+  high-low range (0% at the day's open, 100% at its high), `VWAPσ` is the
+  session VWAP z-score, `VolΔ24h` compares the last 24h of volume with the 24h
+  before it, and `RVOL` compares it with the previous `RVOL days` windows. RSI
+  is Wilder's on the configured timeframe.
+- The sidecar keeps that series per watched instrument, updates it from the
+  venue's kline stream (Coinbase through a REST tail) and pushes batched row
+  patches to the browser every two seconds; the browser only renders. A failing
+  venue keeps the other venues' rows and shows a per-venue warning.
 - Multi-chart Vela workspaces: `1`, `2×1`, `1×2`, `2×2`, `4×2`; cells keep their
   own symbol and timeframe, and the active cell survives a reload. Panning is
   session-only: a reload frames the latest bars at the same zoom level, keeping
@@ -136,9 +152,19 @@ the same `build` string.
   steps, with a loading badge in the cell. The leftmost button of the chart
   toolbar's right group maximizes the selected chart over the widget and restores
   the grid on a second click.
-- Screener table with search in the `SYMBOL` header, gainers/losers and metric
-  filters, sorting, resizable and reorderable columns, and per-row actions.
-  Screener, Pine, Library, and Alerts
+- Quick filters are on/off chips - Gainers, Losers, `RSI <30` / `>70`,
+  `RVOL ≥1.5` and price above/below VWAP - combined with AND when several are
+  on, and with the `All` / `Favorites` switch. Turning on one of an opposite
+  pair (oversold/overbought, above/below VWAP) turns the other off. The
+  `Venues` menu picks the exchanges; an unchecked venue is not fetched, and its
+  rows leave the table at once. Search sits in the `SYMBOL` header with a clear
+  button, and the header still sorts while the field is not focused.
+- The table footer shows the shown and total row count. It also says when the
+  table is loading, when no venue is selected, when nothing matches the filters,
+  and when the active favorites list is empty.
+- Sort, chips, search, columns, widths and favorites persist on this device,
+  and the table view is shared by every workspace tab.
+- Screener, Pine, Library, and Alerts
   open as Vela side panels from the chart's right sidebar; the open panel and
   width persist, and script alerts are session-only. The strategy dock sits at
   the foot of the chart column, under the range presets; the drawing toolbar and
@@ -150,10 +176,9 @@ the same `build` string.
   (`venue:kind:nativeId`), and the old `screener.favorites` key folds into the
   default list. Create, rename, clear, or delete lists; import a JSON/text file
   into the active list; export every list as JSON. The `All` / `Favorites` switch
-  before the list shows only the active list, and the metric filters and
-  search still apply within it. A symbol below the volume threshold is not
-  fetched, so it does not appear there.
-  The active list name labels the favorites button in the screener toolbar.
+  before the list shows only the active list, and the quick filters and
+  search still apply within it. The active list name labels the favorites
+  button in the screener toolbar.
 - Pine editor with tabs, presets and Monaco highlighting, completions, signature
   help, folding, search, semantic colors, outline, formatting, rich hover docs,
   context actions (Go to Definition, Discard, New tab, Open script, Save,
