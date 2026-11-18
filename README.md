@@ -48,6 +48,9 @@ npm run sidecar
 # http://127.0.0.1:8787/health
 ```
 
+For the Electron modes, the installer build, and the release checklist, see
+[DEVELOPMENT.md](DEVELOPMENT.md).
+
 ### AI assistant
 
 Open **Settings → AI assistant** and fill in a base URL, model and key. The
