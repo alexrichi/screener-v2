@@ -476,6 +476,13 @@ function atLoadedEdge(chart: CellChart): boolean {
 
 function extendHistory(chart: CellChart, state: CellHistory, requested?: number): void {
   if (state.exhausted) return;
+  // Replay walks the history already loaded; a depth reload would reframe the
+  // chart and leave the replay cursor behind.
+  try {
+    if (chart.replay.state.active) return;
+  } catch {
+    // A chart between teardown and destroy; nothing to extend.
+  }
   const current = chart.market.bars ?? INITIAL_DEPTH;
   const target = Math.min(requested ?? current + HISTORY_STEP, HISTORY_MAX);
   if (target <= current) return;

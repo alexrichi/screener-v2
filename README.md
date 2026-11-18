@@ -157,10 +157,13 @@ the same `build` string.
   steps, with a loading badge in the cell. The leftmost button of the chart
   toolbar's right group maximizes the selected chart over the widget and restores
   the grid on a second click.
-- Bar replay: the `Replay` button after `Indicators` opens a control bar. Click a
-  bar to pick the start (or type a date), then play/pause, step, change speed, or
-  stop. Every cell rewinds on the same clock; Vela pauses live updates and mutes
-  alerts while replaying.
+- Bar replay: the `Replay` button after `Indicators` opens a draggable control
+  bar. `Start bar` arms a chart pick (all cells dim), or `Select date` opens a
+  calendar; then play/pause, step, and change speed in `x`. The X leaves replay
+  and stops it. A date older than the loaded bars deepens every cell with the
+  reference cell's symbol before the replay starts, even when the chart has no
+  loaded bars. Every cell rewinds on the same clock; Vela pauses live updates and
+  mutes alerts while replaying.
 - Quick filters are on/off chips - Gainers, Losers, `RSI <30` / `>70`,
   `RVOL ≥1.5` and price above/below VWAP - combined with AND when several are
   on, and with the `All` / `Favorites` switch. Turning on one of an opposite

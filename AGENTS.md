@@ -101,6 +101,7 @@ src/
     AlertsPanel.tsx               per-tab script alerts in the right rail
     StrategyEquity.tsx            strategy net P&L curve (zero line, downsample)
     StrategyPanel.tsx             app-owned strategy dock under the chart
+    ReplayBar.tsx                 floating, draggable bar replay controls over ws.replay
     AssistantUiThread.tsx         assistant-ui chat over the same tools
     assistant-ui/                 assistant-ui registry kit (thread, composer, tool UI)
     ui/                           shadcn shims used by the registry kit (Base UI)
@@ -146,6 +147,7 @@ src/
     velaAi.ts                     AI rail toggle attached to Vela's drawing toolbar
     velaLayouts.ts                topbar Layouts action and popover bridge
     velaMaximize.ts               topbar widget actions bridged to ws.maximizeCell
+    velaReplay.ts                 Replay topbar attachment; bridge to the app-owned bar
     velaPanels.tsx                Vela side-panel registration and React portal bridge
     velaScripts.ts                per-cell persistence for external script indicators
     usePersistedState.ts          localStorage-backed state with runtime validation
@@ -441,12 +443,23 @@ underneath; the state is never persisted, and a layout switch or state restore
 clears it.
 
 **Bar replay is app UI over Vela's workspace replay.** The `Replay` topbar
-action (`lib/velaReplay.ts`, left cluster after Indicators) toggles the floating
-`ReplayBar`. Picking a start uses `chart.renderer.onClick` with a crosshair
-override and `drawingsInteractive: false`; the bar drives `ws.replay`
-(`start`/`play`/`pause`/`step`/`stop`). It covers every cell, is session-only,
-and Vela pauses live updates and mutes alerts while replaying. Closing the bar
-stops the replay; switching tabs closes it.
+attachment (`lib/velaReplay.ts`, after the Indicators group) toggles the floating,
+draggable `ReplayBar`. `Start bar` arms the picker; picking subscribes to
+`renderer.onClick` on **every cell** and gives each cell the crosshair override
+and `drawingsInteractive: false`, so the grid dims to the same cut. The clicked
+cell is passed to `ws.replay.start({ from, cell })`. The bar drives
+`ws.replay` (`start`/`play`/`pause`/`step`); speed is a multiplier (1x = 1000 ms
+per bar), and the X leaves replay and stops it. `Select date` opens the Vela UI
+calendar immediately (the popover carries `vela-ui` so its styles apply) and is
+available even with no loaded bars. Before `ws.replay.start`,
+`ensureReplayHistory` deepens every cell with the reference cell's symbol
+(`setMarket({ bars })` + `historyComplete`) when the date is older than its
+loaded history — all cells when one symbol is shared. There is no separate
+start/stop control; `Start bar` re-arms the picker, including after a replay.
+Replay is session-only, all cells rewind together, and Vela pauses live updates
+and mutes alerts. Depth extension is disabled while replaying and the renderer's
+scroll-to-latest button is hidden, so a chart click cannot jump the viewport back
+to live bars. Closing the bar or switching tabs stops the replay.
 
 **Seed cells, never pre-collapse.** Create the workspace directly with the tab's
 layout and pass seeds for `main`, `alt`, and extra slots. Expanding later hydrates

@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { ReplayState } from '@luxalgo/vela';
 import type { VelaWorkspace } from '@luxalgo/vela/workspace';
-import { Pause, Play, Rewind, SkipForward, X } from 'lucide-react';
+import { createDatePicker, isoDate } from '@luxalgo/vela-ui/date-picker';
+import { Calendar, GripVertical, Pause, Play, Rewind, SkipForward, X } from 'lucide-react';
+import { timeframeMs } from '../lib/timeframe';
 import { Button, IconButton, Input, Select } from '../ui/primitives';
 
-const WEEK = 7 * 24 * 60 * 60 * 1000;
-const SPEEDS = [250, 500, 1000, 2000, 5000];
+const HISTORY_MAX = 100_000;
+const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10] as const;
 
 type Mode = 'picking' | 'ready' | 'active';
 
@@ -14,25 +16,6 @@ interface Props {
   tabId: string;
   getWorkspace: () => VelaWorkspace | null;
   onClose: () => void;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-/** Local `datetime-local` value for an epoch. */
-function inputValue(epoch: number): string {
-  if (!epoch) return '';
-  const date = new Date(epoch);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
-}
-
-function epochFromInput(value: string): number {
-  if (!value) return 0;
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : 0;
 }
 
 function formatCursor(epoch: number | null): string {
@@ -45,28 +28,106 @@ function formatCursor(epoch: number | null): string {
   });
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
+/** Vela's replay timer takes milliseconds per bar; the UI shows a speed multiplier. */
+function intervalFor(speed: number): number {
+  return Math.max(16, Math.round(1000 / speed));
+}
+
+/**
+ * Replay only walks loaded history. When the picked date is older than a cell's
+ * loaded bars, deepen every cell that shares the reference cell's symbol, before
+ * the workspace replay starts. Vela's own depth extension is off during replay.
+ */
+async function ensureReplayHistory(
+  workspace: VelaWorkspace,
+  from: number,
+  cellId: string | null,
+): Promise<void> {
+  let reference;
+  try {
+    reference = cellId
+      ? (workspace.cells().find((cell) => cell.id === cellId) ?? workspace.active)
+      : workspace.active;
+  } catch {
+    return;
+  }
+  if (!reference) return;
+  const symbol = reference.symbol;
+  const targets = workspace.cells().filter((cell) => cell.symbol === symbol);
+
+  await Promise.all(
+    targets.map(async (cell) => {
+      try {
+        const barMs = timeframeMs(cell.chart.market.timeframe ?? '15');
+        if (!(barMs > 0)) return;
+        const current = cell.chart.market.bars ?? 0;
+        const first = cell.chart.replay.bounds?.first ?? null;
+        const anchor = first ?? Date.now();
+        if (first != null && from >= first - barMs * 8) return;
+        const missing = anchor - from;
+        if (!(missing > 0)) return;
+        const needed = current + Math.ceil(missing / barMs) + 50;
+        const target = Math.min(Math.max(current + 500, needed), HISTORY_MAX);
+        if (target <= current) return;
+        await cell.chart.setMarket({ bars: target });
+        await cell.chart.historyComplete();
+      } catch {
+        // A cell that cannot deepen still lets the replay start with what it has.
+      }
+    }),
+  );
 }
 
 /**
  * The bar-replay control bar. Vela owns the replay itself (`workspace.replay`);
- * this only picks a start, drives play/pause/step/stop, and shows the cursor.
+ * this only picks a start, drives play/pause/step, and shows the cursor.
  */
 export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
   const workspaceRef = useRef<VelaWorkspace | null>(null);
   const closeRef = useRef(onClose);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const calendarRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const [mode, setMode] = useState<Mode>('picking');
   const [from, setFrom] = useState(0);
-  const [bounds, setBounds] = useState<{ first: number; last: number } | null>(null);
+  const [pickCellId, setPickCellId] = useState<string | null>(null);
   const [status, setStatus] = useState<ReplayState | null>(null);
-  const [speed, setSpeed] = useState(1000);
+  const [speed, setSpeed] = useState(5);
+  const [time, setTime] = useState('00:00');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dateOpen, setDateOpen] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const timeRef = useRef(time);
+  timeRef.current = time;
 
   useEffect(() => {
     closeRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    const onMove = (event: MouseEvent) => {
+      const drag = dragRef.current;
+      const panel = panelRef.current;
+      if (!drag || !panel) return;
+      const rect = panel.getBoundingClientRect();
+      const maxX = Math.max(8, window.innerWidth - rect.width - 8);
+      const maxY = Math.max(8, window.innerHeight - rect.height - 8);
+      setPos({
+        x: Math.min(Math.max(8, event.clientX - drag.dx), maxX),
+        y: Math.min(Math.max(8, event.clientY - drag.dy), maxY),
+      });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -75,20 +136,34 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
     setMode('picking');
     setStatus(workspace?.replay.state ?? null);
     setError(null);
-    if (!workspace) {
-      setBounds(null);
-      return;
-    }
-    try {
-      const next = workspace.replay.bounds;
-      setBounds(next);
-      if (next) {
-        setFrom(clamp(next.last - WEEK, next.first, next.last));
-      }
-    } catch {
-      setBounds(null);
-    }
+    setDateOpen(false);
+    setFrom(0);
+    setPickCellId(null);
   }, [open, tabId, getWorkspace]);
+
+  useEffect(() => {
+    if (!dateOpen || mode === 'active') return;
+    const host = calendarRef.current;
+    if (!host) return;
+    const selected = from ? new Date(from) : new Date();
+    const picker = createDatePicker({
+      value: isoDate(selected),
+      onPick: (value) => {
+        const [y, m, d] = value.split('-').map(Number);
+        const [h, min] = (timeRef.current || '00:00').split(':').map(Number);
+        const next = new Date(y!, m! - 1, d!, h ?? 0, min ?? 0).getTime();
+        setFrom(next);
+        setPickCellId(null);
+        setMode('ready');
+        setDateOpen(false);
+      },
+    });
+    host.replaceChildren(picker.el);
+    return () => {
+      picker.destroy();
+      host.replaceChildren();
+    };
+  }, [dateOpen, from, mode]);
 
   useEffect(() => {
     if (!open) return;
@@ -113,30 +188,30 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
     const workspace = workspaceRef.current;
     if (!workspace) return;
 
-    let chart;
-    try {
-      chart = workspace.chart;
-    } catch {
-      return;
-    }
+    const entries = workspace.cells().map((cell) => ({ cell, chart: cell.chart }));
+    const offs = entries.map(({ cell, chart }) =>
+      chart.renderer.onClick(({ time }) => {
+        if (time == null) return;
+        setFrom(time);
+        setPickCellId(cell.id);
+        setMode('ready');
+        setDateOpen(false);
+        setError(null);
+      }),
+    );
 
-    const offClick = chart.renderer.onClick(({ time }) => {
-      if (time == null) return;
-      setFrom(time);
-      setMode('ready');
-      setError(null);
-    });
-
-    try {
-      chart.renderer.set({
-        crosshairOverride: {
-          horizontal: false,
-          shadeRight: { color: 'rgba(0, 0, 0, 0.35)' },
-        },
-        drawingsInteractive: false,
-      });
-    } catch {
-      // A renderer without the override still accepts the click.
+    for (const { chart } of entries) {
+      try {
+        chart.renderer.set({
+          crosshairOverride: {
+            horizontal: false,
+            shadeRight: { color: 'rgba(0, 0, 0, 0.35)' },
+          },
+          drawingsInteractive: false,
+        });
+      } catch {
+        // A renderer without the override still accepts the click.
+      }
     }
 
     const onKey = (event: KeyboardEvent) => {
@@ -147,12 +222,14 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
     window.addEventListener('keydown', onKey, true);
 
     return () => {
-      offClick();
+      for (const off of offs) off();
       window.removeEventListener('keydown', onKey, true);
-      try {
-        chart.renderer.set({ crosshairOverride: null, drawingsInteractive: true });
-      } catch {
-        // The chart was destroyed with its tab.
+      for (const { chart } of entries) {
+        try {
+          chart.renderer.set({ crosshairOverride: null, drawingsInteractive: true });
+        } catch {
+          // The chart was destroyed with its tab.
+        }
       }
     };
   }, [open, mode]);
@@ -182,10 +259,28 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
     };
   }, [open, mode]);
 
+  useEffect(() => {
+    if (!open || mode !== 'active') return;
+    document.body.dataset.screenerReplay = '1';
+    return () => {
+      delete document.body.dataset.screenerReplay;
+    };
+  }, [open, mode]);
+
   if (!open) return null;
 
   const workspace = workspaceRef.current;
   const active = mode === 'active';
+  const picking = mode === 'picking';
+
+  const pickBar = () => {
+    if (!workspace) return;
+    if (workspace.replay.state.active) workspace.replay.stop();
+    setMode('picking');
+    setDateOpen(false);
+    setError(null);
+    setPickCellId(null);
+  };
 
   const start = async () => {
     if (!workspace) {
@@ -193,13 +288,18 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
       return;
     }
     if (!from) {
-      setError('Choose a start time or click a bar.');
+      setError('Pick a bar or select a date first.');
       return;
     }
     setBusy(true);
     setError(null);
+    setDateOpen(false);
     try {
-      await workspace.replay.start({ from });
+      await ensureReplayHistory(workspace, from, pickCellId);
+      await workspace.replay.start({
+        from,
+        ...(pickCellId ? { cell: pickCellId } : {}),
+      });
       const next = workspace.replay.state;
       setStatus(next);
       if (!next.active) {
@@ -207,6 +307,7 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
         return;
       }
       setMode('active');
+      workspace.replay.play(intervalFor(speed));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not start the replay.');
     } finally {
@@ -217,36 +318,69 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
   const togglePlay = () => {
     if (!workspace) return;
     if (status?.playing) workspace.replay.pause();
-    else workspace.replay.play(speed);
+    else workspace.replay.play(intervalFor(speed));
   };
 
   const step = () => {
     workspace?.replay.step();
   };
 
-  const stop = () => {
-    if (!workspace) return;
-    workspace.replay.stop();
-    setStatus(workspace.replay.state);
-    setMode('ready');
-  };
-
   const changeSpeed = (value: number) => {
     setSpeed(value);
-    if (workspace && status?.playing) workspace.replay.play(value);
+    if (workspace && status?.playing) workspace.replay.play(intervalFor(value));
+  };
+
+  const openDate = () => {
+    setPickCellId(null);
+    setDateOpen(true);
+  };
+
+  const startDrag = (event: ReactMouseEvent<HTMLSpanElement>) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+    setPos({ x: rect.left, y: rect.top });
+    event.preventDefault();
   };
 
   return (
     <div
+      ref={panelRef}
       role="region"
       aria-label="Bar replay"
-      className="fixed bottom-24 left-1/2 z-[70] w-[680px] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-xl border border-border bg-popover/95 shadow-2xl backdrop-blur"
+      style={pos ? { left: pos.x, top: pos.y, bottom: 'auto', transform: 'none' } : undefined}
+      className={`fixed z-[70] w-[680px] max-w-[calc(100vw-32px)] rounded-xl border border-border bg-popover/95 shadow-2xl backdrop-blur ${
+        pos ? '' : 'bottom-24 left-1/2 -translate-x-1/2'
+      }`}
     >
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          <Rewind className="size-3.5" />
-          Replay
+      <div className="flex flex-wrap items-center gap-2 px-2 py-2">
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label="Drag replay panel"
+          title="Drag"
+          onMouseDown={startDrag}
+          className="inline-flex h-7 w-5 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+        >
+          <GripVertical className="size-3.5" />
         </span>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={pickBar}
+          disabled={!workspace}
+          title="Pick the replay start on the chart"
+          className={
+            picking
+              ? 'border-transparent bg-foreground text-background hover:bg-foreground/90'
+              : undefined
+          }
+        >
+          <Rewind className="size-3.5" />
+          Start bar
+        </Button>
 
         {active ? (
           <>
@@ -256,53 +390,55 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
             <IconButton label="Step" onClick={step}>
               <SkipForward className="size-3.5" />
             </IconButton>
-            <Select
-              aria-label="Replay speed"
-              value={String(speed)}
-              onChange={(event) => changeSpeed(Number(event.target.value))}
-              className="h-7 w-[76px] text-[11px]"
-            >
-              {SPEEDS.map((value) => (
-                <option key={value} value={value}>
-                  {value < 1000 ? `${value} ms` : `${value / 1000} s`}
-                </option>
-              ))}
-            </Select>
-            <Button variant="secondary" size="sm" onClick={stop}>
-              Stop
-            </Button>
-            <span className="text-[11px] text-muted-foreground">
-              {status?.cursorTime ? formatCursor(status.cursorTime) : 'Loading bars…'} ·{' '}
-              {status?.remaining ?? 0} bars left
-            </span>
           </>
         ) : (
           <>
-            <Input
-              type="datetime-local"
-              aria-label="Replay start time"
-              value={from ? inputValue(from) : ''}
-              min={bounds ? inputValue(bounds.first) : undefined}
-              max={bounds ? inputValue(bounds.last) : undefined}
-              onChange={(event) => {
-                const next = epochFromInput(event.target.value);
-                setFrom(next);
-                if (next) setMode('ready');
-              }}
-              className="h-7 w-[190px] text-[11px]"
-            />
-            <Button
-              variant="primary"
-              size="sm"
+            <IconButton
+              label="Play"
               onClick={() => void start()}
-              loading={busy}
-              disabled={!workspace || !from}
+              disabled={!workspace || !from || busy}
             >
-              {mode === 'ready' ? 'Start replay' : 'Start'}
+              <Play className="size-3.5" />
+            </IconButton>
+            <IconButton label="Step" disabled>
+              <SkipForward className="size-3.5" />
+            </IconButton>
+          </>
+        )}
+
+        <Select
+          aria-label="Replay speed"
+          value={String(speed)}
+          onChange={(event) => changeSpeed(Number(event.target.value))}
+          className="h-7 w-[76px] text-[11px]"
+        >
+          {SPEEDS.map((value) => (
+            <option key={value} value={value}>
+              {value}x
+            </option>
+          ))}
+        </Select>
+
+        {active ? (
+          <span className="text-[11px] text-muted-foreground">
+            {status?.cursorTime ? formatCursor(status.cursorTime) : 'Loading bars…'} ·{' '}
+            {status?.remaining ?? 0} bars left
+          </span>
+        ) : (
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={openDate}
+              disabled={!workspace}
+              title="Select date"
+            >
+              <Calendar className="size-3.5" />
+              Select date
             </Button>
-            <span className="text-[11px] text-muted-foreground">
-              {mode === 'ready' ? formatCursor(from) : 'or click a bar on the chart'}
-            </span>
+            {from ? (
+              <span className="text-[11px] text-muted-foreground">{formatCursor(from)}</span>
+            ) : null}
           </>
         )}
 
@@ -311,11 +447,30 @@ export function ReplayBar({ open, tabId, getWorkspace, onClose }: Props) {
         </IconButton>
       </div>
 
-      {!active ? (
-        <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
-          Click a bar to choose where replay starts; Esc cancels. All charts rewind together.
+      {dateOpen && !active ? (
+        <div className="vela-ui absolute bottom-full left-2 z-10 mb-2 w-[228px] rounded-lg border border-border bg-popover p-2 shadow-2xl">
+          <div ref={calendarRef} />
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Time
+            </span>
+            <Input
+              type="time"
+              aria-label="Replay start time"
+              value={time}
+              onChange={(event) => setTime(event.target.value || '00:00')}
+              className="h-7 w-24 text-[11px]"
+            />
+          </div>
         </div>
       ) : null}
+
+      {picking ? (
+        <div className="absolute bottom-0 left-full ml-3 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[10px] text-muted-foreground shadow-lg">
+          Bar replay: click the bar to start from (Esc cancels)
+        </div>
+      ) : null}
+
       {error ? (
         <div className="border-t border-negative/30 px-3 py-1.5 text-[10px] text-negative">
           {error}

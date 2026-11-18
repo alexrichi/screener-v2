@@ -3,6 +3,17 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## 0.1.5 — 2026-11-18
+
+- Replay bar matches the reference: `Start bar` re-arms the chart picker,
+  `Select date` is the alternate start, speed is a multiplier, the panel is
+  draggable, and the X stops and exits.
+- Picking dims every cell and can start from the clicked cell. History extension
+  and the renderer's scroll-to-latest button are disabled while replaying.
+- `Select date` opens a calendar immediately and works with no loaded bars. A
+  date older than the loaded history deepens every cell with the reference
+  cell's symbol before the replay starts.
+
 ## 0.1.4 — 2026-11-18
 Commit: eb0d43e
 

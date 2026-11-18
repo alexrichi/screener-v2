@@ -550,6 +550,12 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   border-left: 0;
 }
 
+/* A running replay owns the viewport; the renderer's jump-to-latest button
+   would glide it back to live bars while the replay is still active. */
+body[data-screener-replay='1'] button[aria-label='Scroll to most recent bar'] {
+  display: none !important;
+}
+
 /* HashHedge partner button in the app title bar. */
 .screener-hashhedge {
   display: inline-flex;
