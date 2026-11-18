@@ -151,12 +151,21 @@ function isSettings(value: unknown): value is Settings {
     typeof settings === 'object' &&
     settings !== null &&
     isNumber(settings.minVolume) &&
+    (settings.minVolumeByVenue === undefined ||
+      isVolumeOverrides(settings.minVolumeByVenue)) &&
     isNumber(settings.topN) &&
     isNumber(settings.scanBars) &&
     isNumber(settings.refreshSeconds) &&
     isString(settings.scanTimeframe) &&
     isString(settings.defaultLayout) &&
     LAYOUTS.has(settings.defaultLayout)
+  );
+}
+
+function isVolumeOverrides(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(
+    ([venue, amount]) => VENUE_IDS.includes(venue as VenueId) && isNumber(amount) && amount >= 0,
   );
 }
 
@@ -304,12 +313,14 @@ export default function App() {
       rvolDays: settings.rvolDays ?? 7,
       rsiPeriod: settings.rsiPeriod ?? 14,
       minVolume: settings.minVolume,
+      minVolumeByVenue: settings.minVolumeByVenue,
       venues: selectedVenues,
     }),
     [
       selectedVenues,
       settings.metricsTimeframe,
       settings.minVolume,
+      settings.minVolumeByVenue,
       settings.rsiPeriod,
       settings.rvolDays,
     ],
@@ -1946,6 +1957,13 @@ export default function App() {
     refreshAiStatus();
   }, [aiOpen, refreshAiStatus]);
 
+  /** The Screener panel's gear and the File menu both land on screener settings. */
+  const openScreenerSettings = useCallback(() => {
+    refreshAiStatus();
+    setSettingsTab('screener');
+    setSettingsOpen(true);
+  }, [refreshAiStatus]);
+
   useEffect(() => {
     setAiRailState(aiOpen);
   }, [aiOpen]);
@@ -2167,11 +2185,7 @@ export default function App() {
         onMove={moveTab}
         onAdd={addTab}
         onRefresh={() => void refresh()}
-        onOpenSettings={() => {
-          refreshAiStatus();
-          setSettingsTab('screener');
-          setSettingsOpen(true);
-        }}
+        onOpenSettings={openScreenerSettings}
         aiOpen={aiOpen}
         aiWidth={aiSidebarWidth}
       />
@@ -2268,6 +2282,7 @@ export default function App() {
                 onViewChange={setView}
                 venues={selectedVenues}
                 onVenuesChange={setVenues}
+                onOpenSettings={openScreenerSettings}
                 venueErrors={venueErrors}
                 favorites={favoriteSymbols}
                 favoriteLists={favoritesState.lists}

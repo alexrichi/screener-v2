@@ -111,7 +111,7 @@ src/
     PinePanel.tsx                 script editor with tabs, saved scripts, apply and scan controls;
                                   lazy-loads the Monaco editor from `@screener/pine-editor/monaco/react`
     LibraryPanel.tsx              saved indicator list, import/export and actions
-    SettingsDialog.tsx            watch threshold, metrics timeframe, scan defaults
+    SettingsDialog.tsx            per-venue watch thresholds, metrics timeframe, scan defaults
   hooks/
     useScreener.ts                server-owned screener: snapshot, WS patches, viewport, config
     useDictation.ts               microphone recording and sidecar transcription
@@ -244,7 +244,8 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   never bulk-copied into the repo.
 - The screener table is server-owned. `sidecar/screener.ts` polls venue tickers
   (`VenueHub` owns the adapters, caches and in-flight de-duplication), watches
-  every instrument whose 24h quote volume clears `minVolume`, and backfills
+  every instrument whose 24h quote volume clears the watch threshold
+  (`minVolume`, or the venue's `minVolumeByVenue` override), and backfills
   `rvolDays + 1` days of `metricsTimeframe` candles for each one. Watched
   instruments subscribe to their venue's kline stream in batches; Coinbase has no
   candle WS, so its rows refresh through a slow REST tail. `topN` no longer trims
@@ -302,7 +303,7 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   list name labels the favorites button, while the panel title stays `Screener`.
   Import adds every ticker to the active list; list names in the file are
   ignored. Export writes every list as JSON. The table always shows every watched
-  row: a favorite below `minVolume` is not watched, so it is not fetched and not
+  row: a favorite below its venue's watch threshold is not watched, so it is not fetched and not
   visible. The `All` / `Favorites` switch before the list dropdown shows only the
   active list and combines with the active quick filters and the search;
   `ScreenerView.favoritesOnly` carries that scope, and the old
@@ -670,7 +671,9 @@ Maximize and Layouts; mobile keeps the panel rows in its menu. `sidebar` is part
 of Vela 0.10.7, so keep it. The dock's open panel and width live in the Vela
 workspace document, not in `screener.dock.*`. Do not
 reach into panel internals. `screener.panels.welcomed` only controls the
-one-time Screener default.
+one-time Screener default. The Screener panel's toolbar gear opens Settings on
+the screener tab; the app header no longer carries a settings button (the File
+menu item remains).
 
 **The strategy dock is a Vela docked strip.** `lib/velaStrategyDock.tsx`
 registers a widget attachment; `ctx.dockStrip(el, { position: 'below-bottombar' })`
@@ -928,8 +931,8 @@ Useful browser probes:
   writes every list. A favorite below the watch threshold stays out of the
   table, because the sidecar never fetched it.
 - At the default 1M threshold the table lists every watched instrument from all
-  checked venues (1,000+ rows) and grows no `TopN` cap; raising the threshold in
-  Settings drops rows on the next poll. Range 24h, VolΔ24h, RVOL 7d, VWAPσ and
+  checked venues (1,000+ rows) and grows no `TopN` cap; raising the default or a
+  venue threshold in Settings drops rows as soon as the config lands. Range 24h, VolΔ24h, RVOL 7d, VWAPσ and
   RSI 15m show values within a few minutes of the first load, and the sidecar
   log has no venue 429. `RSI <30` narrows the table to the oversold rows and
   clicking it again restores them; `RSI <30` + `RVOL ≥1.5` keeps only the rows

@@ -74,6 +74,8 @@ export interface ScreenerConfig {
   rvolDays: number;
   rsiPeriod: number;
   minVolume: number;
+  /** Per-venue overrides of `minVolume`; an omitted venue uses the default. */
+  minVolumeByVenue?: Partial<Record<VenueId, number>>;
   /** Checked venues; omitted means every venue the sidecar serves. */
   venues?: VenueId[];
 }
@@ -236,6 +238,8 @@ export interface ScanTarget {
 
 export interface Settings {
   minVolume: number;
+  /** Per-venue watch thresholds; a missing venue uses `minVolume`. */
+  minVolumeByVenue?: Partial<Record<VenueId, number>>;
   /** Kept for old stored settings; the screener table no longer trims by it. */
   topN: number;
   scanTimeframe: string;

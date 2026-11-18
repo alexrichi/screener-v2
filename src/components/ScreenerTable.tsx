@@ -24,6 +24,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings,
   Star,
   Trash2,
   Upload,
@@ -179,6 +180,7 @@ interface Props {
   onViewChange: (view: ScreenerView) => void;
   venues: VenueId[];
   onVenuesChange: (venues: VenueId[]) => void;
+  onOpenSettings: () => void;
   venueErrors: Record<string, string>;
   selectedSymbol: string;
   openSymbols: string[];
@@ -210,6 +212,7 @@ export function ScreenerTable({
   onViewChange,
   venues,
   onVenuesChange,
+  onOpenSettings,
   venueErrors,
   selectedSymbol,
   openSymbols,
@@ -1107,6 +1110,15 @@ export function ScreenerTable({
               </div>
             </PopoverContent>
           </Popover.Root>
+          <button
+            type="button"
+            title="Screener settings"
+            aria-label="Screener settings"
+            onClick={onOpenSettings}
+            className="ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Settings className="size-3.5" />
+          </button>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1">
           {QUICK_FILTERS.map((option) => {

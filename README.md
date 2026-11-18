@@ -116,7 +116,9 @@ the same `build` string.
   The symbol cell starts with the coin logo; stock tokens and unknown assets show
   a letter badge. A row click opens the
   matching venue's chart. The sidecar watches every instrument whose 24h quote
-  volume clears the threshold, so there is no row cap. Clicking a column header
+  volume clears the watch threshold, so there is no row cap. The Screener panel's
+  gear opens Settings on the screener tab, where each venue can override the
+  default threshold for itself. Clicking a column header
   cycles descending, ascending, and unsorted.
 - Screener metrics: Range 24h, 24h volume change, RVOL against the previous
   `RVOL days` windows, session VWAP z-score, and Wilder RSI on the configured

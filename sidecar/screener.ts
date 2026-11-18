@@ -109,10 +109,29 @@ function invalidConfig(config: ScreenerConfig): string | null {
   if (!Number.isFinite(config.minVolume) || config.minVolume < 0) {
     return 'minVolume must be non-negative';
   }
+  for (const [venue, volume] of Object.entries(config.minVolumeByVenue ?? {})) {
+    if (!VENUE_IDS.includes(venue as VenueId)) {
+      return `minVolumeByVenue has an unknown venue: ${venue}`;
+    }
+    if (!Number.isFinite(volume) || (volume as number) < 0) {
+      return `minVolumeByVenue.${venue} must be non-negative`;
+    }
+  }
   if (config.venues && config.venues.some((venue) => !VENUE_IDS.includes(venue))) {
     return 'venues must be known venue ids';
   }
   return null;
+}
+
+function sameVolumes(
+  left: Partial<Record<VenueId, number>> | undefined,
+  right: Partial<Record<VenueId, number>> | undefined,
+): boolean {
+  const a = left ?? {};
+  const b = right ?? {};
+  const venues = new Set([...Object.keys(a), ...Object.keys(b)] as VenueId[]);
+  for (const venue of venues) if (a[venue] !== b[venue]) return false;
+  return true;
 }
 
 function sameVenues(left: readonly VenueId[] | undefined, right: readonly VenueId[] | undefined): boolean {
@@ -221,10 +240,14 @@ export class ScreenerService {
       candidate.rvolDays !== this.config.rvolDays ||
       candidate.rsiPeriod !== this.config.rsiPeriod;
     const venuesChanged = !sameVenues(candidate.venues, this.config.venues);
+    const volumesChanged =
+      candidate.minVolume !== this.config.minVolume ||
+      !sameVolumes(candidate.minVolumeByVenue, this.config.minVolumeByVenue);
     this.config = candidate;
 
-    if (venuesChanged) {
+    if (venuesChanged || volumesChanged) {
       this.pruneVenues();
+      this.pruneVolume();
       this.flushPatches();
     }
 
@@ -266,6 +289,25 @@ export class ScreenerService {
 
   private wants(venue: VenueId): boolean {
     return this.config.venues?.includes(venue) ?? true;
+  }
+
+  private volumeThreshold(venue: VenueId): number {
+    return this.config.minVolumeByVenue?.[venue] ?? this.config.minVolume;
+  }
+
+  /** Drop watched rows the venue's threshold no longer covers. */
+  private pruneVolume(): void {
+    for (const key of [...this.watched]) {
+      const row = this.rows.get(key);
+      if (!row) continue;
+      if ((row.quoteVolume ?? 0) >= this.volumeThreshold(row.instrument.venue)) continue;
+      this.watched.delete(key);
+      this.series.delete(key);
+      this.subscriptions.get(key)?.();
+      this.subscriptions.delete(key);
+      this.patches.delete(key);
+      this.removed.add(key);
+    }
   }
 
   private status(): ScreenerStatus {
@@ -566,7 +608,7 @@ export class ScreenerService {
       this.rows.set(instrument.key, next);
 
       if (
-        (ticker.quoteVolume ?? 0) >= this.config.minVolume &&
+        (ticker.quoteVolume ?? 0) >= this.volumeThreshold(venue) &&
         !this.watched.has(instrument.key)
       ) {
         this.activate(instrument, ticker);

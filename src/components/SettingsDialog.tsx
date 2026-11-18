@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Settings } from '../types';
+import type { Settings, VenueId } from '../types';
 import { clearAiConfig, saveAiConfig, type AiStatus } from '../lib/ai/model';
 import { AI_PROVIDERS, presetById, providerIdFor } from '../lib/ai/providers';
+import { VENUE_CATALOG } from '../venues/catalog';
+import { VenueIcon } from '../venues/venueIcons';
 import { Badge, Button, Input, Segmented, Select } from '../ui/primitives';
 import { Modal } from '../ui/overlays';
 
@@ -103,6 +105,15 @@ export function SettingsDialog({
   ]);
 
   const patch = (patch: Partial<Settings>) => setDraft((prev) => ({ ...prev, ...patch }));
+
+  /** An empty field removes the venue override and falls back to the default. */
+  const setVenueVolume = (venue: VenueId, raw: string) => {
+    const next = { ...(draft.minVolumeByVenue ?? {}) };
+    if (raw.trim() === '') delete next[venue];
+    else next[venue] = Math.max(0, Number(raw) || 0);
+    patch({ minVolumeByVenue: next });
+  };
+
   const aiFromEnv = aiStatus?.source === 'env';
   const aiDirty =
     aiBase.trim() !== (aiStatus?.baseUrl ?? '') ||
@@ -202,7 +213,7 @@ export function SettingsDialog({
 
       {tab === 'screener' ? (
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Watch threshold" hint="Min 24h quote volume per venue">
+        <Field label="Watch threshold" hint="Min 24h quote volume; venues below can override it">
           <Input
             type="number"
             min={0}
@@ -283,6 +294,31 @@ export function SettingsDialog({
             }
           />
         </Field>
+        <div className="sm:col-span-2">
+          <div className="text-[11px] font-medium text-foreground">Per-venue watch threshold</div>
+          <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+            Empty uses the default above. A venue's number replaces it for that venue only.
+          </p>
+          <div className="mt-2 grid gap-1">
+            {VENUE_CATALOG.map((venue) => (
+              <label key={venue.id} className="flex items-center gap-2">
+                <VenueIcon venue={venue.id} size={14} />
+                <span className="min-w-0 flex-1 truncate text-[12px] text-foreground">
+                  {venue.label}
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  step={100_000}
+                  placeholder={String(draft.minVolume)}
+                  value={draft.minVolumeByVenue?.[venue.id] ?? ''}
+                  onChange={(event) => setVenueVolume(venue.id, event.target.value)}
+                  className="h-6 w-32 text-right font-mono tabular-nums"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
       ) : (
       <div>

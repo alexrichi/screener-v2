@@ -362,8 +362,7 @@ describe('screener service', () => {
     let releaseBinance!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseBinance = resolve;
-    });
-    const binanceHub = {
+    });    const binanceHub = {
       getInstruments: async () => [instrument],
       getTickers: async () => {
         await gate;
@@ -416,6 +415,70 @@ describe('screener service', () => {
       'binance',
       'okx',
     ]);
+    service.stop();
+  });
+
+  it('applies a per-venue watch threshold', async () => {
+    const build = (venue: 'binance' | 'okx', nativeId: string, quoteVolume: number) => {
+      const item = makeInstrument({
+        venue,
+        kind: 'perp',
+        nativeId,
+        base: 'BTC',
+        quote: 'USDT',
+        velaSymbol: `${venue.toUpperCase()}:${nativeId}`,
+      });
+      const hub = {
+        getInstruments: async () => [item],
+        getTickers: async () => [
+          {
+            instrument: item,
+            last: 1,
+            change24h: 0,
+            quoteVolume,
+            funding: null,
+            nextFunding: null,
+          },
+        ],
+        getSeries: async () => bars(),
+      } as unknown as VenueHub;
+      return hub;
+    };
+    const service = new ScreenerService({
+      hubs: new Map<VenueId, VenueHub>([
+        ['binance', build('binance', 'BTCUSDT', 2_000_000)],
+        ['okx', build('okx', 'BTC-USDT-SWAP', 500_000)],
+      ]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000, minVolumeByVenue: { okx: 100_000 } },
+    });
+
+    await service.poll();
+    await settle();
+    // OKX clears its own lower threshold; Binance keeps the default.
+    expect(service.snapshot().rows.map((row) => row.instrument.venue).sort()).toEqual([
+      'binance',
+      'okx',
+    ]);
+
+    // Raising a venue threshold drops its watched row without waiting for a poll.
+    service.setConfig({ minVolumeByVenue: { okx: 1_000_000 } });
+    expect(service.snapshot().rows.map((row) => row.instrument.venue)).toEqual(['binance']);
+    service.stop();
+  });
+
+  it('rejects a per-venue threshold for an unknown venue', () => {
+    const { hub } = fakeHub();
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000 },
+    });
+    expect(() =>
+      service.setConfig({
+        minVolumeByVenue: { notAVenue: 5 } as unknown as Partial<Record<VenueId, number>>,
+      }),
+    ).toThrow(/unknown venue/);
     service.stop();
   });
 });

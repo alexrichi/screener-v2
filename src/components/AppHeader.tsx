@@ -7,7 +7,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings,
   Sun,
   X,
 } from 'lucide-react';
@@ -457,9 +456,6 @@ export function AppHeader({
           onClick={toggleTheme}
         >
           {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
-        </IconButton>
-        <IconButton label="Settings" onClick={onOpenSettings}>
-          <Settings className="size-3.5" />
         </IconButton>
       </div>
     </header>
