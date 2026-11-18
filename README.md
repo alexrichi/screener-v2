@@ -260,3 +260,10 @@ the same `build` string.
   poll per second per stream. If a venue socket stays silent, the sidecar falls
   back to the same REST polling until a bar arrives. The instrument picker lists
   every venue and opens the selected exchange's chart.
+
+## License
+
+The app code is MIT; see `LICENSE`. Third-party components keep their own
+licences: Vela is Apache-2.0, the Pine engine, editor, Monaco and the syntax
+highlighter are MIT, and scripts imported from the LuxAlgo Library keep their
+own header (usually CC BY-NC-SA 4.0).

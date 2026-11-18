@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Multi-venue crypto screener with Vela charts and Pine scans",
   "author": "Screener",
+  "license": "MIT",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
