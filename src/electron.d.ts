@@ -13,6 +13,8 @@ declare global {
       pickScript: () => Promise<
         { name: string; text: string } | { error: string } | null
       >;
+      /** Opens an allow-listed partner link in the system browser. */
+      openExternal: (url: string) => void;
       /** Packaged executable mtime as `YYYYMMDDHHMM` UTC; null in dev. */
       buildBuilt: string | null;
     };

@@ -513,6 +513,38 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   }
 }
 
+/* HashHedge partner button in the app title bar. */
+.screener-hashhedge {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.screener-hashhedge:hover {
+  background: var(--accent);
+}
+
+.screener-hashhedge:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.screener-hashhedge img {
+  display: block;
+  height: 16px;
+  width: auto;
+}
+
+html.light .screener-hashhedge-dark,
+html:not(.light) .screener-hashhedge-light {
+  display: none;
+}
+
 /* Monaco's hover and suggest popups need a shadow to separate them from the editor. */
 .monaco-resizable-hover,
 .suggest-widget,

@@ -15,6 +15,7 @@ import { symbolLabel } from '../lib/binance';
 import { formatClock, formatPrice, layoutLabel } from '../lib/format';
 import { BUILD_VERSION } from '../lib/buildVersion';
 import { openVelaPanel } from '../lib/velaPanels';
+import { openPartner } from '../lib/partner';
 import { VENUE_CATALOG, venueLabel } from '../venues/catalog';
 import { VenueIcon } from '../venues/venueIcons';
 import { useTheme } from '../ui/theme';
@@ -304,6 +305,26 @@ export function AppHeader({
               </Menu.Positioner>
             </Menu.Portal>
           </Menu.Root>
+          <button
+            type="button"
+            className="screener-hashhedge"
+            title={'Prove your edge.\nEarn your seat at the funded desk.'}
+            aria-label="HashHedge"
+            onClick={openPartner}
+          >
+            <img
+              src="/hashhedge-dark.png"
+              alt=""
+              draggable={false}
+              className="screener-hashhedge-dark"
+            />
+            <img
+              src="/hashhedge-light.png"
+              alt=""
+              draggable={false}
+              className="screener-hashhedge-light"
+            />
+          </button>
         </div>
 
       <div className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto overflow-y-hidden px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

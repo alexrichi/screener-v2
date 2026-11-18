@@ -16,5 +16,6 @@ contextBridge.exposeInMainWorld('screenerWindow', {
   close: () => ipcRenderer.send('screener:window', 'close'),
   quit: () => ipcRenderer.send('screener:window', 'quit'),
   pickScript: () => ipcRenderer.invoke('screener:pick-script'),
+  openExternal: (url) => ipcRenderer.send('screener:open-external', url),
   buildBuilt,
 });

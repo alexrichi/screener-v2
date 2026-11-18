@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain, screen, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -327,6 +327,18 @@ function registerWindowIpc() {
         break;
       default:
         break;
+    }
+  });
+
+  ipcMain.on('screener:open-external', (event, raw) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    try {
+      const url = new URL(String(raw));
+      const partner =
+        url.hostname === 'hashhedge.com' || url.hostname === 'www.hashhedge.com';
+      if (url.protocol === 'https:' && partner) void shell.openExternal(url.toString());
+    } catch {
+      // Malformed URL: nothing to open.
     }
   });
 }
