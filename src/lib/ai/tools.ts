@@ -1,6 +1,13 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { ChartContext, ScriptRunReport } from '../../types';
+import type {
+  DrawingApplyResult,
+  DrawingInfo,
+  DrawingPatch,
+  DrawingRequest,
+  DrawingToolInfo,
+} from './drawings';
 import { applyEdits } from './edits';
 import { outlineScript } from './scriptOutline';
 import type { AiScriptTarget } from './target';
@@ -49,6 +56,12 @@ export interface AiToolRuntime {
   runScript: (source: string, options?: { bar?: number }) => Promise<ScriptRunReport>;
   /** Apply the editor buffer to the active chart in place, keeping its settings. */
   applyLive: () => Promise<LiveApplyResult>;
+  drawingTools: () => DrawingToolInfo[];
+  listDrawings: () => DrawingInfo[];
+  drawOnChart: (requests: DrawingRequest[]) => DrawingApplyResult;
+  updateDrawing: (id: string, patch: DrawingPatch) => { ok: boolean; error?: string };
+  removeDrawing: (id: string) => { ok: boolean };
+  clearDrawings: () => { removed: number };
 }
 
 /**
@@ -213,6 +226,128 @@ export function createAppTools(runtime: AiToolRuntime) {
         'Apply the editor buffer to the active chart in place: same indicator, same legend row, same input and prop values, new code. Call this after edit_code to verify the fix on the real chart; on failure the previous code keeps running and the error is returned.',
       inputSchema: z.object({}),
       execute: async () => runtime.applyLive(),
+    }),
+
+    list_drawing_tools: tool({
+      description:
+        'List every native drawing type the chart can place, with the anchor count it needs. Call this before draw_on_chart: types differ (hline and vline take 1 point, trendline and box 2, channels 3, harmonic patterns 5-7).',
+      inputSchema: z.object({}),
+      execute: async () => {
+        const tools = runtime.drawingTools();
+        return { count: tools.length, tools };
+      },
+    }),
+
+    list_drawings: tool({
+      description:
+        'List the native user drawings already on the active chart, with their ids, types, anchors and text. Call this before updating, removing or adding drawings that could duplicate one.',
+      inputSchema: z.object({}),
+      execute: async () => {
+        const context = runtime.chartContext();
+        const drawings = runtime.listDrawings();
+        return {
+          symbol: context?.symbol ?? null,
+          timeframe: context?.timeframe ?? null,
+          count: drawings.length,
+          drawings,
+        };
+      },
+    }),
+
+    draw_on_chart: tool({
+      description:
+        'Place native drawings on the active chart (trend lines, horizontal lines, boxes, fibs, patterns, annotations - every type list_drawing_tools reports). Anchors are { time: epoch milliseconds, price }; get the visible window from get_chart_context first. Use only when the user asks to draw or mark something. It never changes or removes existing drawings; the result returns the created ids and per-item errors.',
+      inputSchema: z.object({
+        drawings: z
+          .array(
+            z.object({
+              type: z.string().describe('A drawing type from list_drawing_tools.'),
+              points: z
+                .array(
+                  z.object({
+                    time: z.number().finite().describe('Anchor time in epoch milliseconds (UTC).'),
+                    price: z.number().finite().describe('Anchor price.'),
+                  }),
+                )
+                .min(1)
+                .max(12)
+                .describe('Anchors in the order the type expects.'),
+              text: z.string().max(300).optional().describe('Label text, when the type shows one.'),
+              style: z
+                .object({
+                  lineColor: z.string().optional(),
+                  lineWidth: z.number().min(1).max(8).optional(),
+                  lineStyle: z.string().optional().describe('solid, dashed or dotted.'),
+                  fillColor: z.string().optional(),
+                  fillOpacity: z.number().min(0).max(1).optional(),
+                  arrowLeft: z.boolean().optional(),
+                  arrowRight: z.boolean().optional(),
+                  extendLeft: z.boolean().optional(),
+                  extendRight: z.boolean().optional(),
+                })
+                .optional(),
+              props: z
+                .record(z.string(), z.unknown())
+                .optional()
+                .describe('Per-type extras, for example fib levels.'),
+            }),
+          )
+          .min(1)
+          .max(20),
+      }),
+      execute: async ({ drawings }) => runtime.drawOnChart(drawings as DrawingRequest[]),
+    }),
+
+    update_drawing: tool({
+      description:
+        'Move, restyle or relabel one existing native drawing by id. Read ids with list_drawings. Omitted fields keep their current values; points replace the whole anchor list and must satisfy the type anchor count.',
+      inputSchema: z.object({
+        id: z.string().describe('Drawing id from list_drawings.'),
+        points: z
+          .array(z.object({ time: z.number().finite(), price: z.number().finite() }))
+          .min(1)
+          .max(12)
+          .optional(),
+        text: z.string().max(300).optional(),
+        style: z
+          .object({
+            lineColor: z.string().optional(),
+            lineWidth: z.number().min(1).max(8).optional(),
+            lineStyle: z.string().optional(),
+            fillColor: z.string().optional(),
+            fillOpacity: z.number().min(0).max(1).optional(),
+            arrowLeft: z.boolean().optional(),
+            arrowRight: z.boolean().optional(),
+            extendLeft: z.boolean().optional(),
+            extendRight: z.boolean().optional(),
+          })
+          .optional(),
+        props: z.record(z.string(), z.unknown()).optional(),
+      }),
+      execute: async ({ id, points, text, style, props }) => {
+        const patch: DrawingPatch = {};
+        if (points) patch.points = points;
+        if (text !== undefined) patch.text = text;
+        if (style) patch.style = style;
+        if (props) patch.props = props;
+        return runtime.updateDrawing(id, patch);
+      },
+    }),
+
+    remove_drawing: tool({
+      description:
+        'Remove one native drawing by id. Only when the user explicitly asks to delete it; the removal is a chart undo step.',
+      inputSchema: z.object({
+        id: z.string().describe('Drawing id from list_drawings.'),
+      }),
+      execute: async ({ id }) => runtime.removeDrawing(id),
+    }),
+
+    clear_drawings: tool({
+      description:
+        'Remove every native user drawing on the active chart as one undo step. Destructive: only when the user explicitly asks to clear the chart.',
+      inputSchema: z.object({}),
+      execute: async () => runtime.clearDrawings(),
     }),
   };
 }

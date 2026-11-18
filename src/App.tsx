@@ -2057,8 +2057,15 @@ export default function App() {
   );
 
   const aiTools = useMemo(
-    () =>
-      createAppTools({
+    () => {
+      // Drawings go to the script target's chart when one is bound, else the
+      // active workspace, matching what get_chart_context reports.
+      const drawingHandle = () => {
+        const target = aiTargetRef.current;
+        const handle = target ? handlesRef.current.get(target.workspaceTabId) : null;
+        return handle ?? activeWorkspace();
+      };
+      return createAppTools({
         target: () => ensureAiTarget(),
         getScript: () => scriptForTarget(ensureAiTarget()),
         newScript,
@@ -2108,7 +2115,22 @@ export default function App() {
           }
           return { ok: true, charts: report.count };
         },
-      }),
+        drawingTools: () => drawingHandle()?.drawingTools() ?? [],
+        listDrawings: () => drawingHandle()?.listDrawings() ?? [],
+        drawOnChart: (requests) =>
+          drawingHandle()?.drawOnChart(requests) ?? {
+            created: [],
+            errors: ['No chart is open'],
+          },
+        updateDrawing: (id, patch) =>
+          drawingHandle()?.updateDrawing(id, patch) ?? {
+            ok: false,
+            error: 'No chart is open',
+          },
+        removeDrawing: (id) => drawingHandle()?.removeDrawing(id) ?? { ok: false },
+        clearDrawings: () => drawingHandle()?.clearDrawings() ?? { removed: 0 },
+      });
+    },
     [
       activeWorkspace,
       applyScriptToChart,
@@ -2139,6 +2161,7 @@ export default function App() {
       'Do not paste raw tool JSON into an answer: summarize the result in one or two sentences.',
       'Do not claim a script works unless apply_live or run_script returned ok on the live chart. Retry at most three times.',
       'apply_script replaces the whole editor buffer only; it never applies or runs the script on the chart. For a new script use new_script instead, so an unsaved draft is not overwritten.',
+      'Native drawings: list_drawing_tools reports every drawing type the chart can place with its anchor count, and list_drawings shows what is already there. Use draw_on_chart only when the user asks to draw or mark something; anchors are { time: epoch ms, price } and the visible window comes from get_chart_context. update_drawing and remove_drawing take ids from list_drawings; clear_drawings wipes every drawing, so use it only on an explicit request.',
       'When you edit, change only the lines you need and keep the original licence header and comments.',
       'Never invent prices, indicator values or log lines: call a tool or say what you do not know.',
       'Reply in the language the user writes in. Keep answers short and concrete.',

@@ -1,14 +1,26 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { emptyRunSummary } from '../src/lib/ai/debugResult';
+import type { DrawingRequest } from '../src/lib/ai/drawings';
 import { createAppTools } from '../src/lib/ai/tools';
 
 const meta = { symbol: 'BINANCE:BTCUSDT.P', timeframe: '15', bars: 3, maxBarsBack: null };
+
+/** Runtimes that do not exercise drawings still need the drawing seam. */
+const drawingStubs = {
+  drawingTools: () => [],
+  listDrawings: () => [],
+  drawOnChart: () => ({ created: [], errors: [] }),
+  updateDrawing: () => ({ ok: false, error: 'no chart' }),
+  removeDrawing: () => ({ ok: false }),
+  clearDrawings: () => ({ removed: 0 }),
+};
 
 describe('AI tools', () => {
   it('passes the requested debug bar to the worker run', async () => {
     const seen: Array<{ source: string; bar?: number }> = [];
     const summary = emptyRunSummary(meta);
     const tools = createAppTools({
+      ...drawingStubs,
       target: () => ({
         pineTabId: 'tab',
         savedId: '',
@@ -39,6 +51,7 @@ f(
     a + b
 plot(f(1, 2))`;
     const tools = createAppTools({
+      ...drawingStubs,
       target: () => ({
         pineTabId: 'tab',
         savedId: '',
@@ -85,6 +98,7 @@ plot(f(1, 2))`;
   it('forwards the new-script draft decision', async () => {
     const calls: Array<{ source: string; title?: string; conflict?: string }> = [];
     const tools = createAppTools({
+      ...drawingStubs,
       target: () => ({
         pineTabId: 'tab',
         savedId: '',
@@ -126,4 +140,46 @@ plot(f(1, 2))`;
     expect(calls).toHaveLength(2);
     expect(calls[1].conflict).toBe('save');
   });
+
+  it('forwards native drawing requests', async () => {
+    const seen: DrawingRequest[][] = [];
+    const tools = createAppTools({
+      ...drawingStubs,
+      target: () => ({ pineTabId: 'tab', savedId: '', name: 'Draft', workspaceTabId: 'ws' }),
+      getScript: () => '',
+      applyScript: () => {},
+      newScript: () => ({ created: true }),
+      chartContext: () => null,
+      runScript: async () => {
+        const summary = emptyRunSummary(meta);
+        return { ok: true, live: summary, worker: summary };
+      },
+      applyLive: async () => ({ ok: true, charts: 1 }),
+      drawOnChart: (requests) => {
+        seen.push(requests);
+        return { created: ['draw-1'], errors: [] };
+      },
+    });
+
+    const result = await tools.draw_on_chart.execute!(
+      {
+        drawings: [
+          {
+            type: 'trendline',
+            points: [
+              { time: 1_700_000_000_000, price: 64_000 },
+              { time: 1_700_003_600_000, price: 65_000 },
+            ],
+            text: 'resistance',
+          },
+        ],
+      },
+      {} as never,
+    );
+    expect(result).toEqual({ created: ['draw-1'], errors: [] });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.[0]).toMatchObject({ type: 'trendline', text: 'resistance' });
+    expect(seen[0]?.[0]?.points).toHaveLength(2);
+  });
 });
+

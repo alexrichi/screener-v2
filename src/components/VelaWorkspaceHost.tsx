@@ -6,8 +6,30 @@ import {
 } from 'react';
 import { sanitizeState, VelaWorkspace } from '@luxalgo/vela/workspace';
 import type { ChartCell, WorkspaceStorage } from '@luxalgo/vela/workspace';
+import type {
+  DrawingPoint,
+  DrawingStyle,
+  DrawingText,
+  DrawingTypeKey,
+  SerializedDrawing,
+} from '@luxalgo/vela';
 import type { ScriptRun } from '@luxalgo/vela/plugin';
-import { registerIcon, registerLegendAction, registerSymbolRanking } from '@luxalgo/vela/plugin';
+import {
+  drawingTypes,
+  getDrawingType,
+  registerIcon,
+  registerLegendAction,
+  registerSymbolRanking,
+} from '@luxalgo/vela/plugin';
+import type {
+  DrawingApplyResult,
+  DrawingInfo,
+  DrawingPatch,
+  DrawingPointInput,
+  DrawingRequest,
+  DrawingToolInfo,
+} from '../lib/ai/drawings';
+import { validateDrawingRequest } from '../lib/ai/drawings';
 import { PineEngine } from '../lib/pineVela/engine';
 import type {
   ChartContext,
@@ -74,6 +96,14 @@ export interface VelaWorkspaceHandle {
   screenshot: () => string | null;
   /** Run a script on the active chart once and report the run; nothing stays on the chart. */
   runScript: (source: string) => Promise<ScriptRunSummary>;
+  /** Every drawing type the chart can place, with its anchor schema. */
+  drawingTools: () => DrawingToolInfo[];
+  /** Native user drawings on the active cell. */
+  listDrawings: () => DrawingInfo[];
+  drawOnChart: (requests: DrawingRequest[]) => DrawingApplyResult;
+  updateDrawing: (id: string, patch: DrawingPatch) => { ok: boolean; error?: string };
+  removeDrawing: (id: string) => { ok: boolean };
+  clearDrawings: () => { removed: number };
   workspace: () => VelaWorkspace | null;
 }
 
@@ -110,6 +140,33 @@ const askAiHandlers = new Map<string, (source: string, savedId: string) => void>
 
 function legendTabId(ctx: { host: HTMLElement }): string {
   return ctx.host.closest('[data-tab-id]')?.getAttribute('data-tab-id') ?? '';
+}
+
+/** Vela's anchor schema for a drawing type: how many points it needs and their roles. */
+function drawingSchema(type: string): { min: number; max: number; slots: string[] } | null {
+  const meta = getDrawingType(type);
+  if (!meta) return null;
+  const schema = meta.create({ paneId: 'probe', anchors: [] }).anchorSchema();
+  return { min: schema.min, max: schema.max, slots: schema.slots.map((slot) => slot.role) };
+}
+
+function drawingTextOf(value: string): DrawingText {
+  return { value, size: 'normal', hAlign: 'center', vAlign: 'center' };
+}
+
+function drawingAnchors(points: readonly DrawingPointInput[]): DrawingPoint[] {
+  return points.map((point) => ({ time: point.time, price: point.price }));
+}
+
+function drawingInfoOf(drawing: SerializedDrawing): DrawingInfo {
+  return {
+    id: drawing.id,
+    type: drawing.type,
+    anchors: drawingAnchors(drawing.anchors),
+    text: drawing.text?.value ?? null,
+    locked: drawing.locked,
+    visible: drawing.visible,
+  };
 }
 
 registerIcon(
@@ -1149,7 +1206,96 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             cells: ws.cells().length,
             bars: chartBarCount(cell.chart),
             visible: range ? { from: range.from, to: range.to } : null,
+            drawings: cell.chart.drawings
+              .all()
+              .slice(-20)
+              .map((drawing) => ({
+                id: drawing.id,
+                type: drawing.type,
+                text: drawing.text?.value ?? null,
+              })),
           };
+        },
+        drawingTools() {
+          return drawingTypes().map((meta) => {
+            const schema = drawingSchema(meta.type);
+            return {
+              type: meta.type,
+              group: meta.group,
+              label: meta.label,
+              min: schema?.min ?? 0,
+              max: schema?.max ?? 0,
+              slots: schema?.slots ?? [],
+            };
+          });
+        },
+        listDrawings() {
+          const cell = wsRef.current?.active;
+          return (cell?.chart.drawings.all() ?? []).map(drawingInfoOf);
+        },
+        drawOnChart(requests: DrawingRequest[]): DrawingApplyResult {
+          const cell = wsRef.current?.active;
+          if (!cell) return { created: [], errors: ['No chart is open'] };
+          const created: string[] = [];
+          const errors: string[] = [];
+          for (const request of requests) {
+            const error = validateDrawingRequest(request, drawingSchema(request.type));
+            if (error) {
+              errors.push(error);
+              continue;
+            }
+            const drawing = cell.chart.drawings.add(request.type as DrawingTypeKey, {
+              anchors: drawingAnchors(request.points),
+              ...(request.text ? { text: drawingTextOf(request.text) } : {}),
+              ...(request.style
+                ? { style: request.style as Partial<DrawingStyle> }
+                : {}),
+              ...(request.props ? { props: request.props } : {}),
+            });
+            if (drawing) created.push(drawing.id);
+            else errors.push(`The chart rejected ${request.type}`);
+          }
+          return { created, errors };
+        },
+        updateDrawing(id: string, patch: DrawingPatch) {
+          const cell = wsRef.current?.active;
+          if (!cell) return { ok: false, error: 'No chart is open' };
+          const current = cell.chart.drawings.all().find((drawing) => drawing.id === id);
+          if (!current) return { ok: false, error: `No drawing "${id}"` };
+          const next: Partial<SerializedDrawing> = {};
+          if (patch.points) {
+            const error = validateDrawingRequest(
+              { type: current.type, points: patch.points },
+              drawingSchema(current.type),
+            );
+            if (error) return { ok: false, error };
+            next.anchors = drawingAnchors(patch.points);
+          }
+          if (patch.text !== undefined) next.text = drawingTextOf(patch.text);
+          if (patch.style) {
+            next.style = { ...current.style, ...(patch.style as Partial<DrawingStyle>) };
+          }
+          if (patch.props) next.props = { ...current.props, ...patch.props };
+          if (Object.keys(next).length === 0) return { ok: false, error: 'Nothing to update' };
+          cell.chart.drawings.update(id, next);
+          return { ok: true };
+        },
+        removeDrawing(id: string) {
+          const cell = wsRef.current?.active;
+          if (!cell) return { ok: false };
+          if (!cell.chart.drawings.all().some((drawing) => drawing.id === id)) {
+            return { ok: false };
+          }
+          cell.chart.drawings.remove(id);
+          return { ok: true };
+        },
+        clearDrawings() {
+          const cell = wsRef.current?.active;
+          if (!cell) return { removed: 0 };
+          const ids = cell.chart.drawings.all().map((drawing) => drawing.id);
+          if (ids.length === 0) return { removed: 0 };
+          cell.chart.drawings.removeMany(ids);
+          return { removed: ids.length };
         },
         screenshot() {
           return wsRef.current?.active.chart.renderer.screenshot() ?? null;

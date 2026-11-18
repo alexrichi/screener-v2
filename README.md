@@ -208,7 +208,9 @@ the same `build` string.
   text files and dictation. The assistant reads the script, rewrites the editor
   buffer, runs a debug pass on the active chart (errors, warnings, plot values,
   vars) and receives the chart as an image when `Chart` is on. It reads charts,
-  writes Pine scripts and debugs them on the active chart. It
+  writes Pine scripts, debugs them on the active chart, and can draw the chart's
+  native drawings (every Vela type, from trend lines to harmonic patterns) with
+  `draw_on_chart`, list, move, restyle or delete them. It
   works against any OpenAI-compatible model; the key stays in the sidecar.
 - Scanner runs the same script over closed candles in a Web Worker and adds the
   last plot values as table columns. It walks the checked venues sequentially;

@@ -393,7 +393,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   chart; the sidecar only proxies the model call with `AI_BASE_URL`, `AI_MODEL`,
   `AI_TRANSCRIBE_MODEL` and `AI_API_KEY`. Tools are `get_chart_context`,
   `get_script`, `read_lines`, `edit_code`, `new_script`, `apply_script`,
-  `run_script` and `apply_live`. Attached text files are
+  `run_script`, `apply_live`, `list_drawing_tools`, `list_drawings`,
+  `draw_on_chart`, `update_drawing`, `remove_drawing` and `clear_drawings`.
+  Attached text files are
   folded into the prompt; images ride as image parts of the user message.
 - The table view is global (`screener.view`), not per workspace tab.
   `settings.defaultLayout` applies to new tabs; existing tabs keep their own layout.
@@ -543,6 +545,19 @@ return an error instead of writing into another tab. The legend row's
 `screener-ask-ai` action (sparkles, before Source code) resolves the script from
 the clicked indicator and opens the sidebar with that target; native indicators
 have no source and no action.
+
+**The AI draws through Vela's drawing control.** `VelaWorkspaceHost` exposes
+`drawingTools`, `listDrawings`, `drawOnChart`, `updateDrawing`, `removeDrawing`
+and `clearDrawings` on `VelaWorkspaceHandle`; all of them call
+`cell.chart.drawings`, never renderer internals. `drawingTools()` reads Vela's
+registry, so every registered type (79 today) is available without a second list
+in the app, and each type's anchor count comes from its `anchorSchema()`.
+`drawOnChart` validates the type and anchors before adding; `updateDrawing`
+merges style/props into the existing record; `removeDrawing` and `clearDrawings`
+run as chart undo steps (`removeMany` for a clear). `chartContext().drawings`
+lists the newest 20 so the model sees what is already on the chart. The drawing
+tools target the script target's workspace when one is bound, else the active
+workspace.
 
 **The AI sidebar is renderer-side and keyless.** `lib/ai/model.ts` points an
 OpenAI-compatible provider at `<sidecar>/ai/v1`; `sidecar/ai.ts` swaps in the real

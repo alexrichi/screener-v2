@@ -134,6 +134,8 @@ export interface ChartContext {
   bars: number;
   /** Visible window in epoch milliseconds, when the chart has painted. */
   visible: { from: number; to: number } | null;
+  /** Native drawings on the active chart, newest last. */
+  drawings?: Array<{ id: string; type: string; text: string | null }>;
 }
 
 /** One debug evaluation of a Pine script, on the live chart or in the debug worker. */
