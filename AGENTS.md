@@ -1163,10 +1163,11 @@ when a user-visible feature or command changes.
 
 `DEVELOPMENT.md` covers the local browser and Electron modes, the manual release
 checklist, and update behavior. Keep its commands in sync with `package.json`.
+`CHANGELOG.md` records released versions; add an entry for every release.
 
 This file is the agent guide. Update it when architecture, invariants, the gate, or
-the intended scope changes. There is no `docs/` tree or `CHANGELOG.md` yet; do not
-invent one unless the user asks.
+the intended scope changes. There is no `docs/` tree; do not invent one unless the
+user asks.
 
 ### Vela documentation
 

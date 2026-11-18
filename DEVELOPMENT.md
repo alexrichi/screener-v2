@@ -83,11 +83,11 @@ The script passes `--publish never`; nothing is uploaded.
 
 ## Release checklist
 
-1. Bump the version and commit:
+1. Bump the version, add the changelog entry, and commit:
 
    ```powershell
    npm version patch --no-git-tag-version
-   git add package.json package-lock.json
+   git add package.json package-lock.json CHANGELOG.md
    git commit -m "Bump version to X.Y.Z"
    ```
 
@@ -143,9 +143,9 @@ The script passes `--publish never`; nothing is uploaded.
   the installed one.
 - `latest.yml` must be on the latest release and its `path` and `sha512` must
   match the uploaded installer.
-- The download happens in the background. The app asks before restarting because
-  scan results and alerts are session-only. If the user chooses later, the update
-  installs on quit.
+- The download happens in the background. A title bar button appears when it is
+  ready; clicking it asks before restarting because scan results and alerts are
+  session-only. If the user chooses later, the update installs on quit.
 - The repository is public, so releases are read anonymously. Making it private
   would break updates for existing installs.
 - Builds are unsigned: SmartScreen may warn. `publisherName` must stay unset

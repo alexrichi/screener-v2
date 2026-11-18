@@ -17,5 +17,11 @@ contextBridge.exposeInMainWorld('screenerWindow', {
   quit: () => ipcRenderer.send('screener:window', 'quit'),
   pickScript: () => ipcRenderer.invoke('screener:pick-script'),
   openExternal: (url) => ipcRenderer.send('screener:open-external', url),
+  getUpdateStatus: () => ipcRenderer.invoke('screener:get-update-status'),
+  onUpdateStatus: (callback) => {
+    ipcRenderer.removeAllListeners('screener:update-status');
+    ipcRenderer.on('screener:update-status', (_event, status) => callback(status));
+  },
+  installUpdate: () => ipcRenderer.send('screener:install-update'),
   buildBuilt,
 });

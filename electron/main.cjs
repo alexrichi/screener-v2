@@ -23,6 +23,15 @@ let ownsSidecar = false;
 let staticServer = null;
 let mainWindow = null;
 let sidecarStderr = '';
+let updateStatus = { state: 'idle' };
+let installUpdate = null;
+
+function publishUpdateStatus(status) {
+  updateStatus = status;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('screener:update-status', status);
+  }
+}
 
 /** `YYYYMMDDHHMM` in UTC, the same stamp screener-1 prints. */
 function buildMinute(date) {
@@ -341,6 +350,13 @@ function registerWindowIpc() {
       // Malformed URL: nothing to open.
     }
   });
+
+  ipcMain.handle('screener:get-update-status', () => updateStatus);
+
+  ipcMain.on('screener:install-update', (event) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    if (installUpdate) void installUpdate();
+  });
 }
 
 async function createWindow() {
@@ -451,8 +467,9 @@ if (!gotLock) {
     await createWindow();
     if (app.isPackaged) {
       try {
-        const { initUpdater } = require('./updater.cjs');
-        initUpdater(mainWindow);
+        const updater = require('./updater.cjs');
+        installUpdate = () => updater.installUpdate(mainWindow);
+        updater.initUpdater(mainWindow, publishUpdateStatus);
       } catch (error) {
         console.error('[updater] failed to load:', error);
       }

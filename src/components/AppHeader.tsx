@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Menu, Popover } from '@base-ui/react';
 import {
   ChevronRight,
+  Download,
   Menu as MenuIcon,
   Moon,
   Plus,
@@ -68,6 +69,7 @@ export function AppHeader({
   const { theme, toggleTheme } = useTheme();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [updateReady, setUpdateReady] = useState<ScreenerUpdateStatus | null>(null);
   const [query, setQuery] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -77,6 +79,19 @@ export function AppHeader({
   useEffect(() => {
     windowApi?.setTitleBarTheme(theme);
   }, [theme, windowApi]);
+
+  useEffect(() => {
+    if (!windowApi?.getUpdateStatus || !windowApi.onUpdateStatus) return;
+    let active = true;
+    const apply = (status: ScreenerUpdateStatus) => {
+      if (active) setUpdateReady(status.state === 'downloaded' ? status : null);
+    };
+    void windowApi.getUpdateStatus().then(apply).catch(() => {});
+    windowApi.onUpdateStatus(apply);
+    return () => {
+      active = false;
+    };
+  }, [windowApi]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -460,6 +475,22 @@ export function AppHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1 border-l border-border px-2">
+        {updateReady ? (
+          <button
+            type="button"
+            title={
+              updateReady.version
+                ? `Restart to install Screener ${updateReady.version}`
+                : 'Restart to install the update'
+            }
+            aria-label={updateReady.version ? `Update Screener ${updateReady.version}` : 'Update Screener'}
+            onClick={() => windowApi?.installUpdate()}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
+          >
+            <Download className="size-3.5" />
+            <span>{updateReady.version ? `Update ${updateReady.version}` : 'Update ready'}</span>
+          </button>
+        ) : null}
         <span
           className={cn('size-1.5 rounded-full', statusTone)}
           title={error ?? (loading ? 'Refreshing' : 'Connected')}

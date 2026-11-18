@@ -272,7 +272,7 @@ The installed app checks the public GitHub releases after startup and every four
 hours. It downloads in the background and asks before restarting; scan results
 and alerts are session-only. Build the installer with `npm run electron:dist`
 and attach the `.exe`, `.blockmap` and `latest.yml` to a published GitHub
-release.
+release. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 
