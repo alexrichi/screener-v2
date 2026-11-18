@@ -4,6 +4,8 @@ A multi-venue crypto screener (Binance, OKX, Bybit, Bitget, Hyperliquid,
 Coinbase) with Vela charts and a Pine Script scanner. The UI is a Vite + React +
 TypeScript app; there is no private backend and no API key.
 
+![Screener workspace with Vela charts and the multi-venue table](assets/screener.png)
+
 ## Stack
 
 - Vite 8, React 19, TypeScript, Tailwind CSS v4
