@@ -3,7 +3,7 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
-## Unreleased
+## 0.1.6 — 2026-11-19
 
 - Coin icons no longer come from a ticker-keyed logo CDN. Its logo id is not the
   ticker, so HYPE, ARB, SPX and PENGU showed another asset's mark. The sidecar
