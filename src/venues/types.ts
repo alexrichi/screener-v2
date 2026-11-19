@@ -95,6 +95,9 @@ export interface VenueAdapter {
     onBar: (bar: VenueBar) => void,
   ): Unsubscribe;
 
+  /** Stop a venue-wide auxiliary socket (OKX funding) when the screener drops it. */
+  stopFunding?(): void;
+
   /** Sidecar-only: the browser never receives venue credentials. */
   trading?: TradingPort;
 }

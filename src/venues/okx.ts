@@ -251,6 +251,20 @@ export class OkxVenueAdapter implements VenueAdapter {
     this.connectFunding(instruments);
   }
 
+  /** Stop the venue-wide funding socket; the next ticker fetch reconnects it. */
+  stopFunding(): void {
+    this.fundingStarted = false;
+    if (this.fundingRetry) {
+      clearTimeout(this.fundingRetry);
+      this.fundingRetry = null;
+    }
+    this.clearFundingPing();
+    const socket = this.fundingSocket;
+    this.fundingSocket = null;
+    socket?.close();
+    this.funding.clear();
+  }
+
   private connectFunding(instruments: Instrument[]): void {
     if (this.fundingSocket || !this.fundingStarted) return;
     const socket = new WebSocket(OKX_FUNDING_WS);

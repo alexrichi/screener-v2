@@ -252,6 +252,107 @@ describe('screener service', () => {
     service.stop();
   });
 
+  it('does not bring back a venue unchecked during its ticker poll', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seriesCalls: string[] = [];
+    const hub = {
+      getTickers: async () => {
+        await gate;
+        return [ticker(2_000_000)];
+      },
+      getSeries: async (item: Instrument) => {
+        seriesCalls.push(item.key);
+        return bars();
+      },
+    } as unknown as VenueHub;
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000, venues: ['binance'] },
+    });
+    const polling = service.poll();
+    service.setConfig({ venues: [] });
+    release();
+    await polling;
+    await settle();
+    expect(service.snapshot().rows).toEqual([]);
+    expect(seriesCalls).toEqual([]);
+    service.stop();
+  });
+
+  it('drops queued warm work when its venue is unchecked', async () => {
+    const items = Array.from({ length: 5 }, (_, index) =>
+      makeInstrument({
+        venue: 'binance',
+        kind: 'perp',
+        nativeId: `T${index}USDT`,
+        base: `T${index}`,
+        quote: 'USDT',
+        velaSymbol: `BINANCE:T${index}USDT.P`,
+      }),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let seriesCalls = 0;
+    const hub = {
+      getTickers: async () =>
+        items.map((item) => ({
+          instrument: item,
+          last: 1,
+          change24h: 0,
+          quoteVolume: 2_000_000,
+          funding: null,
+          nextFunding: null,
+        })),
+      getSeries: async () => {
+        seriesCalls += 1;
+        await gate;
+        return bars();
+      },
+    } as unknown as VenueHub;
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000, venues: ['binance'] },
+    });
+    await service.poll();
+    expect(seriesCalls).toBe(4);
+    service.setConfig({ venues: [] });
+    release();
+    await settle();
+    await settle();
+    expect(seriesCalls).toBe(4);
+    service.stop();
+  });
+
+  it('stops the venue funding socket when the venue is unchecked', async () => {
+    let stops = 0;
+    const hub = {
+      getTickers: async () => [ticker(2_000_000)],
+      getSeries: async () => bars(),
+      stopFunding: () => {
+        stops += 1;
+      },
+    } as unknown as VenueHub;
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map(),
+      config: { minVolume: 1_000_000, venues: ['binance'] },
+    });
+    await service.poll();
+    await settle();
+    service.setConfig({ venues: [] });
+    expect(stops).toBe(1);
+    service.setConfig({ venues: ['binance'] });
+    expect(stops).toBe(1);
+    service.stop();
+  });
+
   it('updates a row from a streamed bar', async () => {
     // Session metrics are empty for the first bars after UTC midnight, so pin
     // the clock to noon to keep this independent of when the suite runs.

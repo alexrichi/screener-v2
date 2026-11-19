@@ -51,7 +51,7 @@ describe('icon resolver', () => {
     const stub = stubFetch(() => new Response('png', { status: 200 }));
     try {
       await resolveIcon('1000PEPE');
-      expect(stub.calls[0]).toContain('XTVCPEPE');
+      expect(stub.calls[0]).toBe('https://crypto-icons.ledger.com/PEPE.png');
     } finally {
       stub.restore();
     }

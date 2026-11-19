@@ -1,18 +1,19 @@
 /**
- * Public logo CDNs, tried in order. The symbol-logo S3 CDN covers most crypto,
- * OKX adds tokenized stocks and newer listings, Binance and CoinCap fill their
- * own gaps, and FMP carries stock/ETF logos for the tokenized equities some
- * venues list. Ledger is the long-standing crypto fallback.
+ * Public logo CDNs, tried in order. Ledger is the same crypto set Vela's bundled
+ * providers resolve, so the chart and the table agree. OKX adds tokenized stocks
+ * and newer listings, Binance and CoinCap fill their own gaps, and FMP carries
+ * stock/ETF logos for the tokenized equities some venues list. Do not add a
+ * ticker-to-URL source that needs an internal asset id: such a source returned
+ * another asset for HYPE, ARB, SPX and PENGU.
  */
 import { coinIconCode } from '../src/lib/coinIcon';
 
 const SOURCES: ReadonlyArray<(code: string) => string> = [
-  (code) => `https://s3-symbol-logo.tradingview.com/crypto/XTVC${code}--big.svg`,
+  (code) => `https://crypto-icons.ledger.com/${code}.png`,
   (code) => `https://www.okx.com/cdn/oksupport/asset/currency/icon/${code.toLowerCase()}.png`,
   (code) => `https://bin.bnbstatic.com/static/assets/logos/${code}.png`,
   (code) => `https://assets.coincap.io/assets/icons/${code.toLowerCase()}@2x.png`,
   (code) => `https://financialmodelingprep.com/image-stock/${code}.png`,
-  (code) => `https://crypto-icons.ledger.com/${code}.png`,
 ];
 
 const CACHE_MAX = 600;

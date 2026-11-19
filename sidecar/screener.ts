@@ -243,7 +243,19 @@ export class ScreenerService {
     const volumesChanged =
       candidate.minVolume !== this.config.minVolume ||
       !sameVolumes(candidate.minVolumeByVenue, this.config.minVolumeByVenue);
+    const previousVenues = this.config.venues ?? [...this.hubs.keys()];
+    const nextVenues = candidate.venues ?? [...this.hubs.keys()];
     this.config = candidate;
+
+    if (venuesChanged) {
+      const enabled = new Set(nextVenues);
+      for (const venue of previousVenues) {
+        if (enabled.has(venue)) continue;
+        this.warmQueues.delete(venue);
+        this.refreshQueues.delete(venue);
+        this.hubs.get(venue)?.stopFunding?.();
+      }
+    }
 
     if (venuesChanged || volumesChanged) {
       this.pruneVenues();
@@ -386,7 +398,7 @@ export class ScreenerService {
   }
 
   private enqueueWarm(instrument: Instrument): void {
-    if (!this.watched.has(instrument.key)) return;
+    if (!this.wants(instrument.venue) || !this.watched.has(instrument.key)) return;
     const queue = this.warmQueues.get(instrument.venue) ?? [];
     if (queue.some((item) => item.key === instrument.key)) return;
     queue.push(instrument);
@@ -395,6 +407,10 @@ export class ScreenerService {
   }
 
   private pumpWarm(venue: VenueId): void {
+    if (!this.wants(venue)) {
+      this.warmQueues.delete(venue);
+      return;
+    }
     const queue = this.warmQueues.get(venue);
     if (!queue) return;
     while ((this.warmActive.get(venue) ?? 0) < WARMUP_CONCURRENCY && queue.length > 0) {
@@ -412,6 +428,7 @@ export class ScreenerService {
         })
         .then((bars) => {
           if (generation !== this.warmGeneration) return;
+          if (!this.wants(instrument.venue) || !this.watched.has(instrument.key)) return;
           this.series.set(instrument.key, { bars: bars.map(metricBar), at: Date.now() });
           const row = this.rows.get(instrument.key);
           if (!row) return;
@@ -420,6 +437,7 @@ export class ScreenerService {
           this.patches.set(instrument.key, next);
         })
         .catch((error) => {
+          if (!this.wants(instrument.venue)) return;
           this.venueErrors.set(
             instrument.venue,
             error instanceof Error ? error.message : String(error),
@@ -448,6 +466,7 @@ export class ScreenerService {
   }
 
   private ensureStream(instrument: Instrument): void {
+    if (!this.wants(instrument.venue)) return;
     if (this.subscriptions.has(instrument.key)) return;
     // Coinbase has no candle WebSocket; its rows refresh through the REST tail.
     if (instrument.venue === 'coinbase') {
@@ -500,6 +519,10 @@ export class ScreenerService {
   }
 
   private pumpRefresh(venue: VenueId): void {
+    if (!this.wants(venue)) {
+      this.refreshQueues.delete(venue);
+      return;
+    }
     const queue = this.refreshQueues.get(venue);
     if (!queue) return;
     while ((this.refreshActive.get(venue) ?? 0) < REFRESH_CONCURRENCY && queue.length > 0) {
@@ -520,6 +543,7 @@ export class ScreenerService {
         })
         .then((bars) => {
           if (generation !== this.warmGeneration) return;
+          if (!this.wants(instrument.venue) || !this.watched.has(instrument.key)) return;
           const entry = { bars: bars.map(metricBar), at: Date.now() };
           this.series.set(instrument.key, entry);
           const row = this.rows.get(instrument.key);
@@ -543,6 +567,7 @@ export class ScreenerService {
   }
 
   private activate(instrument: Instrument, ticker: VenueTicker): void {
+    if (!this.wants(instrument.venue)) return;
     if (this.watched.has(instrument.key)) return;
     if (this.watched.size >= MAX_WATCHED) {
       this.degraded.add(instrument.venue);
@@ -591,6 +616,8 @@ export class ScreenerService {
   }
 
   private applyTickers(venue: VenueId, tickers: readonly VenueTicker[]): void {
+    // A poll that started before the venue was unchecked must not bring it back.
+    if (!this.wants(venue)) return;
     for (const ticker of tickers) {
       const instrument = ticker.instrument;
       const row = this.rows.get(instrument.key);

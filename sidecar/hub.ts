@@ -64,6 +64,11 @@ export class VenueHub {
 
   constructor(readonly adapter: VenueAdapter) {}
 
+  /** Stop venue-wide sockets only the screener uses (OKX funding). */
+  stopFunding(): void {
+    this.adapter.stopFunding?.();
+  }
+
   /**
    * A per-instrument series shared by screener metrics. Unlike `getBars`, this
    * merges a short tail request into the cached history instead of keeping one

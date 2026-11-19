@@ -17,9 +17,12 @@ export function coinIconCode(base: string): string {
   return withoutK.toUpperCase().replace(MULTIPLIER, '');
 }
 
+/** Bumped when the sidecar's source chain changes, so browsers drop old icons. */
+const ICON_VERSION = 2;
+
 /** Sidecar icon URL for a base asset; `undefined` when there is nothing to ask for. */
 export function coinIconUrl(base: string): string | undefined {
   const code = coinIconCode(base);
   if (!code) return undefined;
-  return `${sidecarBaseUrl()}/icon/${encodeURIComponent(code)}`;
+  return `${sidecarBaseUrl()}/icon/${encodeURIComponent(code)}?v=${ICON_VERSION}`;
 }

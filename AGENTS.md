@@ -263,13 +263,16 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   frames from the single `/screener` WebSocket and merges them by `instrument.key`
   in 24h-volume order. Configuration (threshold, timeframe, RVOL days, RSI
   period, checked venues) is replayed on reconnect and on every change; dropping
-  a venue unsubscribes and removes its rows, and the remaining rows stay. The
+  a venue unsubscribes and removes its rows, clears its warm/refresh queues, and
+  stops its auxiliary socket (OKX funding), and the remaining rows stay. A ticker
+  poll already in flight when the venue was unchecked cannot reactivate it. The
   service starts on the first snapshot or socket connection, not when the sidecar
   boots. A failed venue
   keeps the other venues' rows and surfaces as a per-venue warning. OKX has no
   bulk REST funding endpoint: its adapter keeps one `funding-rate` WebSocket
   subscription for every USDT swap and reads the cached rates into
-  `VenueTicker`. A socket failure leaves funding null without failing the tickers.
+  `VenueTicker`. A socket failure leaves funding null without failing the
+  tickers. Unchecking OKX closes that socket; the next ticker poll reconnects it.
 - Vela charts use `SidecarVelaProvider(venueId)`, one provider per entry in
   `venues/catalog.ts`. History, live candles and ranged backfills all go through
   the sidecar: the provider sends the requested depth (and `to` for older
@@ -328,13 +331,16 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   fetched. `Favorite`, `Venue` and `Symbol` are pinned at the left: `Favorite` is
   a narrow star-only column, `Venue` is icons only with a globe/sort header, and
   `Symbol` starts with a 16 px coin logo from the sidecar's `/icon/<code>`
-  route (`loading="lazy"`). That route chains the symbol-logo S3 CDN, OKX,
-  Binance, CoinCap, Financial Modeling Prep and Ledger, caches the first hit,
-  and drops contract multipliers and venue suffixes (`1000PEPE`, `kPEPE` →
-  `PEPE`; `BTC-USDT-SWAP`, `BTCUSDT.P` → `BTC`). Charts resolve the same route
-  through the provider's `resolveSymbolIcon`, so the table and the chart agree;
-  Vela needs it CORS-clean for the PNG export. Assets no source carries (some
-  tokenized stocks and new listings) fall back to the base initial on a
+  route (`loading="lazy"`). That route chains Ledger (the same crypto set Vela's
+  bundled providers use), OKX, Binance, CoinCap and Financial Modeling Prep,
+  caches the first hit, and drops contract multipliers and venue suffixes
+  (`1000PEPE`, `kPEPE` → `PEPE`; `BTC-USDT-SWAP`, `BTCUSDT.P` → `BTC`). A
+  ticker-keyed logo source is not used: its internal logo id is not the ticker,
+  so a guessed URL returned another asset for HYPE, ARB, SPX and PENGU. Charts
+  resolve the same route through the provider's `resolveSymbolIcon`, so the table
+  and the chart agree; Vela needs it CORS-clean for the PNG export. Assets no
+  source carries (some tokenized stocks and new listings) fall back to the base
+  initial on a
   deterministic colour. `Symbol` keeps the
   search field in its header. Column sort cycles
   descending → ascending → unsorted; `ScreenerView.sort` is nullable.

@@ -3,6 +3,16 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## Unreleased
+
+- Coin icons no longer come from a ticker-keyed logo CDN. Its logo id is not the
+  ticker, so HYPE, ARB, SPX and PENGU showed another asset's mark. The sidecar
+  now tries Ledger (the set Vela's bundled providers use), OKX, Binance, CoinCap
+  and FMP, and the icon URL carries a version so browsers drop the cached image.
+- Unchecking a venue now stops all of its work: a ticker poll already in flight
+  cannot bring its rows back, its warm/refresh queues are dropped, and OKX's
+  funding WebSocket closes (it reconnects when the venue is checked again).
+
 ## 0.1.5 — 2026-11-18
 Commit: fd61db9
 
