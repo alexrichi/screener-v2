@@ -1,4 +1,7 @@
-import type { VelaTheme } from '@luxalgo/vela';
+import { createTheme, type VelaTheme } from '@luxalgo/vela';
+
+const darkUi = createTheme({ base: 'dark' }).settings;
+const lightUi = createTheme({ base: 'light' }).settings;
 
 export const velaDarkTheme: VelaTheme = {
   background: '#0b1220',
@@ -8,6 +11,7 @@ export const velaDarkTheme: VelaTheme = {
   upColor: '#089981',
   downColor: '#f23645',
   fontFamily: 'Geist Variable, Geist, system-ui, sans-serif',
+  ui: darkUi,
 };
 
 export const velaLightTheme: VelaTheme = {
@@ -18,4 +22,5 @@ export const velaLightTheme: VelaTheme = {
   upColor: '#089981',
   downColor: '#f23645',
   fontFamily: 'Geist Variable, Geist, system-ui, sans-serif',
+  ui: lightUi,
 };

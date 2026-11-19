@@ -2658,7 +2658,7 @@ export default function App() {
         onAdd={addFavorite}
       />
 
-      <SettingsTemplateHost workspace={getVelaWorkspace} />
+      <SettingsTemplateHost workspace={getVelaWorkspace} theme={theme} />
 
       {failedScans > 0 && !scanProgress ? (
         <div className="pointer-events-none fixed bottom-3 left-1/2 z-40 -translate-x-1/2 rounded-md border border-negative/30 bg-card/95 px-3 py-1.5 text-[11px] text-negative shadow-lg">

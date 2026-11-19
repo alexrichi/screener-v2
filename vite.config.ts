@@ -75,7 +75,8 @@ export default defineConfig({
     alias: [
       // shadcn/assistant-ui registry components use the `@/` project alias.
       { find: /^@\//, replacement: `${root.replace(/\\/g, '/')}/src/` },
-      // Local Vela checkout: edit the chart core and see it live.      { find: /^@luxalgo\/vela$/, replacement: path.join(velaSrc, 'index.ts') },
+      // Local Vela checkout: edit the chart core and see it live.
+      { find: /^@luxalgo\/vela$/, replacement: path.join(velaSrc, 'index.ts') },
       {
         find: /^@luxalgo\/vela\/workspace$/,
         replacement: path.join(velaSrc, 'workspace/index.ts'),

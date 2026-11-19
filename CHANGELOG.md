@@ -12,6 +12,12 @@ the build stamp; the updater compares only the version.
 - Unchecking a venue now stops all of its work: a ticker poll already in flight
   cannot bring its rows back, its warm/refresh queues are dropped, and OKX's
   funding WebSocket closes (it reconnects when the venue is checked again).
+- Workspaces, named layouts and chart settings templates now save only the chart
+  settings that differ from Vela's default for the current theme. Theme colors
+  and default values no longer enter the saved document, so a saved chart opens
+  in the theme you are using, and changing one checkbox stores one checkbox.
+  `Apply defaults` resets to the current theme's defaults, and the chart settings
+  dialog follows the app theme.
 
 ## 0.1.5 — 2026-11-18
 Commit: fd61db9

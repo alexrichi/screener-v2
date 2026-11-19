@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { IndicatorHandle } from '@luxalgo/vela';
+import type { ChartConfig, IndicatorHandle } from '@luxalgo/vela';
 import type { ChartCell, VelaWorkspace } from '@luxalgo/vela/workspace';
 import {
   applyIndicatorPayload,
@@ -16,9 +16,13 @@ import {
   SettingsTemplateMenu,
   type SettingsTemplateAdapter,
 } from './SettingsTemplateMenu';
+import type { ThemeMode } from '../types';
+import { chartDefaults, stripChartDefaults } from '../lib/velaChartConfig';
+import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 
 interface Props {
   workspace: () => VelaWorkspace | null;
+  theme: ThemeMode;
 }
 
 interface ChartActions {
@@ -128,6 +132,11 @@ function chartState(cell: ChartCell, renderer: ChartRenderer): ChartTemplatePayl
   return { config: renderer.getConfig(), priceStyle: cell.requestedPriceStyle };
 }
 
+/** What a template stores: the settings that differ from a fresh chart's defaults. */
+function chartTemplate(cell: ChartCell, renderer: ChartRenderer): ChartTemplatePayload {
+  return { config: stripChartDefaults(renderer.getConfig()), priceStyle: cell.requestedPriceStyle };
+}
+
 function applyChartState(
   cell: ChartCell,
   renderer: ChartRenderer,
@@ -145,11 +154,18 @@ interface ChartBinding {
   close: HTMLButtonElement | null;
 }
 
-function chartBinding(dialog: Element, workspace: VelaWorkspace): ChartBinding | null {
+function themeOf(theme: ThemeMode) {
+  return theme === 'dark' ? velaDarkTheme : velaLightTheme;
+}
+
+function chartBinding(
+  dialog: Element,
+  workspace: VelaWorkspace,
+  theme: ThemeMode,
+): ChartBinding | null {
   const cell = workspace.active;
   const renderer = cell?.chart.renderer;
   if (!cell || !renderer) return null;
-  const reset = buttonByText(dialog, 'Reset defaults');
   const close = dialog.querySelector<HTMLButtonElement>('button.vela-dialog-close');
   const initial = chartState(cell, renderer);
   return {
@@ -162,19 +178,35 @@ function chartBinding(dialog: Element, workspace: VelaWorkspace): ChartBinding |
       scope: 'chart',
       // The chart type lives on the cell (priceStyle) as well as in the renderer
       // config; capture both so a template survives a reload.
-      capture: () => chartState(cell, renderer),
+      capture: () => chartTemplate(cell, renderer),
       apply: (payload) => {
         if (typeof payload !== 'object' || payload === null) {
           throw new Error('Invalid chart template');
         }
         if (isChartPayload(payload)) {
-          applyChartState(cell, renderer, payload);
+          // Templates saved before overrides stored a resolved config: strip the
+          // theme values so applying one only changes what its author changed.
+          const style = typeof payload.priceStyle === 'string'
+            ? payload.priceStyle
+            : (payload.config as ChartConfig | null)?.series?.style;
+          applyChartState(cell, renderer, {
+            config: stripChartDefaults(payload.config),
+            priceStyle: style,
+          });
           return;
         }
         // Templates saved before the priceStyle field stored the raw config.
-        renderer.applyConfig(payload);
+        renderer.applyConfig(stripChartDefaults(payload));
       },
-      reset: () => reset?.click(),
+      // Reset restores a fresh chart for the CURRENT theme, not the snapshot the
+      // chart happened to mount with.
+      reset: () => {
+        const priceStyle = cell.requestedPriceStyle;
+        applyChartState(cell, renderer, {
+          config: chartDefaults(themeOf(theme), priceStyle),
+          priceStyle,
+        });
+      },
       ...(close ? { close: () => close.click() } : {}),
     },
   };
@@ -214,7 +246,7 @@ function ChartSettingsActions({ actions }: { actions: ChartActions }) {
  * working copy; the chart settings dialog applies live, so it gets Cancel/OK
  * buttons of its own, where Cancel restores the open-time chart state.
  */
-export function SettingsTemplateHost({ workspace }: Props) {
+export function SettingsTemplateHost({ workspace, theme }: Props) {
   const [target, setTarget] = useState<Target | null>(null);
   const lastCell = useRef<string | null>(null);
 
@@ -254,7 +286,7 @@ export function SettingsTemplateHost({ workspace }: Props) {
       if (!vela) return;
 
       const indicator = indicatorDialog ? indicatorAdapter(dialog, vela, lastCell.current) : null;
-      const chart = indicatorDialog ? null : chartBinding(dialog, vela);
+      const chart = indicatorDialog ? null : chartBinding(dialog, vela, theme);
       const adapter = indicator ?? chart?.adapter;
       if (!adapter) {
         setTarget((previous) => (previous ? null : previous));
@@ -324,7 +356,7 @@ export function SettingsTemplateHost({ workspace }: Props) {
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [workspace]);
+  }, [workspace, theme]);
 
   if (!target) return null;
   return (

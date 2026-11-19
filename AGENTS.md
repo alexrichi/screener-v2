@@ -867,8 +867,21 @@ and `<html data-build-version>` carries the stamp for the smoke result.
 
 **Theme changes touch two files.** App tokens live in `src/index.css`; the Vela
 theme lives in `src/lib/velaTheme.ts`. Change both together or the chart will drift
-from the UI. Use semantic classes (`bg-background`, `text-muted-foreground`,
-`border-border`, `bg-primary`) instead of raw hex values in components.
+from the UI. The Vela themes carry the UI settings from `createTheme` as `ui`, so
+the chart settings dialog and other Vela chrome follow the app theme too. Use
+semantic classes (`bg-background`, `text-muted-foreground`, `border-border`,
+`bg-primary`) instead of raw hex values in components.
+
+**Saved chart settings are overrides.** Vela's `getConfig()` resolves every value,
+theme colors included, so writing that document into a workspace, a named layout
+or a chart template pins the theme it was saved under. The workspace storage
+(`seededStorage`), layouts and templates keep only the difference from Vela's
+core default for the known app and bundled themes (`lib/velaChartConfig.ts`,
+using `defaultChartConfig` from Vela). Loading merges the partial over the
+current theme's defaults: a chart saved dark opens light, and turning one
+checkbox off stores just that checkbox. `Apply defaults` applies
+`defaultChartConfig` for the active theme. Never derive defaults from a renderer
+instance or a hidden reference chart.
 
 **Binance streams may fall back to polling.** The bundled provider can log
 `stream delivered no data; falling back to polling` in restricted environments.

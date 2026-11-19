@@ -55,6 +55,7 @@ import {
 import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
+import { stripChartDefaultsInState, stripWorkspaceDocument } from '../lib/velaChartConfig';
 import { VENUE_CATALOG } from '../venues/catalog';
 import { SidecarVelaProvider } from '../venues/vela';
 
@@ -232,21 +233,22 @@ function seededStorage(key: string, seed: unknown): WorkspaceStorage {
       if (requested !== key) return null;
       try {
         const existing = localStorage.getItem(requested);
-        if (existing) return existing;
+        if (existing) return stripWorkspaceDocument(existing);
       } catch {
         return null;
       }
       if (seeded) return null;
       seeded = true;
+      if (seed === undefined) return null;
       try {
-        return JSON.stringify(seed);
+        return stripWorkspaceDocument(JSON.stringify(seed));
       } catch {
         return null;
       }
     },
     set(requested, value) {
       try {
-        localStorage.setItem(requested, value);
+        localStorage.setItem(requested, stripWorkspaceDocument(value));
       } catch {
         /* a full store keeps the workspace in memory */
       }
@@ -829,9 +831,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
             timezone: 'UTC',
             persist: persistKey,
-            ...(layoutSeed !== undefined
-              ? { storage: seededStorage(persistKey, layoutSeed) }
-              : {}),
+            storage: seededStorage(persistKey, layoutSeed),
             drawingToolbar: true,
             sidebar: {
               top: [
@@ -1020,7 +1020,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
               favorites: _favorites,
               timeframeFavorites: _timeframeFavorites,
               ...state
-            } = ws.getState();
+            } = stripChartDefaultsInState(ws.getState());
             return {
               state,
               layout: ws.layout.id,
@@ -1048,7 +1048,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
           const state = sanitizeState(layout.state);
           if (!state) return { ...empty, error: 'This layout cannot be read' };
           try {
-            ws.applyState(state);
+            ws.applyState(stripChartDefaultsInState(state));
           } catch (cause) {
             return { ...empty, error: cause instanceof Error ? cause.message : String(cause) };
           }

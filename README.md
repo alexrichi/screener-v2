@@ -237,8 +237,9 @@ the same `build` string.
   is running in the editor, and selects the matching saved indicator.
 - Settings templates: the indicator gear dialog and the chart settings dialog
   have a `Template` menu that saves the current inputs and properties, or the
-  whole chart configuration, under a name and reapplies it later. Templates stay
-  in localStorage.
+  chart settings that differ from Vela's defaults, under a name and reapplies
+  them later. Templates stay in localStorage, and applying one keeps the theme
+  you are using.
 - AI sidebar on the left, outside the Vela dock, so it stays visible next to the
   chart and the Pine editor. Its toggle sits at the top of the chart's left
   drawing toolbar, above the cursor tool. Chats are kept until deleted, and accept images,
