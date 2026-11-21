@@ -1,4 +1,25 @@
-import { registerWidgetAction } from '@luxalgo/vela/plugin';
+import { registerIcon, registerWidgetAction } from '@luxalgo/vela/plugin';
+
+/** 16×16 chrome icon, matching Vela's own chrome tier. */
+function icon(body: string): string {
+  return `<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+}
+
+// Vela's pane controls already use `maximize` / `restore` (four corner brackets).
+// These are diagonal arrows so the workspace action reads differently.
+registerIcon(
+  'screener-expand',
+  icon(
+    '<path d="M7 7 3.2 3.2M3.2 3.2h3.3M3.2 3.2v3.3M9 7l3.8-3.8M12.8 3.2h-3.3M12.8 3.2v3.3M7 9l-3.8 3.8M3.2 12.8h3.3M3.2 12.8v-3.3M9 9l3.8 3.8M12.8 12.8h-3.3M12.8 12.8v-3.3"/>',
+  ),
+);
+registerIcon(
+  'screener-collapse',
+  icon(
+    '<path d="M3.2 3.2 6.8 6.8M6.8 6.8H3.5M6.8 6.8V3.5M12.8 3.2 9.2 6.8M9.2 6.8h3.3M9.2 6.8V3.5M3.2 12.8 6.8 9.2M6.8 9.2H3.5M6.8 9.2v3.3M12.8 12.8 9.2 9.2M9.2 9.2h3.3M9.2 9.2v3.3"/>',
+  ),
+);
+
 
 interface MaximizeState {
   maximized: boolean;
@@ -32,7 +53,7 @@ registerWidgetAction({
   id: 'screener-maximize',
   target: 'topbar',
   label: 'Maximize chart',
-  icon: 'maximize',
+  icon: 'screener-expand',
   iconOnly: true,
   align: 'right',
   order: -200,
@@ -45,7 +66,7 @@ registerWidgetAction({
   id: 'screener-restore',
   target: 'topbar',
   label: 'Restore layout',
-  icon: 'restore',
+  icon: 'screener-collapse',
   iconOnly: true,
   align: 'right',
   order: -200,
