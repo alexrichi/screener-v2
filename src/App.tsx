@@ -28,6 +28,7 @@ import { LayoutNameDialog, type LayoutNameRequest } from './components/LayoutNam
 import { DEFAULT_VIEW, isScreenerView } from './lib/view';
 import { layoutLabel } from './lib/format';
 import { symbolLabel } from './lib/binance';
+import { timeframeLabel } from './lib/timeframe';
 import {
   MAX_LAYOUTS,
   createLayout,
@@ -231,25 +232,8 @@ function tabPine(tab: WorkspaceTab): LayoutPine | undefined {
   };
 }
 
-const TIMEFRAME_NAMES: Record<string, string> = {
-  '1': '1m',
-  '3': '3m',
-  '5': '5m',
-  '15': '15m',
-  '30': '30m',
-  '60': '1h',
-  '120': '2h',
-  '240': '4h',
-  '360': '6h',
-  '720': '12h',
-  D: '1D',
-  W: '1W',
-  M: '1M',
-};
-
 function defaultLayoutName(tab: WorkspaceTab): string {
-  const timeframe = TIMEFRAME_NAMES[tab.timeframe] ?? tab.timeframe;
-  return `${symbolLabel(tab.symbol)} ${layoutLabel(tab.layout)} Â· ${timeframe}`;
+  return `${symbolLabel(tab.symbol)} ${layoutLabel(tab.layout)} Â· ${timeframeLabel(tab.timeframe)}`;
 }
 
 function layoutFileName(name: string): string {
@@ -2403,7 +2387,7 @@ export default function App() {
                 onImportFile={(file) => void importLibraryFile(file)}
               />
             ),
-            alerts: <AlertsPanel tabId={activeTabId} />,
+            alerts: <AlertsPanel />,
           }}
         />
       </main>

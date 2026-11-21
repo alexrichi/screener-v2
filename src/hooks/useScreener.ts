@@ -12,6 +12,16 @@ import {
   postScreenerConfig,
   screenerWsUrl,
 } from '../lib/screenerClient';
+import {
+  alertRules,
+  pushReplayEvents,
+  pushRuleEvents,
+  subscribeAlertRules,
+} from '../lib/alerts';
+import { runnerRules } from '../lib/alertRules';
+import { toast } from 'sonner';
+
+const reportedRuleErrors = new Set<string>();
 
 interface Options {
   config: ScreenerConfig;
@@ -82,19 +92,41 @@ export function useScreener({ config }: Options) {
         setError(null);
         viewportRef.current = '';
         socket?.send(JSON.stringify({ op: 'screener.config', ...configRef.current }));
+        socket?.send(JSON.stringify({ op: 'alerts.config', rules: runnerRules(alertRules()) }));
       };
       socket.onmessage = (event) => {
         if (stopped) return;
         try {
           const message = JSON.parse(String(event.data)) as
             | ({ op: 'screener.snapshot' } & ScreenerSnapshot)
-            | ({ op: 'screener.patch' } & ScreenerPatch);
+            | ({ op: 'screener.patch' } & ScreenerPatch)
+            | { op: 'alerts.event'; events?: unknown }
+            | { op: 'alerts.replay'; events?: unknown }
+            | { op: 'alerts.error'; ruleId?: string; error?: string };
           if (message.op === 'screener.snapshot') {
             applySnapshot(message);
           } else if (message.op === 'screener.patch') {
             setRows((current) => mergeScreenerRows(current, message));
             setStatus(message.status);
             setLoading(false);
+          } else if (message.op === 'alerts.event') {
+            pushRuleEvents(message.events);
+          } else if (message.op === 'alerts.replay') {
+            const added = pushReplayEvents(message.events);
+            if (added > 0) {
+              toast.info(`${added} alert${added === 1 ? '' : 's'} while you were away`);
+            }
+          } else if (message.op === 'alerts.error') {
+            // Keyed by the rule's own updatedAt: a reconnect never repeats an
+            // error, an edited rule reports its new failure once.
+            const rule = alertRules().find((item) => item.id === (message.ruleId ?? ''));
+            const key = `${message.ruleId ?? 'unknown'}:${rule?.updatedAt ?? 0}`;
+            if (!reportedRuleErrors.has(key)) {
+              reportedRuleErrors.add(key);
+              toast.warning('An alert rule stopped', {
+                description: message.error ?? 'The alert could not be evaluated',
+              });
+            }
           }
         } catch {
           // Ignore malformed frames; the next snapshot recovers.
@@ -120,6 +152,14 @@ export function useScreener({ config }: Options) {
       socketRef.current = null;
     };
   }, [applySnapshot]);
+
+  useEffect(() => {
+    return subscribeAlertRules(() => {
+      const socket = socketRef.current;
+      if (socket?.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ op: 'alerts.config', rules: runnerRules(alertRules()) }));
+    });
+  }, []);
 
   useEffect(() => {
     const socket = socketRef.current;

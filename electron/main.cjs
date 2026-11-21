@@ -100,7 +100,15 @@ async function waitForSidecar(timeoutMs) {
 }
 
 async function ensureSidecar() {
-  if (await pingSidecar()) {
+  const running = await pingSidecar();
+  if (running) {
+    if (SMOKE) {
+      // A reused sidecar carries the user's real alerts.json; smoke must not
+      // arm real rules or write events into the profile. Modal dialogs hang
+      // an unattended run, so the smoke result file speaks instead.
+      console.error('[electron] smoke: a sidecar already listens on 8787');
+      return false;
+    }
     console.log('[electron] reusing the running sidecar on 8787');
     return true;
   }
@@ -109,11 +117,27 @@ async function ensureSidecar() {
     ? path.join(process.resourcesPath, 'sidecar.cjs')
     : path.join(__dirname, '..', 'dist-electron', 'sidecar.cjs');
   if (!fs.existsSync(script)) {
-    dialog.showErrorBox(
-      'Sidecar missing',
-      `Build the sidecar first: npm run sidecar:build\n${script}`,
-    );
+    if (!SMOKE) {
+      dialog.showErrorBox(
+        'Sidecar missing',
+        `Build the sidecar first: npm run sidecar:build\n${script}`,
+      );
+    }
     return false;
+  }
+
+  // Alert rules and their event log live next to the AI config, outside the
+  // repo. Smoke runs against a throwaway file so a packaged check never arms
+  // the user's real rules or writes into their profile.
+  const alertsFile = SMOKE
+    ? path.join(app.getPath('temp'), 'screener-v2-smoke-alerts.json')
+    : path.join(app.getPath('userData'), 'alerts.json');
+  if (SMOKE) {
+    try {
+      fs.rmSync(alertsFile, { force: true });
+    } catch {
+      /* a stale temp file only means one extra warm-up fetch */
+    }
   }
 
   sidecar = spawn(process.execPath, [script], {
@@ -125,6 +149,7 @@ async function ensureSidecar() {
       SIDECAR_PORT: String(SIDECAR_PORT),
       // Keep the AI settings file next to the app's own state, not in the repo.
       AI_CONFIG_FILE: path.join(app.getPath('userData'), 'ai.json'),
+      ALERTS_FILE: alertsFile,
     },
   });
   ownsSidecar = true;
@@ -140,7 +165,7 @@ async function ensureSidecar() {
   });
 
   const ready = await waitForSidecar(20_000);
-  if (!ready) {
+  if (!ready && !SMOKE) {
     dialog.showErrorBox(
       'Sidecar did not start',
       sidecarStderr.slice(-2000) || 'Check the sidecar bundle and port 8787.',
@@ -461,7 +486,22 @@ if (!gotLock) {
       callback(permission === 'media');
     });
     if (!(await ensureSidecar())) {
-      app.quit();
+      if (SMOKE) {
+        await writeSmokeResult({
+          ok: false,
+          rows: 0,
+          error: 'sidecar unavailable: busy on 8787, missing bundle, or failed to start',
+          venues: [],
+          titlebar: null,
+          build: null,
+          at: new Date().toISOString(),
+        });
+        // app.exit skips 'before-quit'; a half-started child must not linger on 8787.
+        stopSidecar();
+        app.exit(1);
+      } else {
+        app.quit();
+      }
       return;
     }
     await createWindow();

@@ -11,6 +11,7 @@ import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
 import type { ScreenerConfig, VenueId } from '../src/types';
 import { handleAi } from './ai';
+import { AlertService } from './alerts';
 import { VenueHub } from './hub';
 import { resolveIcon } from './icons';
 import { librarySource } from './luxalgo';
@@ -86,6 +87,10 @@ const screener = new ScreenerService({
     minVolume: Number(process.env.SCREENER_MIN_VOLUME ?? 1_000_000),
   },
 });
+
+// Alert rules and their event log are owned by the process, not by a renderer
+// connection: jobs keep running between sockets and survive a sidecar restart.
+const alerts = new AlertService({ hubs });
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -400,6 +405,12 @@ screenerWss.on('connection', (ws) => {
   const unsubscribe = screener.onPatch((patch) => {
     send({ op: 'screener.patch', ...patch });
   });
+  const offAlerts = alerts.subscribe(send);
+  ws.on('close', () => {
+    unsubscribe();
+    offAlerts();
+    console.log('[sidecar] screener ws closed');
+  });
 
   ws.on('message', (raw) => {
     try {
@@ -411,7 +422,12 @@ screenerWss.on('connection', (ws) => {
         rvolDays?: unknown;
         rsiPeriod?: unknown;
         minVolume?: unknown;
+        rules?: unknown;
       };
+      if (message.op === 'alerts.config') {
+        alerts.setRules(message.rules);
+        return;
+      }
       if (message.op === 'screener.viewport' && Array.isArray(message.keys)) {
         screener.setViewport(
           message.keys.filter((key): key is string => typeof key === 'string'),
@@ -449,11 +465,6 @@ screenerWss.on('connection', (ws) => {
     } catch {
       // Ignore malformed control frames; the next snapshot recovers.
     }
-  });
-
-  ws.on('close', () => {
-    unsubscribe();
-    console.log('[sidecar] screener ws closed');
   });
 });
 

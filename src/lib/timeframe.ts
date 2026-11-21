@@ -26,6 +26,30 @@ export function canonicalTimeframe(timeframe: string): string {
   return TF_ALIASES[timeframe] ?? TF_ALIASES[timeframe.toLowerCase()] ?? timeframe;
 }
 
+const TF_LABELS: Record<string, string> = {
+  '1': '1m',
+  '3': '3m',
+  '5': '5m',
+  '15': '15m',
+  '30': '30m',
+  '45': '45m',
+  '60': '1h',
+  '120': '2h',
+  '180': '3h',
+  '240': '4h',
+  '360': '6h',
+  '480': '8h',
+  '720': '12h',
+  D: '1D',
+  W: '1W',
+  M: '1M',
+};
+
+/** Display spelling of a canonical timeframe (`15` → `15m`). */
+export function timeframeLabel(timeframe: string): string {
+  return TF_LABELS[canonicalTimeframe(timeframe)] ?? timeframe;
+}
+
 /** Bar duration in ms, for venues that report only the open time. */
 export function timeframeMs(timeframe: string): number {
   const canonical = canonicalTimeframe(timeframe);

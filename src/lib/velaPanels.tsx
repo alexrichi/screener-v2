@@ -7,7 +7,7 @@ import {
   registerWidgetAttachment,
   type WidgetContext,
 } from '@luxalgo/vela/plugin';
-import { alertsFor, subscribeAlerts } from './alerts';
+import { alertUnreadCount, subscribeAlerts } from './alerts';
 
 export type VelaPanelId = 'screener' | 'pine' | 'library' | 'alerts';
 
@@ -183,7 +183,7 @@ registerSidePanel({
   mount: (ctx, body) => {
     const destroy = mountPanel('alerts', ctx, body);
     const tabId = panelTabId(ctx);
-    const sync = () => ctx.sidebar.setBadge('alerts', alertsFor(tabId).length);
+    const sync = () => ctx.sidebar.setBadge('alerts', alertUnreadCount());
     const off = subscribeAlerts(sync);
     sync();
     return {

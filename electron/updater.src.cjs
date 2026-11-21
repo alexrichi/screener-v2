@@ -10,7 +10,7 @@ let prompting = false;
 /**
  * The app never installs an update by itself. The title bar shows a button once
  * the download is ready; clicking it asks before restarting, because scan
- * results and alerts are session-only.
+ * results are session-only.
  */
 async function installUpdate(mainWindow) {
   if (prompting) return;
@@ -25,7 +25,7 @@ async function installUpdate(mainWindow) {
       message: availableVersion
         ? `Screener ${availableVersion} is ready to install.`
         : 'The update is ready to install.',
-      detail: 'Restarting closes the app. Scan results and session alerts will be lost.',
+      detail: 'Restarting closes the app. Scan results will be lost.',
     };
     const { response } =
       mainWindow && !mainWindow.isDestroyed()

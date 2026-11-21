@@ -3,9 +3,11 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from 'react';
 import { sanitizeState, VelaWorkspace } from '@luxalgo/vela/workspace';
 import type { ChartCell, WorkspaceStorage } from '@luxalgo/vela/workspace';
+import type { Vela } from '@luxalgo/vela';
 import type {
   DrawingPoint,
   DrawingStyle,
@@ -32,17 +34,20 @@ import type {
 import { validateDrawingRequest } from '../lib/ai/drawings';
 import { PineEngine } from '../lib/pineVela/engine';
 import type {
+  AlertInputValues,
   ChartContext,
   IndicatorRow,
   PineInputValues,
   ScriptRunSummary,
   ThemeMode,
+  VenueId,
   WorkspaceTab,
 } from '../types';
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import { toast } from 'sonner';
 import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
-import { pushAlert, type ChartAlertInput } from '../lib/alerts';
+import { scanAlertSites, scriptTitle, usesRequestSeries } from '../lib/alertSites';
+import { CreateAlertDialog, type AlertDraft } from './CreateAlertDialog';
 import { pushStrategyRun, removeStrategyRun } from '../lib/strategyRuns';
 import { timeframeMs } from '../lib/timeframe';
 import { clearMaximizeBridge, setMaximizeBridge } from '../lib/velaMaximize';
@@ -56,7 +61,7 @@ import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 import { stripChartDefaultsInState, stripWorkspaceDocument } from '../lib/velaChartConfig';
-import { VENUE_CATALOG } from '../venues/catalog';
+import { VENUE_CATALOG, VENUE_IDS } from '../venues/catalog';
 import { SidecarVelaProvider } from '../venues/vela';
 
 export interface SavedScript {
@@ -220,6 +225,26 @@ registerLegendAction({
     );
   },
 });
+
+type CreateAlertHandler = (
+  chart: Vela,
+  indicator: { id: string; title: string; source?: string },
+) => void;
+
+const createAlertHandlers = new Map<string, CreateAlertHandler>();
+
+registerLegendAction({
+  id: 'screener-create-alert',
+  icon: 'bell',
+  tooltip: 'Create alert',
+  order: -20,
+  when: (indicator) =>
+    indicator.source !== undefined && indicator.language === 'pine',
+  run: (ctx, indicator) => {
+    if (indicator.source) createAlertHandlers.get(legendTabId(ctx))?.(ctx.chart, indicator);
+  },
+});
+
 
 /**
  * Boot a tab from a saved layout only while it has no document of its own.
@@ -525,7 +550,6 @@ function extendHistory(chart: CellChart, state: CellHistory, requested?: number)
 function attachHistoryScroll(
   ws: VelaWorkspace,
   onIndicatorsChange: () => void,
-  onAlert: (alert: ChartAlertInput) => void,
   onPineRemoved: () => void,
   onStrategyRun: (cellId: string, id: string, run: ScriptRun | null) => void,
   onPineSettings: (settings: {
@@ -664,18 +688,6 @@ function attachHistoryScroll(
       chart.on('script:run', (run) => {
         onStrategyRun(cell.id, run.id, run.kind === 'strategy' ? run : null);
       }),
-      chart.on('alert', (alert) =>
-        onAlert({
-          id: alert.id,
-          cellId: cell.id,
-          symbol: cell.symbol.replace(/^[^:]+:/, ''),
-          timeframe: cell.timeframe,
-          indicator: alert.indicator,
-          title: alert.title,
-          message: alert.message,
-          time: alert.time,
-        }),
-      ),
     ];
 
     cleanups.set(cell.id, () => {
@@ -749,6 +761,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
     const activeRef = useRef(active);
     activeRef.current = active;
     const syncMaximizeRef = useRef<() => void>(() => {});
+    const [alertDraft, setAlertDraft] = useState<AlertDraft | null>(null);
 
     useEffect(() => {
       showSourceHandler = (source, savedId) =>
@@ -756,9 +769,58 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       askAiHandlers.set(tab.id, (source, savedId) =>
         onAskAiRef.current(source, savedId),
       );
+      createAlertHandlers.set(tab.id, (chart, indicator) => {
+        const source = indicator.source;
+        if (!source) return;
+        if (usesRequestSeries(source)) {
+          toast.warning('Alerts do not support request.* yet');
+          return;
+        }
+        const scan = scanAlertSites(source);
+        if (scan.conditions.length === 0 && !scan.hasAlert) {
+          toast.warning('This script has no alertcondition or alert() calls');
+          return;
+        }
+        const ws = wsRef.current;
+        const cell = ws?.cells().find((item) => item.chart === chart) ?? ws?.active;
+        if (!cell) return;
+        const provider = (chart as Vela).market?.provider;
+        const cellProvider = (cell.chart as Vela).market?.provider;
+        const prefix = cell.symbol.includes(':') ? cell.symbol.split(':')[0] : '';
+        const venue = (provider || cellProvider || prefix || 'binance').toLowerCase();
+        if (!VENUE_IDS.includes(venue as VenueId)) {
+          toast.warning('The chart venue is not available for alerts');
+          return;
+        }
+        const symbol = cell.symbol.replace(/^[^:]+:/, '');
+        const velaSymbol = cell.symbol.includes(':')
+          ? cell.symbol
+          : `${venue.toUpperCase()}:${cell.symbol}`;
+        const handle = cell.chart.indicators().find((item) => item.id === indicator.id);
+        const inputs: AlertInputValues = {};
+        for (const [key, value] of Object.entries(handle?.inputValues() ?? {})) {
+          if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') {
+            inputs[key] = value;
+          }
+        }
+        const name = scriptTitle(source) ?? indicator.title;
+        setAlertDraft({
+          source,
+          indicatorTitle: name,
+          symbol,
+          timeframe: cell.requestedTimeframe,
+          venue: venue as VenueId,
+          velaSymbol,
+          sites: scan.conditions,
+          hasAlert: scan.hasAlert,
+          untitled: scan.untitled,
+          inputs,
+        });
+      });
       return () => {
         showSourceHandler = null;
         askAiHandlers.delete(tab.id);
+        createAlertHandlers.delete(tab.id);
       };
     }, [tab.id]);
 
@@ -854,7 +916,6 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       const detachHistory = attachHistoryScroll(
         ws,
         () => onIndicatorsChangeRef.current?.(),
-        (alert) => pushAlert({ tabId: tab.id, ...alert }),
         dropStoredPine,
         (cellId, id, run) => {
           if (run) pushStrategyRun(tab.id, cellId, run);
@@ -1396,6 +1457,11 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       [],
     );
 
-    return <div ref={hostRef} data-tab-id={tab.id} className="h-full w-full" />;
+    return (
+      <>
+        <div ref={hostRef} data-tab-id={tab.id} className="h-full w-full" />
+        <CreateAlertDialog draft={alertDraft} onClose={() => setAlertDraft(null)} />
+      </>
+    );
   },
 );

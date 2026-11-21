@@ -3,6 +3,27 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## Unreleased
+
+- Pine indicators can arm an alert from their legend bell. The alert keeps a
+  snapshot of the script, inputs, symbol and timeframe and runs on closed bars in
+  the sidecar after the chart or workspace tab closes. The Alerts panel separates
+  the armed rules from a persistent history, with toast, sound and system
+  notifications, global unread badges, pause and delete. Only alerts you create
+  reach the history: a chart's live alert events no longer add rows on their own.
+  Scripts using `request.*` are rejected for now. Screener-wide alerts are not
+  available.
+- The alert runner now belongs to the sidecar process, not to the renderer
+  socket: armed rules keep evaluating through app reloads and sidecar restarts,
+  and events that fire while the app is away arrive as one summary toast on
+  reconnect. Rules stay renderer-owned (`alerts.json` beside `ai.json` is the
+  restart cache), cleared history stays cleared across reconnects, an only-once
+  rule is retired on disk and cannot be resurrected by a stale reconnect, a
+  paused rule re-enabled never fires the bar that closed while it was off, and a
+  bar closed during a reconnect is no longer lost. `Screener.exe --smoke` runs
+  against a throwaway alerts file and fails fast (with a written result instead
+  of a modal dialog) when a sidecar already listens on 8787.
+
 ## 0.1.7 — 2026-11-21
 
 - Updated Vela to 0.10.14.

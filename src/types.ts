@@ -80,6 +80,78 @@ export interface ScreenerConfig {
   venues?: VenueId[];
 }
 
+export type AlertInputValues = Record<string, string | number | boolean>;
+
+/** One instrument a chart-created alert watches. */
+export interface AlertInstrumentTarget {
+  kind: 'instrument';
+  venue: VenueId;
+  /** Vela symbol (`BINANCE:BTCUSDT.P`), used to resolve the adapter's instrument. */
+  velaSymbol: string;
+  /** Display ticker (`BTCUSDT.P`). */
+  symbol: string;
+}
+
+export type AlertFrequency = 'once' | 'once-per-bar-close';
+
+export interface AlertNotificationPrefs {
+  toast: boolean;
+  sound: boolean;
+  system: boolean;
+}
+
+/**
+ * A binary alert created from a chart's Pine indicator. It stores a snapshot of
+ * the script and inputs and is evaluated by the sidecar on closed bars, so the
+ * chart and its workspace tab can close without stopping it.
+ */
+export interface AlertRule {
+  version: 1;
+  id: string;
+  kind: 'chart';
+  name: string;
+  target: AlertInstrumentTarget;
+  timeframe: string;
+  script: string;
+  inputs: AlertInputValues;
+  /** `alertcondition` titles to watch. */
+  sites: string[];
+  /** Also fire for plain `alert()` calls. */
+  includeAlert: boolean;
+  frequency: AlertFrequency;
+  notify: AlertNotificationPrefs;
+  indicatorTitle: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastFiredAt: number | null;
+  fireCount: number;
+}
+
+/** One fired alert, shown in the global history. */
+export interface AlertEvent {
+  id: string;
+  kind: 'chart' | 'rule';
+  ruleId?: string;
+  tabId?: string;
+  cellId?: string;
+  venue?: VenueId;
+  velaSymbol?: string;
+  symbol: string;
+  timeframe?: string;
+  source: string;
+  site?: string;
+  message: string;
+  price?: number;
+  time: number;
+  receivedAt: number;
+}
+
+/** A rule as the sidecar evaluates it: targets are already resolved. */
+export interface AlertRunnerRule extends AlertRule {
+  targets: string[];
+}
+
 /** One row of the active chart's indicator picker. */
 export interface IndicatorRow {
   /** Index in `ChartCell.libraryRows()`; `-1` for an app-saved script. */

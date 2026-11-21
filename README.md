@@ -178,7 +178,8 @@ the same `build` string.
   and the table view is shared by every workspace tab.
 - Screener, Pine, Library, and Alerts
   open as Vela side panels from the chart's right sidebar; the open panel and
-  width persist, and script alerts are session-only. The strategy dock sits at
+  width persist, and armed alerts keep running through reloads and sidecar
+  restarts. The strategy dock sits at
   the foot of the chart column, under the range presets; the drawing toolbar and
   the right rail keep their full height. It resizes with a drag handle, collapses
   to its header, and keeps its state across reloads.
@@ -206,8 +207,9 @@ the same `build` string.
   with trade markers on the chart and a dock under it showing net P&L, the five
   summary metrics and the equity curve. The viewer opens `Performance` (five
   metrics and a large equity curve) and `Trades Log` (entry, exit, size, net and
-  cumulative P&L). Alerts from `alert()` and `alertcondition()` land in the
-  Alerts panel once per bar per call site.
+  cumulative P&L). An armed alert from `alert()` or `alertcondition()` runs on
+  closed bars in the sidecar, even after the chart closes; a script's live alert
+  events do not add history rows on their own.
 - Named layouts: save the full workspace (grid, markets, indicators, drawings,
   applied script), open it in a new tab or load it here, update, rename,
   duplicate, and import or export JSON. Updating a saved layout asks before
@@ -240,6 +242,16 @@ the same `build` string.
   chart settings that differ from Vela's defaults, under a name and reapplies
   them later. Templates stay in localStorage, and applying one keeps the theme
   you are using.
+- Chart alerts: the bell on a Pine indicator's legend row arms its
+  `alertcondition()` / `alert()` calls for one symbol and timeframe. The alert
+  keeps running on closed bars after the chart or tab closes, and the Alerts
+  panel shows the armed rules plus a persistent history with toast, sound and
+  system notifications. The runner lives in the sidecar process, so alerts also
+  survive an app reload and a sidecar restart: missed events arrive as one
+  summary toast when the app reconnects, cleared history stays cleared, and an
+  only-once rule is never re-armed after it fired. A fully closed app does not
+  evaluate (the sidecar stops with it). `request.*` scripts are not supported
+  yet. Screener-wide alerts are not available.
 - AI sidebar on the left, outside the Vela dock, so it stays visible next to the
   chart and the Pine editor. Its toggle sits at the top of the chart's left
   drawing toolbar, above the cursor tool. Chats are kept until deleted, and accept images,
@@ -278,7 +290,7 @@ the same `build` string.
 
 The installed app checks the public GitHub releases after startup and every four
 hours. It downloads in the background and asks before restarting; scan results
-and alerts are session-only. Build the installer with `npm run electron:dist`
+are session-only, while armed alerts and their history persist. Build the installer with `npm run electron:dist`
 and attach the `.exe`, `.blockmap` and `latest.yml` to a published GitHub
 release. See [CHANGELOG.md](CHANGELOG.md) for release history.
 

@@ -98,7 +98,7 @@ src/
     AiChatHistory.tsx             chat history: search, date groups, inline rename, delete
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
-    AlertsPanel.tsx               per-tab script alerts in the right rail
+    AlertsPanel.tsx               app-wide armed rules and alert history in the right rail
     StrategyEquity.tsx            strategy net P&L curve (zero line, downsample)
     StrategyPanel.tsx             app-owned strategy dock under the chart
     ReplayBar.tsx                 floating, draggable bar replay controls over ws.replay
@@ -126,7 +126,8 @@ src/
     ai/target.ts                  script/chart target carried by AI tool calls
     ai/uiChats.ts                 assistant-ui sessions, migration, groups, title fallback
     utils.ts                      shadcn `cn` helper for registry components
-    alerts.ts                     session-only per-tab chart alerts
+    alerts.ts                     app-owned alert rules and history: replay
+                                  ingest, clearedAt watermark, unread badge
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
@@ -184,6 +185,8 @@ src/
 sidecar/
   server.ts                       public-data HTTP + WebSocket server; one hub per venue
   ai.ts                           AI key-injecting proxy for an OpenAI-compatible model
+  alerts.ts                       process-owned AlertService: armed rules on closed
+                                  bars, alerts.json cache/log, replay on connect
   hub.ts                          one adapter per venue; shared caches/fan-out
   luxalgo.ts                      LuxAlgo Library source fetch and cache
   screener.ts                     server-owned watched table: activation, warm-up, metrics, patches
@@ -745,20 +748,43 @@ viewport on desktop, so they overlay the workspace. The drawing quick toolbar
 stays cell-local. Re-check these overrides if Vela changes `data-slot` or
 `data-contained`.
 
-**Alerts are app-owned and session-only.** `lib/velaPanels.tsx` hides Vela's
-topbar bell (`ctx.topbar.setVisible('alerts', false)` through a widget
-attachment) and the rail's `Alerts` panel replaces it. `pine-engine` raises
-`alert()` and `alertcondition()` on the current bar only; the chart adapter
-passes them to `handlers.onAlert` once per bar per call site (the compiler
-embeds a site id) so live ticks do not flood the list, and `freq_all` keeps the
-message in the id. The host forwards every cell's `chart.on('alert')` to
-`lib/alerts.ts`, which keeps the newest 50 per tab; the panel subscribes with
-`useSyncExternalStore` and shows the active tab's list. Each workspace's panel
-mount also keeps its rail button's count in sync through
-`ctx.sidebar.setBadge('alerts', n)`, so background tabs badge too. Alerts from
-background tabs are collected too, and each tab's panel shows its own list.
-Nothing is persisted: a reload starts empty, exactly like Vela's bell. Do not
-read Vela's private alert list or add a second bell.
+**Alerts are app-owned.** `lib/velaPanels.tsx` hides Vela's topbar bell
+(`ctx.topbar.setVisible('alerts', false)` through a widget attachment) and the
+rail's `Alerts` panel replaces it. The panel has two views: `Armed`, the chart
+alerts that keep running after their tab closes, and `History`, the global log.
+Clicking a Pine indicator's bell in the chart legend opens `Create alert`: one
+watched site per rule — an `alertcondition` title from the script's static scan,
+or all plain `alert()` calls — plus a name, only-once / every-bar-close frequency
+and notification channels. The rule stores the script snapshot (symbol,
+timeframe, inputs, site); it lives at `screener.alerts.rules.v1` and the log at
+`screener.alerts.log.v1`, both app-wide. The sidecar evaluates armed rules on
+closed bars (one instrument per rule, no `request.*`) through
+`alerts.config` / `alerts.event` / `alerts.error` frames on `/screener`; the
+chart is only the creation surface. The runner is a process-owned `AlertService`
+(`sidecar/alerts.ts`), created once at boot and never disposed on a socket
+close, so jobs keep running between renderer connections and survive a sidecar
+restart. **Renderer wins**: `screener.alerts.rules.v1` is the source of truth;
+the sidecar's `alerts.json` (same dir as `ai.json`, `ALERTS_FILE` env override,
+a temp file under `--smoke`) is only the restart cache and the event log. On
+connect the renderer receives one `alerts.replay` frame with up to 500 stored
+events; `pushReplayEvents` ingests it silently (the disk cap rides
+`parseAlertEvents(value, limit)`, live frames keep 100) and shows one summary
+toast. `clearAlertLog` writes a `clearedAt` watermark through `persistNow`, so
+cleared history cannot return on reconnect. A `once` rule is retired on disk
+when it fires (`retireOnceRule`), and the first `alerts.config` after a
+reconnect cannot resurrect it (the `updatedAt <=` guard); a fresh enable arms
+from the latest closed bar (`newlyEnabled`) so a paused rule never fires its
+downtime, while `lastEvaluated` (`ruleId:timeframe:velaSymbol`) survives re-arms
+so a bar closed during a reconnect still fires. A fully closed packaged app does
+not evaluate anything: the sidecar is a child that stops with it. The chart's
+live `alert` events are not logged: only armed rules reach the panel, so an
+indicator that nobody armed
+never adds history rows. Badges show
+the global unread count. `pine-engine` raises `alert()`/`alertcondition()` on the
+current bar only, once per bar per call site. Do not read Vela's private alert
+list, add a second bell, or move alerts back into the per-tab workspace document.
+Screener-wide and favorites alerts are a later `kind`; the runner already takes
+resolved target lists so they do not change the protocol.
 
 **Strategies are engine runs surfaced by the app.** `pine-engine` executes
 `strategy.entry/order/exit/close` with next-bar market fills, bracket exits
