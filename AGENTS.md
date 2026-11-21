@@ -1223,9 +1223,9 @@ reaching into `node_modules` or the peer `../Vela` checkout:
 The docs page exposes "View as Markdown"; the LLM index is
 <https://docs.luxalgo.com/llms.mdx/vela/content.md>. Vite and `tsconfig` resolve
 `@luxalgo/vela` to the local `../Vela/src` checkout; `package.json` keeps the npm
-pin as a fallback and must name the same minor: `^0.10.13`.
+pin as a fallback and must name the same minor: `^0.10.14`.
 
-The checkout must be Vela 0.10.13 or newer. Since 0.10.7 `cell.timeframe` and
+The checkout must be Vela 0.10.14 or newer. Since 0.10.7 `cell.timeframe` and
 `cell.priceStyle` are the values the chart shows (a provider or style fallback),
 while `cell.requestedTimeframe` and `cell.requestedPriceStyle` are the user's
 choices: persist and capture the requested values, display the shown ones.
