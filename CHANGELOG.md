@@ -3,6 +3,17 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## 0.1.7 — 2026-11-21
+
+- Updated Vela to 0.10.14.
+- A Pine indicator keeps its fills, `bgcolor` spans, `hline`s and `barcolor`s when
+  it runs again over older history. Previously those stayed on the first run's
+  candles while the lines moved.
+- The status bar countdown and clock correct for a slow device clock, so the
+  countdown no longer jumps up a minute at the bar close.
+- Maximizing one chart on a phone no longer keeps the hidden charts at full
+  canvas size, which could exhaust Safari's memory on a 2×2 layout.
+
 ## 0.1.6 — 2026-11-19
 Commit: 8e03e56
 
