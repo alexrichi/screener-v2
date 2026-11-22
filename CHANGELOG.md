@@ -3,7 +3,7 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
-## Unreleased
+## 0.2.0 — 2026-11-22
 
 - Binance spot is listed beside its USDⓈ-M perpetuals. Spot rows, charts, the
   scanner, and order flow use the spot REST/WS endpoints; `BINANCE:BTCUSDT` is
@@ -16,10 +16,12 @@ the build stamp; the updater compares only the version.
   Reset, and `Trades` filters by notional, joins one order's fills, pauses, and
   freezes on hover. The `Book` histogram follows the `Size` / `Total` choice, so
   `Running total` draws the cumulative ladder. Binance trades are marked `S` or
-  `P`, and tiny sizes print as decimals instead of scientific notation. Prices group at a chosen step;
-  each instrument keeps its own step and Book/DOM/Trades settings, while the
-  visible tab and venue list stay panel-wide. The panel follows the active chart
-  symbol.
+  `P`, and tiny sizes print as decimals instead of scientific notation. Prices
+  group at a chosen step; each instrument keeps its own step and Book/DOM/Trades
+  settings, while the visible tab and venue list stay panel-wide. The panel
+  follows the active chart symbol. Changing the Exchange include list keeps the
+  panel live: the wire accepts the stored venue and market ids, so unchecking
+  Binance spot drops only that book instead of every feed.
 - Pine indicators can arm an alert from their legend bell. The alert keeps a
   snapshot of the script, inputs, symbol and timeframe and runs on closed bars in
   the sidecar after the chart or workspace tab closes. The Alerts panel separates
