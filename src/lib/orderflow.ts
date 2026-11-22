@@ -24,7 +24,7 @@ export interface OrderFlowLevel {
 }
 
 export interface OrderFlowVenueBook {
-  venue: VenueId;
+  venue: string;
   bids: OrderFlowLevel[];
   asks: OrderFlowLevel[];
   at: number;
@@ -34,7 +34,8 @@ export interface OrderFlowVenueBook {
 export interface OrderFlowBook {
   bids: OrderFlowLevel[];
   asks: OrderFlowLevel[];
-  venues: VenueId[];
+  /** Peer ids (`venue:kind:nativeId`) that contributed a fresh book. */
+  peers: string[];
   at: number;
 }
 
@@ -42,6 +43,8 @@ export interface OrderFlowTrade {
   /** Venue trade id, unique inside the venue. */
   id: string;
   venue: VenueId;
+  /** Peer id (`venue:kind:nativeId`); Binance spot and perp are peers. */
+  peer: string;
   price: number;
   size: number;
   side: OrderFlowSide;
@@ -66,6 +69,8 @@ export type OrderFlowFrame =
       quote: string;
       kind: MarketKind;
       peers: OrderFlowPeer[];
+      /** Instrument key of the chart's own venue. */
+      primary: string;
       tickSize: number;
       pricePrecision: number;
     }
@@ -73,8 +78,8 @@ export type OrderFlowFrame =
       type: 'book';
       bids: OrderFlowLevel[];
       asks: OrderFlowLevel[];
-      venues: VenueId[];
-      stale: VenueId[];
+      peers: string[];
+      stale: string[];
       at: number;
     }
   | { type: 'trades'; trades: OrderFlowTrade[] }
@@ -85,10 +90,10 @@ export type OrderFlowClientMessage =
   | {
       type: 'subscribe';
       symbol: string;
-      venues?: VenueId[] | null;
+      venues?: string[] | null;
       grouping?: number | null;
     }
-  | { type: 'venues'; venues: VenueId[] | null }
+  | { type: 'venues'; venues: string[] | null }
   | { type: 'grouping'; value: number | null }
   | { type: 'unsubscribe' };
 
@@ -105,12 +110,14 @@ export interface OrderFlowState {
   quote: string;
   kind: MarketKind;
   peers: OrderFlowPeer[];
+  /** Instrument key of the chart's own venue. */
+  primary: string;
   tickSize: number;
   pricePrecision: number;
   book: OrderFlowBook | null;
-  stale: VenueId[];
+  stale: string[];
   trades: OrderFlowTrade[];
-  /** venue → price/fineStep → traded size. */
+  /** peer → price/fineStep → traded size. */
   buckets: Record<string, Map<number, OrderFlowBucket>>;
   startedAt: number;
   warnings: Array<{ venue?: VenueId; message: string; at: number }>;
@@ -123,10 +130,10 @@ export interface OrderFlowColumn {
 
 export interface OrderFlowSettings {
   tab: OrderFlowTab;
-  /** Combined reads every included venue; a venue id reads only that one. */
-  source: 'combined' | VenueId;
-  /** null means every resolved peer; [] means none. */
-  venues: VenueId[] | null;
+  /** Combined reads every included peer; a peer id reads only that one. */
+  source: string;
+  /** Peer ids (`venue:kind:nativeId`); null means every resolved peer, [] none. */
+  venues: string[] | null;
   /** null follows the instrument's price; a number is an explicit step. */
   grouping: number | null;
   book: {
@@ -173,7 +180,7 @@ export interface OrderFlowSettings {
 export interface OrderFlowPreferences {
   version: 1;
   tab: OrderFlowTab;
-  venues: VenueId[] | null;
+  venues: string[] | null;
   symbols: Record<string, OrderFlowSettings>;
 }
 
@@ -331,12 +338,50 @@ export function isOrderFlowPreferences(value: unknown): value is OrderFlowPrefer
   return Object.values(value.symbols).every((entry) => isOrderFlowSettings(entry));
 }
 
-/** Stable per-instrument key: bare Binance symbols gain their provider. */
+/** Stable per-instrument key: a bare Binance symbol is the perpetual. */
 export function orderFlowSymbolKey(symbol: string): string {
   const at = symbol.indexOf(':');
-  const provider = at >= 0 ? symbol.slice(0, at).toUpperCase() : 'BINANCE';
   const ticker = (at >= 0 ? symbol.slice(at + 1) : symbol).toUpperCase();
-  return `${provider}:${ticker}`;
+  if (at < 0) return `BINANCE:${ticker.endsWith('.P') ? ticker : `${ticker}.P`}`;
+  return `${symbol.slice(0, at).toUpperCase()}:${ticker}`;
+}
+
+/** Include-list id that stays stable across symbols: `venue:kind`. */
+export function orderFlowPeerSource(peer: Pick<OrderFlowPeer, 'venue' | 'kind'>): string {
+  return `${peer.venue}:${peer.kind}`;
+}
+
+/**
+ * Read the stored include list for the current symbol. Entries are `venue:kind`
+ * so the panel-wide list keeps Binance spot and perp separate on every chart; a
+ * legacy venue id includes both markets and an instrument key still matches.
+ */
+function storedHasPeer(stored: readonly string[], peer: OrderFlowPeer): boolean {
+  return stored.some(
+    (id) =>
+      id === peer.instrumentKey ||
+      id === orderFlowPeerSource(peer) ||
+      id === peer.venue,
+  );
+}
+
+export function resolveVenueSelection(
+  peers: readonly OrderFlowPeer[],
+  stored: readonly string[] | null,
+): string[] | null {
+  if (stored === null) return null;
+  return peers
+    .filter((peer) => storedHasPeer(stored, peer))
+    .map((peer) => peer.instrumentKey);
+}
+
+/** Fold legacy venue ids and instrument keys into stable `venue:kind` ids. */
+export function normalizeVenueSelection(
+  peers: readonly OrderFlowPeer[],
+  stored: readonly string[] | null,
+): string[] | null {
+  if (stored === null) return null;
+  return peers.filter((peer) => storedHasPeer(stored, peer)).map(orderFlowPeerSource);
 }
 
 /** Resolve the current instrument's stored settings over the panel-wide tab/venues. */
@@ -406,14 +451,14 @@ function toLevels(
 /** Rebuckets the tick-level trade totals onto the visible price step. */
 export function mergeTradeTotals(
   buckets: Record<string, Map<number, OrderFlowBucket>>,
-  venues: readonly VenueId[],
+  peers: readonly string[],
   fineStep: number,
   step: number,
 ): Map<number, OrderFlowBucket> {
   const totals = new Map<number, OrderFlowBucket>();
   if (!(fineStep > 0)) return totals;
-  for (const venue of venues) {
-    const rows = buckets[venue];
+  for (const peer of peers) {
+    const rows = buckets[peer];
     if (!rows) continue;
     for (const [key, value] of rows) {
       const bucket = priceKey(key * fineStep, step);
@@ -463,8 +508,8 @@ export function combineFills(trades: readonly OrderFlowTrade[]): OrderFlowTrade[
   const merged = new Map<string, OrderFlowTrade>();
   for (const trade of trades) {
     const key = trade.group
-      ? `${trade.venue}|${trade.group}`
-      : `${trade.venue}|${trade.side}|${trade.price}|${Math.floor(trade.time / 10)}`;
+      ? `${trade.peer}|${trade.group}`
+      : `${trade.peer}|${trade.side}|${trade.price}|${Math.floor(trade.time / 10)}`;
     const current = merged.get(key);
     if (!current) {
       merged.set(key, trade);
@@ -484,7 +529,11 @@ export function formatBaseSize(value: number | null): string {
   if (value === 0) return '0';
   const abs = Math.abs(value);
   if (abs >= 1000) return formatCompact(value);
-  if (abs < 1e-4) return value.toPrecision(3).replace(/0+$/, '').replace(/\.$/, '');
+  if (abs < 1e-4) {
+    // Three significant digits without scientific notation.
+    const decimals = Math.min(12, 2 - Math.floor(Math.log10(abs)));
+    return value.toFixed(decimals).replace(/0+$/, '').replace(/\.$/, '');
+  }
   const digits = abs >= 1 ? 4 : abs >= 0.01 ? 5 : 6;
   return value.toLocaleString('en-US', { maximumFractionDigits: digits });
 }
@@ -532,6 +581,7 @@ export const EMPTY_ORDER_FLOW_STATE: OrderFlowState = {
   quote: '',
   kind: 'perp',
   peers: [],
+  primary: '',
   tickSize: 0,
   pricePrecision: 2,
   book: null,
@@ -546,7 +596,7 @@ export type OrderFlowAction =
   | { type: 'connecting' }
   | { type: 'open' }
   | { type: 'frame'; frame: OrderFlowFrame }
-  | { type: 'drop'; venues: VenueId[] }
+  | { type: 'drop'; venues: string[] }
   | { type: 'reset-window' }
   | { type: 'reset' };
 
@@ -570,8 +620,8 @@ export function orderFlowReducer(
     return {
       ...state,
       buckets,
-      stale: state.stale.filter((venue) => !drop.has(venue)),
-      trades: state.trades.filter((trade) => !drop.has(trade.venue)),
+      stale: state.stale.filter((peer) => !drop.has(peer)),
+      trades: state.trades.filter((trade) => !drop.has(trade.peer)),
     };
   }
 
@@ -588,6 +638,7 @@ export function orderFlowReducer(
       quote: frame.quote,
       kind: frame.kind,
       peers: frame.peers,
+      primary: frame.primary,
       tickSize: frame.tickSize,
       pricePrecision: frame.pricePrecision,
       book: same ? state.book : null,
@@ -607,7 +658,7 @@ export function orderFlowReducer(
       book: {
         bids: frame.bids,
         asks: frame.asks,
-        venues: frame.venues,
+        peers: frame.peers,
         at: frame.at,
       },
     };
@@ -622,10 +673,10 @@ export function orderFlowReducer(
       const next = { ...state.buckets };
       const changed = new Map<string, Map<number, OrderFlowBucket>>();
       for (const trade of frame.trades) {
-        let rows = changed.get(trade.venue);
+        let rows = changed.get(trade.peer);
         if (!rows) {
-          rows = new Map(next[trade.venue] ?? []);
-          changed.set(trade.venue, rows);
+          rows = new Map(next[trade.peer] ?? []);
+          changed.set(trade.peer, rows);
         }
         const key = Math.round(trade.price / state.tickSize);
         const current = rows.get(key) ?? { buy: 0, sell: 0 };
@@ -636,7 +687,7 @@ export function orderFlowReducer(
             : { ...current, sell: current.sell + trade.size },
         );
       }
-      for (const [venue, rows] of changed) next[venue] = rows;
+      for (const [peer, rows] of changed) next[peer] = rows;
       buckets = next;
     }
     return { ...state, status: 'live', error: null, trades, buckets };

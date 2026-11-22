@@ -891,6 +891,9 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             },
             live: true,
             theme: theme === 'dark' ? velaDarkTheme : velaLightTheme,
+            formatters: {
+              price: (_value, ctx) => ctx.fallback().replace(/,/g, '\u00a0'),
+            },
             timezone: 'UTC',
             persist: persistKey,
             storage: seededStorage(persistKey, layoutSeed),

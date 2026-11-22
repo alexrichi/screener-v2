@@ -26,7 +26,7 @@ import {
   type OrderFlowFeed,
 } from './orderflow/feeds';
 import { OrderFlowService } from './orderflow/service';
-import { BinanceKlineStream, PollingBarsStream } from './stream';
+import { BinanceKlineStream, BinanceVenueStream, PollingBarsStream, SPOT_WS_URL } from './stream';
 import type { BarsStream } from './stream';
 import { VenueKlineStream } from './ws';
 import {
@@ -46,11 +46,15 @@ const hubs = new Map<string, VenueHub>([
   ['coinbase', new VenueHub(new CoinbaseVenueAdapter())],
 ]);
 
+const binanceBars = (instrument: Instrument, timeframe: string) =>
+  hubs.get('binance')!.getBars(instrument, timeframe, 2, { includeForming: true });
+
 const streams = new Map<string, BarsStream>([
   [
     'binance',
-    new BinanceKlineStream((instrument, timeframe) =>
-      hubs.get('binance')!.getBars(instrument, timeframe, 2, { includeForming: true }),
+    new BinanceVenueStream(
+      new BinanceKlineStream(binanceBars),
+      new BinanceKlineStream(binanceBars, SPOT_WS_URL),
     ),
   ],
   [

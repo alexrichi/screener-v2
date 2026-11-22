@@ -4,6 +4,7 @@ import type { Instrument, Unsubscribe, VenueBar } from '../src/venues/types';
 
 /** Binance USDⓈ-M combined stream endpoint. */
 const DEFAULT_WS_URL = 'wss://fstream.binance.com/stream';
+export const SPOT_WS_URL = process.env.BINANCE_SPOT_WS_URL ?? 'wss://stream.binance.com:9443/stream';
 const RECONNECT_MS = 2_000;
 /** If the venue socket stays silent this long, start REST polling for the stream. */
 const STALL_MS = 1_500;
@@ -64,6 +65,40 @@ export interface BarsStream {
   ): Unsubscribe;
 }
 
+/** Binance spot and USDⓈ-M use different sockets; one stream routes by kind. */
+export class BinanceVenueStream implements BarsStream {
+  constructor(
+    private readonly perp: BarsStream,
+    private readonly spot: BarsStream,
+  ) {}
+
+  get streamCount(): number {
+    return this.perp.streamCount + this.spot.streamCount;
+  }
+
+  get barCount(): number {
+    return this.perp.barCount + this.spot.barCount;
+  }
+
+  get pollCount(): number {
+    return this.perp.pollCount + this.spot.pollCount;
+  }
+
+  subscribe(
+    instrument: Instrument,
+    timeframe: string,
+    onBar: (bar: VenueBar) => void,
+    opts?: BarsSubscriptionOptions,
+  ): Unsubscribe {
+    return (instrument.kind === 'spot' ? this.spot : this.perp).subscribe(
+      instrument,
+      timeframe,
+      onBar,
+      opts,
+    );
+  }
+}
+
 /**
  * One Binance WebSocket per sidecar, ref-counted per `<symbol>@kline_<tf>`.
  * Every browser, chart cell and future consumer shares the same upstream
@@ -86,6 +121,7 @@ export class BinanceKlineStream implements BarsStream {
       instrument: Instrument,
       timeframe: string,
     ) => Promise<VenueBar[]>,
+    private readonly url = process.env.BINANCE_WS_URL ?? DEFAULT_WS_URL,
   ) {}
 
   get streamCount(): number {
@@ -246,7 +282,7 @@ export class BinanceKlineStream implements BarsStream {
 
   private open(): void {
     if (this.socket) return;
-    const socket = new WebSocket(process.env.BINANCE_WS_URL ?? DEFAULT_WS_URL);
+    const socket = new WebSocket(this.url);
     this.socket = socket;
 
     socket.on('open', () => {

@@ -6,7 +6,6 @@ import {
   type OrderFlowState,
 } from '../lib/orderflow';
 import { sidecarBaseUrl } from '../venues/sidecar';
-import type { VenueId } from '../venues/types';
 
 function orderFlowWsUrl(): string {
   const url = new URL(sidecarBaseUrl());
@@ -19,8 +18,8 @@ function orderFlowWsUrl(): string {
 
 export interface OrderFlowHandle {
   state: OrderFlowState;
-  /** Drop accumulated data for venues the user removed. */
-  dropVenues: (venues: VenueId[]) => void;
+  /** Drop accumulated data for peers the user removed. */
+  dropVenues: (peers: string[]) => void;
   /** Restart the DOM's traded-volume window. */
   resetWindow: () => void;
 }
@@ -31,7 +30,7 @@ export interface OrderFlowHandle {
  */
 export function useOrderFlow(
   symbol: string,
-  venues: VenueId[] | null,
+  venues: string[] | null,
   grouping: number | null,
 ): OrderFlowHandle {
   const [state, dispatch] = useReducer(orderFlowReducer, EMPTY_ORDER_FLOW_STATE);
@@ -110,7 +109,7 @@ export function useOrderFlow(
     socket.send(JSON.stringify({ type: 'grouping', value: grouping }));
   }, [grouping]);
 
-  const dropVenues = useCallback((drop: VenueId[]) => {
+  const dropVenues = useCallback((drop: string[]) => {
     dispatch({ type: 'drop', venues: drop });
   }, []);
 

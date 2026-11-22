@@ -3,6 +3,9 @@ import { createTheme, type VelaTheme } from '@luxalgo/vela';
 const darkUi = createTheme({ base: 'dark' }).settings;
 const lightUi = createTheme({ base: 'light' }).settings;
 
+/** The canvas font Vela draws axes, ticks and labels with. */
+export const VELA_FONT_FAMILY = 'Geist Variable, Geist, system-ui, sans-serif';
+
 export const velaDarkTheme: VelaTheme = {
   background: '#0b1220',
   textColor: '#d1d5db',
@@ -10,7 +13,7 @@ export const velaDarkTheme: VelaTheme = {
   borderColor: '#374151',
   upColor: '#089981',
   downColor: '#f23645',
-  fontFamily: 'Geist Variable, Geist, system-ui, sans-serif',
+  fontFamily: VELA_FONT_FAMILY,
   ui: darkUi,
 };
 
@@ -21,6 +24,6 @@ export const velaLightTheme: VelaTheme = {
   borderColor: '#cbd5e1',
   upColor: '#089981',
   downColor: '#f23645',
-  fontFamily: 'Geist Variable, Geist, system-ui, sans-serif',
+  fontFamily: VELA_FONT_FAMILY,
   ui: lightUi,
 };

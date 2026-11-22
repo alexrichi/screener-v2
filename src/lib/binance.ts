@@ -1,15 +1,17 @@
 import { canonicalTimeframe } from './timeframe';
 
 const FUTURES = 'https://fapi.binance.com/fapi/v1';
+const SPOT = 'https://api.binance.com/api/v3';
 
 interface BinanceExchangeSymbol {
   symbol: string;
   status: string;
-  contractType: string;
+  contractType?: string;
   baseAsset: string;
   quoteAsset: string;
   pricePrecision?: number;
   tickSize?: string;
+  isSpotTradingAllowed?: boolean;
   filters?: { filterType?: string; tickSize?: string }[];
 }
 
@@ -55,6 +57,7 @@ interface SymbolMeta {
   symbol: string;
   base: string;
   quote: string;
+  kind: 'spot' | 'perp';
   pricePrecision: number;
   /** Actual price step from PRICE_FILTER.tickSize, e.g. 0.1 for BTCUSDT.P. */
   tickSize?: number;
@@ -105,7 +108,7 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 
 function decimalsFromTickSize(tickSize: string | undefined): number {
   if (!tickSize || tickSize === '0') return 8;
-  const text = String(tickSize);
+  const text = String(tickSize).replace(/0+$/, '').replace(/\.$/, '');
   const dot = text.indexOf('.');
   if (dot < 0) return 0;
   return Math.min(8, text.length - dot - 1);
@@ -125,17 +128,9 @@ function numberOrNull(value: unknown): number | null {
 }
 
 export function chartSymbol(symbol: string): string {
-  const at = symbol.indexOf(':');
-  if (at >= 0) {
-    const provider = symbol.slice(0, at);
-    const ticker = symbol.slice(at + 1);
-    // Provider-prefixed Binance perps keep `.P`. Older persisted tabs may have
-    // lost it; the provider only serves USDT-M perpetuals in this app.
-    if (provider.toLowerCase() === 'binance' && !ticker.toUpperCase().endsWith('.P')) {
-      return `${provider}:${ticker}.P`;
-    }
-    return symbol;
-  }
+  // A provider-prefixed ticker is authoritative: Binance spot is `BTCUSDT`,
+  // its perpetual is `BTCUSDT.P`. A bare ticker has always meant the perp.
+  if (symbol.includes(':')) return symbol;
   return symbol.endsWith('.P') ? symbol : `${symbol}.P`;
 }
 
@@ -187,18 +182,25 @@ export function binanceInterval(timeframe: string): string {
 
 export async function fetchSymbolMeta(signal?: AbortSignal): Promise<SymbolMeta[]> {
   if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.rows;
-  const info = await fetchJson<BinanceExchangeInfo>(`${FUTURES}/exchangeInfo`, signal);
-  const rows = info.symbols
-    .filter(
-      (s) =>
-        s.contractType === 'PERPETUAL' &&
-        s.quoteAsset === 'USDT' &&
-        s.status === 'TRADING',
-    )
-    .map((s) => ({
+  const [futures, spot] = await Promise.allSettled([
+    fetchJson<BinanceExchangeInfo>(`${FUTURES}/exchangeInfo`, signal),
+    fetchJson<BinanceExchangeInfo>(`${SPOT}/exchangeInfo`, signal),
+  ]);
+  if (futures.status === 'rejected') throw futures.reason;
+  const rows: SymbolMeta[] = [];
+  for (const s of futures.value.symbols) {
+    if (
+      s.contractType !== 'PERPETUAL' ||
+      s.quoteAsset !== 'USDT' ||
+      s.status !== 'TRADING'
+    ) {
+      continue;
+    }
+    rows.push({
       symbol: s.symbol,
       base: s.baseAsset,
       quote: s.quoteAsset,
+      kind: 'perp',
       pricePrecision:
         typeof s.pricePrecision === 'number'
           ? Math.max(0, Math.min(8, s.pricePrecision))
@@ -206,7 +208,33 @@ export async function fetchSymbolMeta(signal?: AbortSignal): Promise<SymbolMeta[
       tickSize: numberFromTickSize(
         s.tickSize ?? s.filters?.find((f) => f.filterType === 'PRICE_FILTER')?.tickSize,
       ),
-    }));
+    });
+  }
+  if (spot.status === 'fulfilled') {
+    for (const s of spot.value.symbols) {
+      if (
+        s.status !== 'TRADING' ||
+        s.quoteAsset !== 'USDT' ||
+        s.isSpotTradingAllowed === false
+      ) {
+        continue;
+      }
+      const tick = s.filters?.find((f) => f.filterType === 'PRICE_FILTER')?.tickSize;
+      rows.push({
+        symbol: s.symbol,
+        base: s.baseAsset,
+        quote: s.quoteAsset,
+        kind: 'spot',
+        pricePrecision: decimalsFromTickSize(tick),
+        tickSize: numberFromTickSize(tick),
+      });
+    }
+  } else {
+    console.warn(
+      '[binance] spot exchange info unavailable',
+      spot.reason instanceof Error ? spot.reason.message : spot.reason,
+    );
+  }
   metaCache = { at: Date.now(), rows };
   return rows;
 }
@@ -216,6 +244,7 @@ export interface BinanceMarketRow {
   symbol: string;
   base: string;
   quote: string;
+  kind: 'spot' | 'perp';
   price: number | null;
   change24h: number | null;
   quoteVolume: number | null;
@@ -226,17 +255,26 @@ export interface BinanceMarketRow {
 }
 
 export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarketRow[]> {
-  const [meta, tickers, premium] = await Promise.all([
+  const [meta, futuresTickers, premium, spotTickers] = await Promise.all([
     fetchSymbolMeta(signal),
     fetchJson<BinanceTicker24h[]>(`${FUTURES}/ticker/24hr`, signal),
     fetchJson<BinancePremiumIndex[]>(`${FUTURES}/premiumIndex`, signal),
+    fetchJson<BinanceTicker24h[]>(`${SPOT}/ticker/24hr`, signal).catch((error) => {
+      console.warn(
+        '[binance] spot tickers unavailable',
+        error instanceof Error ? error.message : error,
+      );
+      return [] as BinanceTicker24h[];
+    }),
   ]);
-  const tickerBySymbol = new Map(tickers.map((t) => [t.symbol, t]));
+  const tickerByKey = new Map<string, BinanceTicker24h>();
+  for (const ticker of futuresTickers) tickerByKey.set(`perp:${ticker.symbol}`, ticker);
+  for (const ticker of spotTickers) tickerByKey.set(`spot:${ticker.symbol}`, ticker);
   const fundingBySymbol = new Map(premium.map((p) => [p.symbol, p]));
 
   const rows: BinanceMarketRow[] = meta.map((m) => {
-    const ticker = tickerBySymbol.get(m.symbol);
-    const funding = fundingBySymbol.get(m.symbol);
+    const ticker = tickerByKey.get(`${m.kind}:${m.symbol}`);
+    const funding = m.kind === 'perp' ? fundingBySymbol.get(m.symbol) : undefined;
     const price = numberOrNull(ticker?.lastPrice);
     const quoteVolume = numberOrNull(ticker?.quoteVolume);
     const nextFunding = numberOrNull(funding?.nextFundingTime);
@@ -244,6 +282,7 @@ export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarket
       symbol: m.symbol,
       base: m.base,
       quote: m.quote,
+      kind: m.kind,
       price: price && price > 0 ? price : null,
       change24h: numberOrNull(ticker?.priceChangePercent),
       quoteVolume: quoteVolume && quoteVolume > 0 ? quoteVolume : null,
@@ -265,6 +304,8 @@ export interface KlineOptions {
   from?: number;
   /** End of the window (epoch ms). Binance `endTime`. */
   to?: number;
+  /** Spot and USDⓈ-M use different endpoints and page caps. */
+  kind?: 'spot' | 'perp';
 }
 
 /**
@@ -272,7 +313,7 @@ export interface KlineOptions {
  * includes the forming candle as the last row, so by default one extra row is
  * requested and any row whose close time is still in the future is dropped.
  * Charts pass `includeForming` to keep it; the scanner never does. Requests are
- * capped at Binance's 1500-row page; callers paginate for deeper history.
+ * capped at Binance's page size; callers paginate for deeper history.
  */
 export async function fetchKlines(
   symbol: string,
@@ -282,7 +323,9 @@ export async function fetchKlines(
   opts: KlineOptions = {},
 ): Promise<PineBar[]> {
   const interval = binanceInterval(timeframe);
-  const limit = Math.min(1500, Math.max(2, bars + (opts.includeForming ? 0 : 1)));
+  const base = opts.kind === 'spot' ? SPOT : FUTURES;
+  const maxPage = opts.kind === 'spot' ? 1000 : 1500;
+  const limit = Math.min(maxPage, Math.max(2, bars + (opts.includeForming ? 0 : 1)));
   const query = new URLSearchParams({
     symbol,
     interval,
@@ -290,7 +333,7 @@ export async function fetchKlines(
   });
   if (opts.from != null) query.set('startTime', String(Math.floor(opts.from)));
   if (opts.to != null) query.set('endTime', String(Math.floor(opts.to)));
-  const url = `${FUTURES}/klines?${query.toString()}`;
+  const url = `${base}/klines?${query.toString()}`;
   const raw = await fetchJson<Array<Array<string | number>>>(url, signal);
   const now = Date.now();
   const parsed = raw

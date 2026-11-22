@@ -3,7 +3,7 @@ import type { OrderFlowLevel, OrderFlowSide, OrderFlowTrade } from '../../src/li
 import type { Instrument, Unsubscribe } from '../../src/venues/types';
 import { BookAccumulator, type BookUpdate } from './books';
 
-export type FeedTrade = Omit<OrderFlowTrade, 'venue'>;
+export type FeedTrade = Omit<OrderFlowTrade, 'venue' | 'peer'>;
 
 export interface FeedHandlers {
   book(levels: { bids: OrderFlowLevel[]; asks: OrderFlowLevel[] }): void;
@@ -505,7 +505,8 @@ export abstract class BaseOrderFlowFeed implements OrderFlowFeed {
 interface BinanceDepthEvent {
   U: number;
   u: number;
-  pu: number;
+  /** Futures only; spot depth updates are continuous without it. */
+  pu?: number;
   bids: Array<[number, number]>;
   asks: Array<[number, number]>;
 }
@@ -514,18 +515,23 @@ type BinanceFullMessage =
   | { kind: 'depth'; event: BinanceDepthEvent }
   | { kind: 'trade'; trade: FeedTrade };
 
-function parseBinanceFull(raw: string): BinanceFullMessage | null {
+export function parseBinanceFull(raw: string): BinanceFullMessage | null {
   const message = object(json(raw));
   const data = object(message?.data);
   if (!data) return null;
   if (data.e === 'depthUpdate') {
     const U = num(data.U);
     const u = num(data.u);
-    const pu = num(data.pu);
-    if (U === null || u === null || pu === null) return null;
+    if (U === null || u === null) return null;
     return {
       kind: 'depth',
-      event: { U, u, pu, bids: pairs(data.b) ?? [], asks: pairs(data.a) ?? [] },
+      event: {
+        U,
+        u,
+        pu: num(data.pu) ?? undefined,
+        bids: pairs(data.b) ?? [],
+        asks: pairs(data.a) ?? [],
+      },
     };
   }
   if (data.e === 'trade') {
@@ -547,10 +553,11 @@ async function fetchBinanceDepth(instrument: Instrument): Promise<{
   bids: Array<[number, number]>;
   asks: Array<[number, number]>;
 }> {
-  const base = (process.env.BINANCE_REST_URL ?? 'https://fapi.binance.com/fapi/v1').replace(
-    /\/+$/,
-    '',
-  );
+  const base = (
+    instrument.kind === 'spot'
+      ? process.env.BINANCE_SPOT_REST_URL ?? 'https://api.binance.com/api/v3'
+      : process.env.BINANCE_REST_URL ?? 'https://fapi.binance.com/fapi/v1'
+  ).replace(/\/+$/, '');
   const response = await fetch(
     `${base}/depth?symbol=${encodeURIComponent(instrument.nativeId)}&limit=1000`,
     { headers: { 'user-agent': 'screener-v2' } },
@@ -623,7 +630,10 @@ export class BinanceOrderFlowFeed implements OrderFlowFeed {
 
   private open(entry: BinanceEntry): void {
     if (entry.closed || entry.handlers.size === 0) return;
-    const base = process.env.BINANCE_WS_URL ?? 'wss://fstream.binance.com/stream';
+    const spot = entry.instrument.kind === 'spot';
+    const base = spot
+      ? process.env.BINANCE_SPOT_WS_URL ?? 'wss://stream.binance.com:9443/stream'
+      : process.env.BINANCE_WS_URL ?? 'wss://fstream.binance.com/stream';
     const symbol = entry.instrument.nativeId.toLowerCase();
     const socket = new WebSocket(`${base}?streams=${symbol}@depth@100ms/${symbol}@trade`);
     entry.socket = socket;

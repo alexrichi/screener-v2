@@ -133,7 +133,8 @@ src/
                                   ingest, clearedAt watermark, unread badge
     orderflow.ts                  shared order-flow types, book/trade merge, grouping,
                                   settings and the panel reducer
-    binance.ts                    public futures REST, symbol/timeframe mapping, klines
+    binance.ts                    public spot and USDⓈ-M REST, symbol/timeframe
+                                  mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
     indicatorState.ts             saved instance ids, input deltas, stored-script validation
@@ -202,8 +203,8 @@ sidecar/
     service.ts                    peer resolution, chart-venue clip, step grouping,
                                   10 Hz combined ladder and trade fan-out
   screener.ts                     server-owned watched table: activation, warm-up, metrics, patches
-  stream.ts                       Binance kline WS plus a REST-polling stream for
-                                  venues without a WS feed
+  stream.ts                       Binance spot and futures kline WS plus a REST-polling
+                                  stream for venues without a WS feed
   ws.ts                           generic ref-counted venue WebSocket stream
   venueStreams.ts                 OKX / Bybit / Bitget / Hyperliquid subscription specs
 electron/
@@ -836,15 +837,20 @@ bracket leg therefore closes at the open, not at its target.
 **Order flow is app-owned.** The `Order flow` side panel reads aggregated
 public books and trades for the active chart symbol. One `/orderflow` WebSocket
 per mounted panel; `sidecar/orderflow/service.ts` resolves the symbol to one
-instrument per venue (same base and a USD-like quote; a spot venue is read from
-its USD book when the chart is a perp) and starts the ref-counted
-`sidecar/orderflow/feeds.ts` sockets. The feeds are Binance `@depth@100ms`
-seeded by a REST depth snapshot, plus raw `trade` (the futures `aggTrade`
-stream is silent), OKX `books` plus `trades`, Bybit `orderbook.200` plus
-`publicTrade`, Bitget `books` plus `trade`, Hyperliquid `l2Book` plus `trades`,
-and Coinbase `level2_batch` plus `matches`
-(whose side is the maker side). `books.ts` keeps each venue's full snapshot+delta book; Binance seeds a REST
-depth snapshot and applies the `@depth` diffs with the `U/u/pu` sequence, while
+instrument per market (same base and a USD-like quote; a spot venue is read from
+its USD book when the chart is a perp). Every venue contributes its best match,
+and Binance contributes both its spot and USDⓈ-M books, so `BTCUSDT.P` reads
+seven books. Each peer is identified by `instrument.key`, not the venue, so the
+spot and perp books, trades and include toggles stay separate. The ref-counted
+`sidecar/orderflow/feeds.ts` sockets are shared per instrument. The feeds are
+Binance `@depth@100ms` seeded by a REST depth snapshot, plus raw `trade` (the
+futures `aggTrade` stream is silent; spot uses `stream.binance.com` and
+`api.binance.com`, perps use `fstream.binance.com` and `fapi.binance.com`), OKX
+`books` plus `trades`, Bybit `orderbook.200` plus `publicTrade`, Bitget `books`
+plus `trade`, Hyperliquid `l2Book` plus `trades`, and Coinbase `level2_batch`
+plus `matches` (whose side is the maker side). `books.ts` keeps each venue's
+full snapshot+delta book; Binance seeds a REST depth snapshot and applies the
+`@depth` diffs with the `U/u/pu` sequence for futures and `U/u` for spot, while
 the other venues use their snapshot+delta channels (Bybit `orderbook.200`). The
 service groups the selected venues at the step and sends one combined ladder of
 up to 100 levels a side plus the trade tape at 10 Hz; `lib/orderflow.ts` holds
@@ -855,7 +861,11 @@ the frame, settings and reducer, and the browser never merges raw venue books.
 on hover. Every `Book`, `DOM` and `Trades` setting lives at
 `screener.orderflow.v2`, keyed per instrument (`orderFlowSymbolKey`); the
 visible tab and include list are panel-wide, and the panel follows
-`activeTab.symbol`.
+`activeTab.symbol`. The include list stores `venue:kind` ids, not instrument
+keys, so excluding Binance spot on BTC also excludes it on ETH; old venue-id
+lists fold into both markets. The `/orderflow` wire accepts an instrument key, a
+`venue:kind` id or a legacy venue id; `selectPeerKeys` is the single matcher both
+the first subscribe and later `venues` updates use.
 
 **Combined order flow reads around the chart venue.** Merging every venue's raw
 book can cross bids and asks when a spot or USD book trades at a basis. The
@@ -870,7 +880,12 @@ a contract venue.
 scanner and Vela consume those shapes, never native ticker formats. Instrument
 identity is `venue:kind:nativeId`; display is `BTCUSDT.P` for perps and
 `BTCUSDT` / `BTC/USD` for spot. API requests use `nativeId`, Vela uses
-`velaSymbol`. Rate limits are declared per adapter and enforced by
+`velaSymbol`. Binance is the one adapter that lists both USDT spot and USDⓈ-M
+perps: a bare ticker means the perpetual, while a prefixed `BINANCE:BTCUSDT` is
+spot and `BINANCE:BTCUSDT.P` is the perp. `sameVelaSymbol` keeps those two
+distinct; `chartSymbol` only adds `.P` to a bare ticker. Spot tickers and klines
+use `api.binance.com/api/v3`, futures use `fapi.binance.com/fapi/v1`; the two
+kline sockets are routed by `BinanceVenueStream`. Rate limits are declared per adapter and enforced by
 `RateLimiter`: a weighted token bucket (`burst = limit`, continuous refill)
 with one scheduler. Under budget requests go immediately; over budget they are
 paced evenly. Waiting for a bucket never holds a concurrency slot, and
@@ -1023,7 +1038,8 @@ Useful browser probes:
 - Clicking a venue column header cycles descending → ascending → unsorted; the
   third state restores the merged 24h-volume order.
 - Clicking an OKX/Coinbase row opens that venue's chart and survives reload;
-  Binance perp tabs keep `BINANCE:...P` through the same round trip.
+  Binance perp tabs keep `BINANCE:...P` through the same round trip; a Binance
+  spot tab keeps `BINANCE:...` without the suffix and opens the spot chart.
 - The Vela symbol picker shows the venue icon before each badge and keeps the
   provider name as text.
 - Switching the layout select to `2h`/`4` changes the live cell count and the tab
@@ -1039,14 +1055,16 @@ Useful browser probes:
   `Alerts`, and `Order flow` as one Vela side panel at a time; the topbar keeps
   Maximize and Layouts. The open panel and width survive reload. The legend
   source action opens the Pine panel.
-- The `Order flow` panel lists `6 exchanges` on `BTCUSDT.P`, with Book, DOM and
-  Trades views. DOM shows sold, bid, price, ask, bought and delta; the ladder
-  follows the market, holds on hover, and the `Group prices by` menu changes the
-  step. The Book centers on the spread and its `Center` button returns after a
-  scroll. Reset clears sold/bought/delta and the `Traded since` clock. The
-  Trades tape pauses, filters by notional, and joins fills. Unchecking a venue
-  in the Exchange menu drops its rows; switching the chart symbol reloads the
-  panel for that symbol.
+- The `Order flow` panel lists `7 exchanges` on `BTCUSDT.P`: Binance spot and
+  its perpetual are separate rows, and the chart's own row carries `Chart`. The
+  same menu lists seven on a Binance spot chart. Book, DOM and Trades views share
+  both Binance books. DOM shows sold, bid, price, ask, bought and delta; the
+  ladder follows the market, holds on hover, and the `Group prices by` menu
+  changes the step. The Book centers on the spread and its `Center` button
+  returns after a scroll. Reset clears sold/bought/delta and the `Traded since`
+  clock. The Trades tape pauses, filters by notional, and joins fills.
+  Unchecking a row in the Exchange menu drops its rows; switching the chart
+  symbol reloads the panel for that symbol.
 - A script with `alert()` on the active chart fills the `Alerts` rail panel with
   the symbol, timeframe, message and indicator; the topbar has no bell, and the
   rail button carries the alert count. Clearing empties the list and the count,

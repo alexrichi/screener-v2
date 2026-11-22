@@ -60,9 +60,17 @@ export function findPineInstrument(
   instruments: readonly Instrument[],
   symbol: string,
 ): Instrument | undefined {
+  const wanted = flatTicker(symbol);
+  // Binance lists spot and perp under the same ticker. An unprefixed script
+  // symbol keeps meaning the perpetual; `BINANCE:...` selects the spot one.
+  if (!symbol.includes(':') && !/\.P$/i.test(symbol)) {
+    const perp = instruments.find(
+      (item) => item.kind === 'perp' && flatTicker(item.nativeId) === wanted,
+    );
+    if (perp) return perp;
+  }
   const exact = instruments.find((item) => sameVelaSymbol(item.velaSymbol, symbol));
   if (exact) return exact;
-  const wanted = flatTicker(symbol);
   return (
     instruments.find((item) => flatTicker(item.nativeId) === wanted) ??
     instruments.find((item) => `${item.base}${item.quote}`.toUpperCase() === wanted)

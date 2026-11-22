@@ -1,11 +1,18 @@
+/** Group with a non-breaking space: `77 919.20`, not `77,919.20`. */
+function groupThousands(text: string): string {
+  return text.replace(/,/g, '\u00a0');
+}
+
 export function formatPrice(value: number | null, precision = 2): string {
   if (value === null || !Number.isFinite(value)) return '—';
   const max = Math.max(0, Math.min(8, precision));
   const min = Math.min(2, max);
-  return value.toLocaleString('en-US', {
-    minimumFractionDigits: min,
-    maximumFractionDigits: max,
-  });
+  return groupThousands(
+    value.toLocaleString('en-US', {
+      minimumFractionDigits: min,
+      maximumFractionDigits: max,
+    }),
+  );
 }
 
 export function formatPct(value: number | null, digits = 2): string {
@@ -32,9 +39,11 @@ export function formatNumber(value: number | null, digits = 4): string {
   const abs = Math.abs(value);
   if (abs >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-  return value.toLocaleString('en-US', {
-    maximumFractionDigits: digits,
-  });
+  return groupThousands(
+    value.toLocaleString('en-US', {
+      maximumFractionDigits: digits,
+    }),
+  );
 }
 
 export function formatClock(ms: number | null): string {

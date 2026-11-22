@@ -27,9 +27,10 @@ export function instrumentKey(
 }
 
 /**
- * Compare chart symbols across the forms the app stores: a bare Binance ticker,
- * a provider-prefixed ticker, and the perp `.P` suffix. Only the Binance venue
- * is implied for bare symbols; every other stored form carries its provider.
+ * Compare chart symbols across the forms the app stores: a bare Binance ticker
+ * means the perpetual, a provider-prefixed ticker keeps its own market, and the
+ * `.P` suffix marks a Binance perp. A bare ticker and a prefixed spot ticker are
+ * different instruments.
  */
 export function sameVelaSymbol(a: string, b: string): boolean {
   const normalize = (raw: string): string => {
@@ -38,7 +39,8 @@ export function sameVelaSymbol(a: string, b: string): boolean {
     const ticker = (at >= 0 ? raw.slice(at + 1) : raw)
       .replace(/\.P$/i, '')
       .toUpperCase();
-    return `${provider}:${ticker}`;
+    const perp = at < 0 || raw.slice(at + 1).toUpperCase().endsWith('.P');
+    return `${provider}:${ticker}${perp ? '.P' : ''}`;
   };
   return normalize(a) === normalize(b);
 }

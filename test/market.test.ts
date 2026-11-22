@@ -9,6 +9,7 @@ import {
 import {
   formatCompact,
   formatFunding,
+  formatNumber,
   formatPct,
   formatPrice,
   layoutLabel,
@@ -187,12 +188,16 @@ describe('binance symbols and intervals', () => {
   it('maps Vela futures symbols both ways', () => {
     expect(chartSymbol('BTCUSDT')).toBe('BTCUSDT.P');
     expect(chartSymbol('BTCUSDT.P')).toBe('BTCUSDT.P');
-    expect(chartSymbol('binance:BTCUSDT')).toBe('binance:BTCUSDT.P');
+    expect(chartSymbol('binance:BTCUSDT')).toBe('binance:BTCUSDT');
+    expect(chartSymbol('binance:BTCUSDT.P')).toBe('binance:BTCUSDT.P');
+    expect(chartSymbol('BINANCE:BTCUSDT')).toBe('BINANCE:BTCUSDT');
     expect(chartSymbol('OKX:BTC-USDT-SWAP')).toBe('OKX:BTC-USDT-SWAP');
     expect(spotSymbol('BTCUSDT.P')).toBe('BTCUSDT');
     expect(spotSymbol('BINANCE:BTCUSDT.P')).toBe('BINANCE:BTCUSDT.P');
+    expect(spotSymbol('BINANCE:BTCUSDT')).toBe('BINANCE:BTCUSDT');
     expect(baseFromSymbol('1000PEPEUSDT.P')).toBe('1000PEPE');
     expect(baseFromSymbol('binance:BTCUSDT.P')).toBe('BTC');
+    expect(baseFromSymbol('binance:BTCUSDT')).toBe('BTC');
     expect(symbolLabel('BTCUSDT')).toBe('BTC');
     expect(symbolLabel('binance:BTCUSDT.P')).toBe('BTC');
     expect(symbolLabel('OKX:BTC-USDT-SWAP')).toBe('BTC');
@@ -215,9 +220,10 @@ describe('binance symbols and intervals', () => {
 
 describe('formatters', () => {
   it('keeps price precision without hiding small prices', () => {
-    expect(formatPrice(77919.2, 2)).toBe('77,919.20');
+    expect(formatPrice(77919.2, 2)).toBe('77\u00a0919.20');
     expect(formatPrice(0.0049141, 7)).toBe('0.0049141');
     expect(formatPrice(null)).toBe('—');
+    expect(formatNumber(123456.789)).toBe('123\u00a0456.789');
   });
 
   it('formats percentages, volume and funding', () => {

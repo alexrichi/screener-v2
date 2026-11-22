@@ -5,16 +5,20 @@ import {
   DEFAULT_ORDER_FLOW_PREFERENCES,
   DEFAULT_ORDER_FLOW_SETTINGS,
   EMPTY_ORDER_FLOW_STATE,
+  formatBaseSize,
   groupingOptions,
   mergeBooks,
   mergeTradeTotals,
+  normalizeVenueSelection,
   orderFlowReducer,
   orderFlowSymbolKey,
+  resolveVenueSelection,
   settingsForSymbol,
   type OrderFlowTrade,
   type OrderFlowVenueBook,
 } from '../src/lib/orderflow';
 import {
+  parseBinanceFull,
   parseBinanceOrderFlow,
   parseBitgetOrderFlow,
   parseBybitOrderFlow,
@@ -23,7 +27,13 @@ import {
   parseOkxOrderFlow,
   scaleMessage,
 } from '../sidecar/orderflow/feeds';
-import { choosePeer, combineBook, groupLevels } from '../sidecar/orderflow/service';
+import {
+  choosePeer,
+  choosePeers,
+  combineBook,
+  groupLevels,
+  selectPeerKeys,
+} from '../sidecar/orderflow/service';
 import { makeInstrument } from '../src/venues/instrument';
 
 const BINANCE = makeInstrument({
@@ -35,6 +45,16 @@ const BINANCE = makeInstrument({
   velaSymbol: 'BINANCE:BTCUSDT.P',
   pricePrecision: 1,
   tickSize: 0.1,
+});
+const BINANCE_SPOT = makeInstrument({
+  venue: 'binance',
+  nativeId: 'BTCUSDT',
+  base: 'BTC',
+  quote: 'USDT',
+  kind: 'spot',
+  velaSymbol: 'BINANCE:BTCUSDT',
+  pricePrecision: 2,
+  tickSize: 0.01,
 });
 const BINANCE_USDC = makeInstrument({
   venue: 'binance',
@@ -80,6 +100,7 @@ function trade(overrides: Partial<OrderFlowTrade> = {}): OrderFlowTrade {
   return {
     id: 't1',
     venue: 'binance',
+    peer: BINANCE.key,
     price: 100.1,
     size: 2,
     side: 'buy',
@@ -111,6 +132,103 @@ describe('order flow peers', () => {
     ).toBe(COINBASE.key);
   });
 
+  it('reads Binance spot beside its perpetual', () => {
+    expect(
+      choosePeers([BINANCE, BINANCE_SPOT], 'BTC', 'USDT', 'perp', BINANCE.key).map(
+        (peer) => peer.key,
+      ),
+    ).toEqual([BINANCE.key, BINANCE_SPOT.key]);
+    expect(
+      choosePeers([BINANCE, BINANCE_SPOT], 'BTC', 'USDT', 'spot', BINANCE_SPOT.key).map(
+        (peer) => peer.key,
+      ),
+    ).toEqual([BINANCE_SPOT.key, BINANCE.key]);
+    expect(choosePeers([COINBASE], 'BTC', 'USDT', 'perp', BINANCE.key)).toHaveLength(1);
+  });
+
+  it('folds a stored venue list into its spot and perp peers', () => {
+    const peers = [
+      {
+        venue: 'binance' as const,
+        instrumentKey: BINANCE.key,
+        display: 'BTCUSDT.P',
+        kind: 'perp' as const,
+        tickSize: 0.1,
+      },
+      {
+        venue: 'binance' as const,
+        instrumentKey: BINANCE_SPOT.key,
+        display: 'BTCUSDT',
+        kind: 'spot' as const,
+        tickSize: 0.01,
+      },
+      {
+        venue: 'okx' as const,
+        instrumentKey: 'okx:perp:BTC-USDT-SWAP',
+        display: 'BTC-USDT-SWAP',
+        kind: 'perp' as const,
+        tickSize: 0.1,
+      },
+    ];
+    expect(resolveVenueSelection(peers, null)).toBeNull();
+    expect(resolveVenueSelection(peers, [])).toEqual([]);
+    expect(resolveVenueSelection(peers, ['binance'])).toEqual([
+      BINANCE.key,
+      BINANCE_SPOT.key,
+    ]);
+    expect(resolveVenueSelection(peers, [BINANCE_SPOT.key])).toEqual([BINANCE_SPOT.key]);
+    expect(resolveVenueSelection(peers, ['binance:spot'])).toEqual([BINANCE_SPOT.key]);
+    expect(normalizeVenueSelection(peers, ['binance'])).toEqual([
+      'binance:perp',
+      'binance:spot',
+    ]);
+    expect(normalizeVenueSelection(peers, ['binance:spot', 'okx:perp'])).toEqual([
+      'binance:spot',
+      'okx:perp',
+    ]);
+
+    const eth = [
+      { ...peers[1]!, instrumentKey: 'binance:spot:ETHUSDT' },
+      { ...peers[0]!, instrumentKey: 'binance:perp:ETHUSDT' },
+    ];
+    expect(resolveVenueSelection(eth, ['binance:spot'])).toEqual([
+      'binance:spot:ETHUSDT',
+    ]);
+  });
+
+  it('accepts every include-list form on the order-flow wire', () => {
+    const peers = [
+      {
+        venue: 'binance' as const,
+        instrumentKey: BINANCE.key,
+        display: 'BTCUSDT.P',
+        kind: 'perp' as const,
+        tickSize: 0.1,
+      },
+      {
+        venue: 'binance' as const,
+        instrumentKey: BINANCE_SPOT.key,
+        display: 'BTCUSDT',
+        kind: 'spot' as const,
+        tickSize: 0.01,
+      },
+      {
+        venue: 'okx' as const,
+        instrumentKey: 'okx:perp:BTC-USDT-SWAP',
+        display: 'BTC-USDT-SWAP',
+        kind: 'perp' as const,
+        tickSize: 0.1,
+      },
+    ];
+    const keys = (wanted: string[] | null) => [...selectPeerKeys(peers, wanted)].sort();
+    expect(keys([BINANCE_SPOT.key])).toEqual([BINANCE_SPOT.key]);
+    expect(keys(['binance:spot'])).toEqual([BINANCE_SPOT.key]);
+    expect(keys(['binance'])).toEqual([BINANCE.key, BINANCE_SPOT.key].sort());
+    expect(keys(['okx:perp'])).toEqual(['okx:perp:BTC-USDT-SWAP']);
+    expect(keys(null)).toHaveLength(3);
+    expect(keys([])).toEqual([]);
+  });
+
   it('rejects a non-USD quote', () => {
     const eur = makeInstrument({
       venue: 'okx',
@@ -121,6 +239,15 @@ describe('order flow peers', () => {
       velaSymbol: 'OKX:BTC-EUR',
     });
     expect(choosePeer([eur], 'BTC', 'USDT', 'perp', BINANCE.key)).toBeUndefined();
+  });
+});
+
+describe('order flow formatting', () => {
+  it('writes tiny sizes as decimals, never scientific notation', () => {
+    expect(formatBaseSize(2e-8)).toBe('0.00000002');
+    expect(formatBaseSize(1.234e-5)).toBe('0.0000123');
+    expect(formatBaseSize(0.0001)).toBe('0.0001');
+    expect(formatBaseSize(1.5)).toBe('1.5');
   });
 });
 
@@ -168,7 +295,10 @@ describe('order flow book merge', () => {
   });
 
   it('keeps Book, DOM and Trades settings per instrument', () => {
+    expect(orderFlowSymbolKey('BTCUSDT')).toBe('BINANCE:BTCUSDT.P');
     expect(orderFlowSymbolKey('BTCUSDT.P')).toBe('BINANCE:BTCUSDT.P');
+    expect(orderFlowSymbolKey('BINANCE:BTCUSDT')).toBe('BINANCE:BTCUSDT');
+    expect(orderFlowSymbolKey('BINANCE:BTCUSDT.P')).toBe('BINANCE:BTCUSDT.P');
     const btc = settingsForSymbol(DEFAULT_ORDER_FLOW_PREFERENCES, 'BINANCE:BTCUSDT.P');
     const prefs = {
       ...DEFAULT_ORDER_FLOW_PREFERENCES,
@@ -229,7 +359,7 @@ describe('order flow book merge', () => {
       0.1,
       now,
     );
-    expect(combined.venues).toEqual(['binance', 'okx']);
+    expect(combined.peers).toEqual(['binance', 'okx']);
     expect(combined.bids).toEqual([{ price: 100.1, size: 2 }]);
     expect(combined.asks).toEqual([
       { price: 100.2, size: 3 },
@@ -282,6 +412,28 @@ describe('order flow parser fixtures', () => {
       size: 0.5,
       group: '1700000000000',
     });
+  });
+
+  it('reads spot depth updates without a previous-update id', () => {
+    const spot = parseBinanceFull(
+      JSON.stringify({
+        data: { e: 'depthUpdate', U: 5, u: 7, b: [['100.1', '2']], a: [] },
+      }),
+    );
+    expect(spot?.kind).toBe('depth');
+    if (spot?.kind !== 'depth') return;
+    expect(spot.event.pu).toBeUndefined();
+    expect(spot.event.bids).toEqual([[100.1, 2]]);
+
+    const futures = parseBinanceFull(
+      JSON.stringify({
+        data: { e: 'depthUpdate', U: 5, u: 7, pu: 4, b: [], a: [['100.2', '3']] },
+      }),
+    );
+    expect(futures?.kind).toBe('depth');
+    if (futures?.kind !== 'depth') return;
+    expect(futures.event.pu).toBe(4);
+    expect(futures.event.asks).toEqual([[100.2, 3]]);
   });
 
   it('reads OKX snapshots, updates and trades', () => {
@@ -478,6 +630,7 @@ describe('order flow reducer', () => {
         tickSize: 0.1,
       },
     ],
+    primary: BINANCE.key,
     tickSize: 0.1,
     pricePrecision: 1,
   };
@@ -495,8 +648,8 @@ describe('order flow reducer', () => {
       },
     });
     expect(state.trades).toHaveLength(2);
-    expect(state.buckets.binance?.get(1001)).toEqual({ buy: 2, sell: 0 });
-    expect(state.buckets.binance?.get(1002)).toEqual({ buy: 0, sell: 1 });
+    expect(state.buckets[BINANCE.key]?.get(1001)).toEqual({ buy: 2, sell: 0 });
+    expect(state.buckets[BINANCE.key]?.get(1002)).toEqual({ buy: 0, sell: 1 });
 
     state = orderFlowReducer(state, { type: 'reset-window' });
     expect(state.trades).toHaveLength(0);
@@ -511,7 +664,7 @@ describe('order flow reducer', () => {
         type: 'book',
         bids: [{ price: 100, size: 2 }],
         asks: [{ price: 101, size: 3 }],
-        venues: ['binance', 'okx'],
+        peers: [BINANCE.key, 'okx:perp:BTCUSDT'],
         stale: [],
         at: 1,
       },
@@ -520,13 +673,16 @@ describe('order flow reducer', () => {
       type: 'frame',
       frame: {
         type: 'trades',
-        trades: [trade(), trade({ id: 'okx-1', venue: 'okx', price: 100.2 })],
+        trades: [
+          trade(),
+          trade({ id: 'okx-1', venue: 'okx', peer: 'okx:perp:BTCUSDT', price: 100.2 }),
+        ],
       },
     });
-    state = orderFlowReducer(state, { type: 'drop', venues: ['okx'] });
+    state = orderFlowReducer(state, { type: 'drop', venues: ['okx:perp:BTCUSDT'] });
     expect(state.book?.bids).toEqual([{ price: 100, size: 2 }]);
-    expect(state.trades.every((item) => item.venue === 'binance')).toBe(true);
-    expect(state.buckets.okx).toBeUndefined();
+    expect(state.trades.every((item) => item.peer === BINANCE.key)).toBe(true);
+    expect(state.buckets['okx:perp:BTCUSDT']).toBeUndefined();
   });
 
   it('clears the previous symbol on a new ready frame', () => {

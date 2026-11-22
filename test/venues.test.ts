@@ -7,6 +7,7 @@ import {
   sameVelaSymbol,
   spotDisplay,
 } from '../src/venues/instrument';
+import { findPineInstrument } from '../src/lib/pineVela/seriesHost';
 import { FakeVenueAdapter } from '../src/venues/fake';
 import { parseOkxFunding, okxErrorInfo } from '../src/venues/okx';
 import { klineToBar } from '../sidecar/stream';
@@ -54,9 +55,35 @@ describe('instrument naming', () => {
     expect(perp.tickSize).toBe(0.1);
   });
 
+  it('resolves a script\'s bare ticker to Binance perp and a prefix to spot', () => {
+    const spot = makeInstrument({
+      venue: 'binance',
+      nativeId: 'BTCUSDT',
+      base: 'BTC',
+      quote: 'USDT',
+      kind: 'spot',
+      velaSymbol: 'BINANCE:BTCUSDT',
+    });
+    const perp = makeInstrument({
+      venue: 'binance',
+      nativeId: 'BTCUSDT',
+      base: 'BTC',
+      quote: 'USDT',
+      kind: 'perp',
+      velaSymbol: 'BINANCE:BTCUSDT.P',
+    });
+    expect(findPineInstrument([spot, perp], 'BTCUSDT')?.key).toBe(perp.key);
+    expect(findPineInstrument([spot, perp], 'BTCUSDT.P')?.key).toBe(perp.key);
+    expect(findPineInstrument([spot, perp], 'BINANCE:BTCUSDT')?.key).toBe(spot.key);
+    expect(findPineInstrument([spot, perp], 'BINANCE:BTCUSDT.P')?.key).toBe(perp.key);
+  });
+
   it('compares bare, prefixed and perp chart symbols', () => {
     expect(sameVelaSymbol('BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(true);
-    expect(sameVelaSymbol('binance:BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(true);
+    expect(sameVelaSymbol('binance:BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(false);
+    expect(sameVelaSymbol('BINANCE:BTCUSDT', 'BINANCE:BTCUSDT')).toBe(true);
+    expect(sameVelaSymbol('BINANCE:BTCUSDT', 'BINANCE:BTCUSDT.P')).toBe(false);
+    expect(sameVelaSymbol('BTCUSDT', 'BINANCE:BTCUSDT')).toBe(false);
     expect(sameVelaSymbol('okx:BTC-USDT-SWAP', 'OKX:BTC-USDT-SWAP')).toBe(true);
     expect(sameVelaSymbol('okx:BTC-USDT-SWAP', 'bybit:BTCUSDT')).toBe(false);
     expect(sameVelaSymbol('ETHUSDT', 'BTCUSDT')).toBe(false);

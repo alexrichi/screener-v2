@@ -23,8 +23,11 @@ import {
   groupingOptions,
   isOrderFlowPreferences,
   mergeTradeTotals,
+  normalizeVenueSelection,
+  orderFlowPeerSource,
   orderFlowSymbolKey,
   priceKey,
+  resolveVenueSelection,
   settingsForSymbol,
   spreadBps,
   type OrderFlowBook,
@@ -35,9 +38,9 @@ import {
   type OrderFlowTrade,
 } from '../lib/orderflow';
 import { usePersistedState } from '../lib/usePersistedState';
+import { VELA_FONT_FAMILY } from '../lib/velaTheme';
 import { venueLabel } from '../venues/catalog';
 import { VenueIcon } from '../venues/venueIcons';
-import type { VenueId } from '../venues/types';
 import { Segmented } from '../ui/primitives';
 import { PopoverContent } from '../ui/overlays';
 import { OrderFlowSettings as SettingsBody } from './OrderFlowSettings';
@@ -129,7 +132,7 @@ function BookRow({
   const height = Math.max(13, Math.round(ROW_BASE * (zoom / 100)));
   return (
     <div
-      className="relative flex items-center justify-between gap-2 px-2 font-mono text-[10.5px] tabular-nums"
+      className="relative flex items-center justify-between gap-2 px-2 text-[11px]"
       style={{ height, borderTop: line ? `1px solid ${color}55` : undefined }}
     >
       {(style === 'bars' || style === 'area' || style === 'area-line') && (
@@ -168,12 +171,6 @@ function BookTab({
   const decimals = decimalsForStep(step);
   const asksRunning = running(asks);
   const bidsRunning = running(bids);
-  const maxSize = Math.max(1, ...asks.map((l) => l.size), ...bids.map((l) => l.size));
-  const maxBase = Math.max(
-    1,
-    ...asksRunning.map((row) => row.base),
-    ...bidsRunning.map((row) => row.base),
-  );
   const bidTotal = bidsRunning.at(-1)?.base ?? 0;
   const askTotal = asksRunning.at(-1)?.base ?? 0;
   const bidPct = bidTotal + askTotal > 0 ? (bidTotal / (bidTotal + askTotal)) * 100 : 50;
@@ -189,10 +186,10 @@ function BookTab({
         : row.level.size;
   const text = (row: { level: OrderFlowLevel; base: number; quote: number }): string =>
     unit === 'quote' ? formatQuoteSize(value(row)) : formatBaseSize(value(row));
-  const share = (row: { level: OrderFlowLevel; base: number }): number =>
-    settings.book.style === 'area' || settings.book.style === 'area-line'
-      ? (row.base / maxBase) * 100
-      : (row.level.size / maxSize) * 100;
+  // The bar measures whichever total the Size/Total header shows.
+  const maxValue = Math.max(1, ...asksRunning.map(value), ...bidsRunning.map(value));
+  const share = (row: { level: OrderFlowLevel; base: number; quote: number }): number =>
+    (value(row) / maxValue) * 100;
   const centerBook = () => {
     const el = scrollRef.current;
     const row = spreadRef.current;
@@ -260,7 +257,7 @@ function BookTab({
         ))}
       </div>
       <div className="flex h-7 shrink-0 items-center gap-2 border-t border-border/60 px-2 text-[10px]">
-        <span className="font-mono tabular-nums" style={{ color: settings.book.bidColor }}>
+        <span className="tabular-nums" style={{ color: settings.book.bidColor }}>
           B {bidPct.toFixed(0)}%
         </span>
         <div className="relative h-1 min-w-0 flex-1 overflow-hidden rounded bg-muted">
@@ -273,10 +270,10 @@ function BookTab({
             style={{ width: `${100 - bidPct}%`, backgroundColor: settings.book.askColor }}
           />
         </div>
-        <span className="font-mono tabular-nums" style={{ color: settings.book.askColor }}>
+        <span className="tabular-nums" style={{ color: settings.book.askColor }}>
           S {(100 - bidPct).toFixed(0)}%
         </span>
-        <span className="font-mono tabular-nums text-muted-foreground">
+        <span className="tabular-nums text-muted-foreground">
           {spread === null ? '—' : `${spread.toFixed(1)} bps`}
         </span>
         <button
@@ -296,14 +293,14 @@ function DomTab({
   state,
   settings,
   book,
-  venues,
+  peers,
   step,
   onReset,
 }: {
   state: OrderFlowState;
   settings: OrderFlowSettings;
   book: OrderFlowBook | null;
-  venues: VenueId[];
+  peers: string[];
   step: number;
   onReset: () => void;
 }) {
@@ -326,11 +323,11 @@ function DomTab({
   const bottom = centerKey - DOM_PAD_ROWS;
   const keys: number[] = [];
   if (step > 0) for (let key = top; key >= bottom; key -= 1) keys.push(key);
-  const totals = mergeTradeTotals(state.buckets, venues, state.tickSize, step);
+  const totals = mergeTradeTotals(state.buckets, peers, state.tickSize, step);
   const lastSizes = new Map<number, number>();
   const now = Date.now();
   for (const trade of state.trades) {
-    if (!venues.includes(trade.venue) || now - trade.time > 5_000) continue;
+    if (!peers.includes(trade.peer) || now - trade.time > 5_000) continue;
     lastSizes.set(priceKey(trade.price, step), trade.size);
   }
   const avgBid = bookBids.length
@@ -469,7 +466,7 @@ function DomTab({
           return (
             <div
               key={key}
-              className="relative grid items-center px-1 font-mono text-[10.5px] tabular-nums"
+              className="relative grid items-center px-1 text-[11px]"
               style={{ height: rowHeight, gridTemplateColumns: template }}
             >
               {highlight && (
@@ -526,11 +523,11 @@ function DomTab({
 function TradesTab({
   state,
   settings,
-  venues,
+  peers,
 }: {
   state: OrderFlowState;
   settings: OrderFlowSettings;
-  venues: VenueId[];
+  peers: string[];
 }) {
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<{
@@ -540,7 +537,7 @@ function TradesTab({
   } | null>(null);
   const hoverRef = useRef<{ trades: OrderFlowTrade[]; buy: number; sell: number } | null>(null);
   const [hovering, setHovering] = useState(false);
-  const raw = state.trades.filter((trade) => venues.includes(trade.venue));
+  const raw = state.trades.filter((trade) => peers.includes(trade.peer));
   const cutoff = Date.now() - 60_000;
   let buy = 0;
   let sell = 0;
@@ -621,18 +618,18 @@ function TradesTab({
             style={{ width: `${100 - buyPct}%`, backgroundColor: settings.trades.askColor }}
           />
         </div>
-        <span className="font-mono text-[10px] tabular-nums" style={{ color: settings.trades.bidColor }}>
+        <span className="text-[10px]" style={{ color: settings.trades.bidColor }}>
           {buyPct.toFixed(0)}%
         </span>
-        <span className="font-mono text-[10px] tabular-nums" style={{ color: settings.trades.askColor }}>
+        <span className="text-[10px]" style={{ color: settings.trades.askColor }}>
           {(100 - buyPct).toFixed(0)}%
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="text-[10px] text-muted-foreground">
           {currency(total)} {state.quote}
         </span>
       </div>
       <div
-        className="min-h-0 flex-1 overflow-y-auto font-mono text-[10.5px] tabular-nums"
+        className="min-h-0 flex-1 overflow-y-auto text-[11px]"
         onPointerEnter={onEnter}
         onPointerLeave={onLeave}
       >
@@ -645,8 +642,8 @@ function TradesTab({
             const color = sideColor(settings.trades, trade.side);
             return (
               <div
-                key={`${trade.venue}-${trade.id}-${trade.time}`}
-                className="relative grid items-center gap-1 px-2"
+                key={`${trade.peer}-${trade.id}-${trade.time}`}
+                className="relative grid items-center gap-1.5 px-2"
                 style={{ height: rowHeight, gridTemplateColumns: '1.1fr 1fr auto' }}
               >
                 {large ? (
@@ -658,11 +655,18 @@ function TradesTab({
                 <span className="relative truncate" style={{ color }}>
                   {formatPrice(trade.price, decimalsForStep(10 ** -state.pricePrecision))}
                 </span>
-                <span className="relative truncate text-right text-foreground/90">
+                <span className="relative truncate pr-5 text-right text-foreground/90">
                   {formatSize(trade.size, settings.trades.unit, trade.price)}
                 </span>
-                <span className="relative flex items-center justify-end gap-1 text-muted-foreground">
+                <span className="relative ml-2 flex items-center justify-end gap-1.5 border-l border-border/60 pl-3 text-muted-foreground">
                   <VenueIcon venue={trade.venue} size={11} />
+                  <span className="w-3 text-center text-[9px] font-semibold text-foreground/60">
+                    {trade.venue === 'binance'
+                      ? trade.peer.split(':')[1] === 'spot'
+                        ? 'S'
+                        : 'P'
+                      : ''}
+                  </span>
                   <span className="w-[58px] text-right">{formatTradeTime(trade.time, settings.trades.ms)}</span>
                 </span>
               </div>
@@ -686,24 +690,25 @@ function ExchangeMenu({
   state,
   settings,
   onChange,
-  chartVenue,
 }: {
   state: OrderFlowState;
   settings: OrderFlowSettings;
   onChange: Dispatch<SetStateAction<OrderFlowSettings>>;
-  chartVenue: string;
 }) {
   const peers = state.peers;
-  const current = settings.venues === null ? peers.map((peer) => peer.venue) : settings.venues;
-  const all = peers.length > 0 && peers.every((peer) => current.includes(peer.venue));
+  const keys = peers.map((peer) => peer.instrumentKey);
+  const current = resolveVenueSelection(peers, settings.venues) ?? keys;
+  const all = peers.length > 0 && current.length === peers.length;
   const toggleAll = () => {
     onChange((prev) => ({ ...prev, venues: all ? [] : null }));
   };
-  const toggle = (venue: VenueId) => {
+  const toggle = (key: string) => {
     const next = new Set(current);
-    if (next.has(venue)) next.delete(venue);
-    else next.add(venue);
-    const values = peers.map((peer) => peer.venue).filter((id) => next.has(id));
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    const values = peers
+      .filter((peer) => next.has(peer.instrumentKey))
+      .map(orderFlowPeerSource);
     onChange((prev) => ({
       ...prev,
       venues: values.length === peers.length ? null : values,
@@ -727,26 +732,26 @@ function ExchangeMenu({
       </label>
       {peers.map((peer) => (
         <label
-          key={peer.venue}
+          key={peer.instrumentKey}
           className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] text-foreground hover:bg-accent"
         >
           <input
             type="radio"
             name="orderflow-source"
-            checked={settings.source === peer.venue}
-            onChange={() => onChange((prev) => ({ ...prev, source: peer.venue }))}
+            checked={settings.source === peer.instrumentKey}
+            onChange={() => onChange((prev) => ({ ...prev, source: peer.instrumentKey }))}
             className="size-3 accent-primary"
           />
           <VenueIcon venue={peer.venue} size={13} />
           <span className="min-w-0 flex-1 truncate">
             {venueLabel(peer.venue)} · {peer.display}
           </span>
-          {peer.venue === chartVenue ? (
+          {peer.instrumentKey === state.primary ? (
             <span className="rounded border border-border px-1 text-[8.5px] uppercase tracking-wide text-muted-foreground">
               Chart
             </span>
           ) : null}
-          {state.stale.includes(peer.venue) ? (
+          {state.stale.includes(peer.instrumentKey) ? (
             <span className="size-1.5 rounded-full bg-amber-500" title="No fresh book" />
           ) : null}
         </label>
@@ -768,17 +773,19 @@ function ExchangeMenu({
       </div>
       {peers.map((peer) => (
         <label
-          key={`include-${peer.venue}`}
+          key={`include-${peer.instrumentKey}`}
           className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] text-foreground hover:bg-accent"
         >
           <input
             type="checkbox"
-            checked={current.includes(peer.venue)}
-            onChange={() => toggle(peer.venue)}
+            checked={current.includes(peer.instrumentKey)}
+            onChange={() => toggle(peer.instrumentKey)}
             className="size-3 accent-primary"
           />
           <VenueIcon venue={peer.venue} size={13} />
-          <span className="min-w-0 flex-1 truncate">{venueLabel(peer.venue)}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {venueLabel(peer.venue)} · {peer.display}
+          </span>
         </label>
       ))}
       <p className="px-1.5 pt-1 text-[10px] leading-snug text-muted-foreground">
@@ -818,41 +825,51 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
     hookVenues,
     settings.grouping,
   );
+  const selected = resolveVenueSelection(state.peers, settings.venues);
+  const normalized = normalizeVenueSelection(state.peers, settings.venues);
+  useEffect(() => {
+    if (state.peers.length === 0 || settings.venues === null || !normalized) return;
+    if (
+      normalized.length === settings.venues.length &&
+      normalized.every((source, index) => source === settings.venues?.[index])
+    ) {
+      return;
+    }
+    setSettings((prev) => ({ ...prev, venues: normalized }));
+  }, [state.peers, settings.venues, normalized, setSettings]);
   const validSource =
-    settings.source === 'combined' || state.peers.some((peer) => peer.venue === settings.source);
+    settings.source === 'combined' ||
+    state.peers.some((peer) => peer.instrumentKey === settings.source);
   const source = validSource ? settings.source : 'combined';
   useEffect(() => {
     if (state.peers.length === 0) return;
     if (
       settings.source !== 'combined' &&
-      !state.peers.some((peer) => peer.venue === settings.source)
+      !state.peers.some((peer) => peer.instrumentKey === settings.source)
     ) {
       setSettings((prev) => ({ ...prev, source: 'combined' }));
     }
   }, [state.peers, settings.source, setSettings]);
   const included =
     source === 'combined'
-      ? settings.venues === null
+      ? selected === null
         ? state.peers
-        : state.peers.filter((peer) => settings.venues?.includes(peer.venue))
-      : state.peers.filter((peer) => peer.venue === source);
-  const includedVenues = included.map((peer) => peer.venue);
-  const includedKey = includedVenues.join(',');
+        : state.peers.filter((peer) => selected.includes(peer.instrumentKey))
+      : state.peers.filter((peer) => peer.instrumentKey === source);
+  const includedPeers = included.map((peer) => peer.instrumentKey);
+  const includedKey = includedPeers.join(',');
   const previous = useRef<string[]>([]);
   useEffect(() => {
     if (state.peers.length === 0) return;
-    const removed = previous.current.filter((venue) => !includedVenues.includes(venue));
+    const removed = previous.current.filter((peer) => !includedPeers.includes(peer));
     if (removed.length > 0) dropVenues(removed);
-    previous.current = includedVenues;
+    previous.current = includedPeers;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the key identifies the list
   }, [includedKey, state.peers.length, dropVenues]);
   const book = state.book;
   const bids = book?.bids ?? [];
   const asks = book?.asks ?? [];
   const lastTrade = state.trades.at(-1)?.price ?? 0;
-  const chartVenue = symbol.includes(':')
-    ? symbol.slice(0, symbol.indexOf(':')).toLowerCase()
-    : 'binance';
   const bestBid = bids[0]?.price ?? 0;
   const bestAsk = asks[0]?.price ?? 0;
   const mid = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : bestBid || bestAsk || lastTrade;
@@ -864,18 +881,21 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [groupingOpen, setGroupingOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  const activeCount = book?.venues.length ?? 0;
+  const activeCount = book?.peers.length ?? 0;
   const live = state.status === 'live' && activeCount > 0;
   const warning = state.warnings.at(-1);
   const options = groupingOptions(mid, tick);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-card text-foreground">
+    <div
+      className="flex h-full min-h-0 flex-col bg-card text-foreground"
+      style={{ fontFamily: VELA_FONT_FAMILY }}
+    >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border/60 px-2">
         <Popover.Root open={exchangeOpen} onOpenChange={setExchangeOpen}>
           <Popover.Trigger
             aria-label="Exchange"
-            className="inline-flex h-6 min-w-0 items-center gap-1 rounded border border-border/70 px-1.5 text-[10.5px] text-foreground hover:bg-accent"
+            className="inline-flex h-6 min-w-0 items-center gap-1 rounded border border-border/70 px-1.5 text-[11px] text-foreground hover:bg-accent"
           >
             <span
               className={
@@ -894,12 +914,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
             <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
           </Popover.Trigger>
           <PopoverContent className="w-[300px] p-1" align="start">
-            <ExchangeMenu
-              state={state}
-              settings={settings}
-              onChange={setSettings}
-              chartVenue={chartVenue}
-            />
+            <ExchangeMenu state={state} settings={settings} onChange={setSettings} />
           </PopoverContent>
         </Popover.Root>
 
@@ -910,7 +925,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
           >
             <Info className="size-3.5" />
           </Popover.Trigger>
-          <PopoverContent className="w-[310px] p-3 text-[10.5px] leading-relaxed text-muted-foreground" align="start">
+          <PopoverContent className="w-[310px] p-3 text-[11px] leading-relaxed text-muted-foreground" align="start">
             <div className="mb-1 text-[11px] font-semibold text-foreground">About this data</div>
             <ul className="list-disc space-y-1.5 pl-4">
               <li>
@@ -936,7 +951,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
         <Popover.Root open={groupingOpen} onOpenChange={setGroupingOpen}>
           <Popover.Trigger
             aria-label="Price grouping"
-            className="inline-flex h-6 items-center gap-1 rounded border border-border/70 px-1.5 font-mono text-[10.5px] tabular-nums text-foreground hover:bg-accent"
+            className="inline-flex h-6 items-center gap-1 rounded border border-border/70 px-1.5 text-[11px] text-foreground hover:bg-accent"
           >
             Group {formatGrouping(step)}
             <ChevronDown className="size-3 text-muted-foreground" />
@@ -954,7 +969,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
               className="flex w-full items-center justify-between rounded px-1.5 py-1 text-[11px] text-foreground hover:bg-accent"
             >
               <span>Auto</span>
-              <span className="font-mono text-[10px] text-muted-foreground">{formatGrouping(auto)}</span>
+              <span className="text-[10px] text-muted-foreground">{formatGrouping(auto)}</span>
             </button>
             {options.map((option) => (
               <button
@@ -964,7 +979,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
                   setSettings((prev) => ({ ...prev, grouping: option }));
                   setGroupingOpen(false);
                 }}
-                className="flex w-full items-center justify-between rounded px-1.5 py-1 font-mono text-[11px] tabular-nums text-foreground hover:bg-accent"
+                className="flex w-full items-center justify-between rounded px-1.5 py-1 text-[11px] text-foreground hover:bg-accent"
               >
                 {formatGrouping(option)}
                 {settings.grouping === option ? <span className="text-primary">✓</span> : null}
@@ -1003,7 +1018,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
           </span>
         ) : null}
         <div className="min-w-0 flex-1" />
-        <span className="truncate font-mono text-[10px] text-muted-foreground">
+        <span className="truncate text-[10px] text-muted-foreground">
           {state.base && state.quote ? `${state.base}/${state.quote}` : ''}
         </span>
       </div>
@@ -1030,12 +1045,12 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
           state={state}
           settings={settings}
           book={state.book}
-          venues={includedVenues}
+          peers={includedPeers}
           step={step}
           onReset={resetWindow}
         />
       ) : (
-        <TradesTab state={state} settings={settings} venues={includedVenues} />
+        <TradesTab state={state} settings={settings} peers={includedPeers} />
       )}
     </div>
   );

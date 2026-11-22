@@ -62,7 +62,7 @@ export class SidecarVenueAdapter implements VenueAdapter {
   readonly id: string;
   readonly label: string;
   readonly capabilities = {
-    markets: ['perp'] as Array<'perp'>,
+    markets: ['spot', 'perp'] as Array<'spot' | 'perp'>,
     stream: false,
     funding: true,
     trading: false,

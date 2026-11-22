@@ -17,9 +17,9 @@ TypeScript app; there is no private backend and no API key.
   `@screener/pine-editor/monaco` entry, loaded lazily with the editor chunk
 - The local MIT `pine-script-syntax-highlighter` checkout for hover docs,
   formatter, signature help, semantic tokens and the outline
-- Public REST/WS market data from Binance and OKX, plus Bybit, Bitget,
-  Hyperliquid, and Coinbase through their public APIs, normalized by
-  `VenueAdapter`
+- Public REST/WS market data from Binance spot and USDⓈ-M perps, OKX, plus
+  Bybit, Bitget, Hyperliquid, and Coinbase through their public APIs,
+  normalized by `VenueAdapter`
 - Electron shell for the desktop build: the bundled sidecar runs as a child
   process, and the app uses a custom title bar with an application menu.
 
@@ -113,9 +113,10 @@ the same `build` string.
 
 ## What it does
 
-- Binance, OKX, Bybit, Bitget, Hyperliquid, and Coinbase instruments. The
-  picker lists all venues, sorted by ticker across exchanges; a chart opens the
-  venue of the selected ticker. Coinbase is spot; the rest are perpetuals.
+- Binance lists USDT spot and USDⓈ-M perpetuals; OKX, Bybit, Bitget and
+  Hyperliquid are perpetuals; Coinbase is spot. The picker lists all venues,
+  sorted by ticker across exchanges; a chart opens the venue of the selected
+  ticker. `BTCUSDT` is Binance spot and `BTCUSDT.P` its perpetual.
 - One multi-venue screener table. Columns: a favorite star, the venue icon,
   `Symbol` with its coin badge and `perp` / `spot` tag, `Last`, `24h %`,
   `Range 24h`, `Vol 24h`, `VolΔ24h`, `RVOL 7d`, `Funding`, `VWAPσ`, `RSI 15m`,
@@ -184,13 +185,18 @@ the same `build` string.
   the right rail keep their full height. It resizes with a drag handle, collapses
   to its header, and keeps its state across reloads.
 - Order flow panel with `Book`, `DOM`, and `Trades` views over the public books
-  and tapes of every venue. The sidecar keeps the full snapshot+diff books,
+  and tapes of every venue. Binance spot and its perpetual are both included, so
+  a `BTCUSDT.P` chart reads seven books. The sidecar keeps the full
+  snapshot+diff books,
   reads them around the chart venue's mid, and serves one combined ladder of up
   to 100 levels a side at the chosen step (about 1/500 of the price by default).
+  The Book histogram follows the `Size` / `Total` choice.
   `Sold`, `Bought`, `Delta`, and `Volume` count trades since the panel opened or
   `Reset`. The tape filters by notional, joins one order's fills, and can pause
-  or freeze on hover. Venue toggles, follow mode, columns, colors, and zoom
-  persist per instrument; the visible tab and venue list stay panel-wide.
+  or freeze on hover. Binance rows carry `S` or `P` for spot and perpetual, and
+  tiny sizes print as decimals rather than scientific notation. Venue toggles,
+  follow mode, columns, colors, and zoom persist per instrument; the visible tab
+  and venue list stay panel-wide.
 - Favorites: named lists managed from the star popover in the screener toolbar.
   `Default` is the default list; star a symbol to add it to the active list.
   Lists are stored at `screener.favorites.v2` per instrument
@@ -292,9 +298,9 @@ the same `build` string.
   Coinbase data through one `VenueAdapter` per venue and a shared cache. The table, scanner, and Vela
   charts use the sidecar only; there is no direct exchange path in the browser.
   Charts stream live candles over `ws://127.0.0.1:8787/stream`; the sidecar keeps
-  one stream per symbol/timeframe and fans it out to every chart. Binance, OKX,
-  Bybit, Bitget, and Hyperliquid stream over WebSockets; Coinbase uses one REST
-  poll per second per stream. If a venue socket stays silent, the sidecar falls
+  one stream per symbol/timeframe and fans it out to every chart. Binance spot
+  and futures, OKX, Bybit, Bitget, and Hyperliquid stream over WebSockets;
+  Coinbase uses one REST poll per second per stream. If a venue socket stays silent, the sidecar falls
   back to the same REST polling until a bar arrives. The instrument picker lists
   every venue and opens the selected exchange's chart.
 

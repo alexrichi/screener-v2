@@ -5,9 +5,9 @@ import type {
   OrderFlowPeer,
   OrderFlowTrade,
 } from '../../src/lib/orderflow';
-import { autoGrouping } from '../../src/lib/orderflow';
+import { autoGrouping, resolveVenueSelection } from '../../src/lib/orderflow';
 import { findPineInstrument } from '../../src/lib/pineVela/seriesHost';
-import type { Instrument, MarketKind, VenueId } from '../../src/venues/types';
+import type { Instrument, MarketKind } from '../../src/venues/types';
 import type { VenueHub } from '../hub';
 import type { FeedHandlers, OrderFlowFeed } from './feeds';
 
@@ -62,6 +62,42 @@ export function choosePeer(
   return best;
 }
 
+/**
+ * Both markets a venue lists for one asset. Binance runs spot and USDⓈ-M side
+ * by side, so a BTCUSDT.P chart reads seven books, not six.
+ */
+export function choosePeers(
+  instruments: readonly Instrument[],
+  base: string,
+  quote: string,
+  kind: MarketKind,
+  primaryKey: string,
+): Instrument[] {
+  const chosen = choosePeer(instruments, base, quote, kind, primaryKey);
+  if (!chosen) return [];
+  const otherKind: MarketKind = chosen.kind === 'perp' ? 'spot' : 'perp';
+  const other = choosePeer(
+    instruments.filter((item) => item.kind === otherKind),
+    base,
+    quote,
+    kind,
+    primaryKey,
+  );
+  return other && other.key !== chosen.key ? [chosen, other] : [chosen];
+}
+
+/**
+ * The wire include list accepts an instrument key, a stable `venue:kind` id, or
+ * a legacy venue id. Both subscribe and later updates go through this matcher.
+ */
+export function selectPeerKeys(
+  peers: readonly OrderFlowPeer[],
+  wanted: readonly string[] | null,
+): Set<string> {
+  const available = peers.map((peer) => peer.instrumentKey);
+  return new Set(resolveVenueSelection(peers, wanted) ?? available);
+}
+
 async function resolve(
   hubs: Map<string, VenueHub>,
   symbol: string,
@@ -89,19 +125,19 @@ async function resolve(
   const peers: Peer[] = [];
   for (const [, hub] of hubs) {
     const instruments = await hub.getInstruments();
-    const instrument = choosePeer(
+    for (const instrument of choosePeers(
       instruments,
       primary.base,
       primary.quote,
       primary.kind,
       primary.key,
-    );
-    if (!instrument) continue;
-    const tick =
-      instrument.tickSize && instrument.tickSize > 0
-        ? instrument.tickSize
-        : 10 ** -instrument.pricePrecision;
-    peers.push({ instrument, tick });
+    )) {
+      const tick =
+        instrument.tickSize && instrument.tickSize > 0
+          ? instrument.tickSize
+          : 10 ** -instrument.pricePrecision;
+      peers.push({ instrument, tick });
+    }
   }
   if (peers.length === 0) return null;
   return { primary, peers };
@@ -127,11 +163,11 @@ export function groupLevels(
     .map(([key, size]) => ({ price: Number((key * step).toPrecision(12)), size }));
 }
 
-function best(books: Map<VenueId, RawBook>, selected: Set<VenueId>): { bid: number; ask: number } {
+function best(books: Map<string, RawBook>, selected: Set<string>): { bid: number; ask: number } {
   let bid = 0;
   let ask = 0;
-  for (const [venue, book] of books) {
-    if (!selected.has(venue)) continue;
+  for (const [peer, book] of books) {
+    if (!selected.has(peer)) continue;
     const nextBid = book.bids[0]?.price ?? 0;
     const nextAsk = book.asks[0]?.price ?? 0;
     if (nextBid > bid) bid = nextBid;
@@ -146,13 +182,13 @@ function best(books: Map<VenueId, RawBook>, selected: Set<VenueId>): { bid: numb
  * snapshot the browser receives; the client never merges raw venue books.
  */
 export function combineBook(
-  books: Map<VenueId, RawBook>,
-  selected: Set<VenueId>,
-  primaryVenue: VenueId | undefined,
+  books: Map<string, RawBook>,
+  selected: Set<string>,
+  primaryPeer: string | undefined,
   step: number,
   now = Date.now(),
-): { bids: OrderFlowLevel[]; asks: OrderFlowLevel[]; venues: VenueId[] } {
-  const primary = primaryVenue ? books.get(primaryVenue) : undefined;
+): { bids: OrderFlowLevel[]; asks: OrderFlowLevel[]; peers: string[] } {
+  const primary = primaryPeer ? books.get(primaryPeer) : undefined;
   let refBid = primary?.bids[0]?.price ?? 0;
   let refAsk = primary?.asks[0]?.price ?? 0;
   if (!(refBid > 0) || !(refAsk > 0)) {
@@ -163,15 +199,15 @@ export function combineBook(
   const refMid = refBid > 0 && refAsk > 0 ? (refBid + refAsk) / 2 : refBid || refAsk || 0;
   const bids = new Map<number, number>();
   const asks = new Map<number, number>();
-  const venues: VenueId[] = [];
-  for (const [venue, book] of books) {
-    if (!selected.has(venue) || now - book.at > STALE_MS) continue;
+  const peers: string[] = [];
+  for (const [peer, book] of books) {
+    if (!selected.has(peer) || now - book.at > STALE_MS) continue;
     const bidLevels = refMid > 0 ? book.bids.filter((level) => level.price <= refMid) : book.bids;
     const askLevels = refMid > 0 ? book.asks.filter((level) => level.price >= refMid) : book.asks;
     const groupedBids = groupLevels(bidLevels, step, 'bid');
     const groupedAsks = groupLevels(askLevels, step, 'ask');
     if (groupedBids.length === 0 && groupedAsks.length === 0) continue;
-    venues.push(venue);
+    peers.push(peer);
     for (const level of groupedBids) bids.set(level.price, (bids.get(level.price) ?? 0) + level.size);
     for (const level of groupedAsks) asks.set(level.price, (asks.get(level.price) ?? 0) + level.size);
   }
@@ -183,7 +219,7 @@ export function combineBook(
     .sort((left, right) => left[0] - right[0])
     .slice(0, BOOK_LEVELS)
     .map(([price, size]) => ({ price, size }));
-  return { bids: topBids, asks: topAsks, venues };
+  return { bids: topBids, asks: topAsks, peers };
 }
 
 /**
@@ -196,10 +232,11 @@ export class OrderFlowSession {
   private closed = false;
   private primary: Instrument | null = null;
   private peers: Peer[] = [];
-  private selected = new Set<VenueId>();
-  private readonly subscriptions = new Map<VenueId, () => void>();
-  private readonly books = new Map<VenueId, RawBook>();
-  private readonly dirty = new Set<VenueId>();
+  private peerInfos: OrderFlowPeer[] = [];
+  private selected = new Set<string>();
+  private readonly subscriptions = new Map<string, () => void>();
+  private readonly books = new Map<string, RawBook>();
+  private readonly dirty = new Set<string>();
   private pending: OrderFlowTrade[] = [];
   private timer: NodeJS.Timeout | null = null;
   private lastStale = '';
@@ -236,11 +273,12 @@ export class OrderFlowSession {
     this.stopTimer();
     this.books.clear();
     this.pending = [];
+    this.peerInfos = [];
   }
 
   private async subscribe(
     symbol: string,
-    wanted: VenueId[] | null,
+    wanted: string[] | null,
     grouping: number | null,
   ): Promise<void> {
     const generation = ++this.generation;
@@ -275,11 +313,7 @@ export class OrderFlowSession {
     }
     this.primary = resolved.primary;
     this.peers = resolved.peers;
-    const available = new Set(this.peers.map((peer) => peer.instrument.venue));
-    this.selected = new Set(
-      wanted === null ? [...available] : wanted.filter((venue) => available.has(venue)),
-    );
-    const peers: OrderFlowPeer[] = this.peers.map(({ instrument, tick }) => ({
+    this.peerInfos = this.peers.map(({ instrument, tick }) => ({
       venue: instrument.venue,
       instrumentKey: instrument.key,
       display: instrument.display,
@@ -292,29 +326,27 @@ export class OrderFlowSession {
       base: resolved.primary.base,
       quote: resolved.primary.quote,
       kind: resolved.primary.kind,
-      peers,
+      peers: this.peerInfos,
+      primary: resolved.primary.key,
       tickSize: Math.max(...this.peers.map((peer) => peer.tick)),
       pricePrecision: resolved.primary.pricePrecision,
     });
-    this.startFeeds();
+    this.select(wanted);
     this.startTimer();
   }
 
-  private select(venues: VenueId[] | null): void {
+  private select(peers: string[] | null): void {
     if (this.closed || !this.primary) return;
-    const available = new Set(this.peers.map((peer) => peer.instrument.venue));
-    const next = new Set(
-      venues === null ? [...available] : venues.filter((venue) => available.has(venue)),
-    );
+    const next = selectPeerKeys(this.peerInfos, peers);
     if (sameSet(next, this.selected)) return;
-    for (const [venue, unsubscribe] of this.subscriptions) {
-      if (next.has(venue)) continue;
+    for (const [peer, unsubscribe] of this.subscriptions) {
+      if (next.has(peer)) continue;
       unsubscribe();
-      this.subscriptions.delete(venue);
-      this.books.delete(venue);
-      this.dirty.delete(venue);
+      this.subscriptions.delete(peer);
+      this.books.delete(peer);
+      this.dirty.delete(peer);
     }
-    this.pending = this.pending.filter((trade) => next.has(trade.venue));
+    this.pending = this.pending.filter((trade) => next.has(trade.peer));
     this.selected = next;
     this.groupingDirty = true;
     this.startFeeds();
@@ -322,7 +354,7 @@ export class OrderFlowSession {
 
   private step(): number {
     const tick = this.peers.length > 0 ? Math.max(...this.peers.map((peer) => peer.tick)) : 1e-8;
-    const primary = this.primary ? this.books.get(this.primary.venue) : undefined;
+    const primary = this.primary ? this.books.get(this.primary.key) : undefined;
     let bid = primary?.bids[0]?.price ?? 0;
     let ask = primary?.asks[0]?.price ?? 0;
     if (!(bid > 0) || !(ask > 0)) {
@@ -338,26 +370,26 @@ export class OrderFlowSession {
   private startFeeds(): void {
     if (this.closed) return;
     for (const peer of this.peers) {
-      const venue = peer.instrument.venue;
-      if (!this.selected.has(venue) || this.subscriptions.has(venue)) continue;
-      const feed = this.feeds.get(venue);
+      const key = peer.instrument.key;
+      if (!this.selected.has(key) || this.subscriptions.has(key)) continue;
+      const feed = this.feeds.get(peer.instrument.venue);
       if (!feed) continue;
       const unsubscribe = feed.subscribe(peer.instrument, {
         book: (levels) => {
-          if (this.closed || !this.selected.has(venue)) return;
-          this.books.set(venue, { bids: levels.bids, asks: levels.asks, at: Date.now() });
-          this.dirty.add(venue);
+          if (this.closed || !this.selected.has(key)) return;
+          this.books.set(key, { bids: levels.bids, asks: levels.asks, at: Date.now() });
+          this.dirty.add(key);
         },
         trade: (trade) => {
-          if (this.closed || !this.selected.has(venue)) return;
-          this.pending.push({ ...trade, venue });
+          if (this.closed || !this.selected.has(key)) return;
+          this.pending.push({ ...trade, venue: peer.instrument.venue, peer: key });
         },
         warning: (message) => {
           if (this.closed) return;
-          this.send({ type: 'warning', venue, message });
+          this.send({ type: 'warning', venue: peer.instrument.venue, message });
         },
       } satisfies FeedHandlers);
-      this.subscriptions.set(venue, unsubscribe);
+      this.subscriptions.set(key, unsubscribe);
     }
   }
 
@@ -380,9 +412,9 @@ export class OrderFlowSession {
   private flush(): void {
     if (this.closed) return;
     const now = Date.now();
-    const stale: VenueId[] = [];
-    for (const [venue, book] of this.books) {
-      if (now - book.at > STALE_MS) stale.push(venue);
+    const stale: string[] = [];
+    for (const [peer, book] of this.books) {
+      if (now - book.at > STALE_MS) stale.push(peer);
     }
     const staleKey = stale.join(',');
     if (
@@ -393,7 +425,7 @@ export class OrderFlowSession {
       const combined = combineBook(
         this.books,
         this.selected,
-        this.primary?.venue,
+        this.primary?.key,
         this.step(),
         now,
       );
@@ -409,7 +441,7 @@ export class OrderFlowSession {
   }
 }
 
-function sameSet(left: Set<VenueId>, right: Set<VenueId>): boolean {
+function sameSet(left: Set<string>, right: Set<string>): boolean {
   if (left.size !== right.size) return false;
   for (const value of left) if (!right.has(value)) return false;
   return true;
