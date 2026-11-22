@@ -9,7 +9,7 @@ import {
 } from '@luxalgo/vela/plugin';
 import { alertUnreadCount, subscribeAlerts } from './alerts';
 
-export type VelaPanelId = 'screener' | 'pine' | 'library' | 'alerts';
+export type VelaPanelId = 'screener' | 'pine' | 'library' | 'alerts' | 'orderflow';
 
 interface PanelMount {
   tabId: string;
@@ -114,6 +114,10 @@ registerIcon(
   'library-panel',
   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg>',
 );
+registerIcon(
+  'orderflow-panel',
+  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h6M4 9h4M4 13h8M4 17h5M15 5h5M15 9h3M15 13h6M15 17h4"/></svg>',
+);
 registerSidePanel({
   id: 'screener',
   title: 'Screener',
@@ -193,6 +197,19 @@ registerSidePanel({
       },
     };
   },
+});
+
+registerSidePanel({
+  id: 'orderflow',
+  title: 'Order flow',
+  icon: 'orderflow-panel',
+  order: 80,
+  width: 420,
+  resizable: true,
+  minWidth: 340,
+  maxWidth: 620,
+  maximizable: true,
+  mount: (ctx, body) => ({ destroy: mountPanel('orderflow', ctx, body) }),
 });
 
 // The rail's alerts panel replaces Vela's topbar bell; its menu only lists the

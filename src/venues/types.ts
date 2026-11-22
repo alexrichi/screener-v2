@@ -20,6 +20,8 @@ export interface Instrument {
   pricePrecision: number;
   /** Actual price step (e.g. 0.1), when the venue exposes it. */
   tickSize?: number;
+  /** Base units per contract, for venues that quote derivatives in contracts. */
+  contractSize?: number;
 }
 
 export interface VenueBar {

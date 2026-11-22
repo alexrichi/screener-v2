@@ -904,6 +904,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
                 'library',
                 '|',
                 'alerts',
+                'orderflow',
               ],
             },
             maxWebglCells,

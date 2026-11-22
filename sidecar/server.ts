@@ -10,11 +10,22 @@ import { OkxVenueAdapter } from '../src/venues/okx';
 import { VenueRateLimitError } from '../src/venues/rateLimit';
 import type { Instrument, Unsubscribe } from '../src/venues/types';
 import type { ScreenerConfig, VenueId } from '../src/types';
+import type { OrderFlowFrame } from '../src/lib/orderflow';
 import { handleAi } from './ai';
 import { AlertService } from './alerts';
 import { VenueHub } from './hub';
 import { resolveIcon } from './icons';
 import { librarySource } from './luxalgo';
+import {
+  BinanceOrderFlowFeed,
+  BitgetOrderFlowFeed,
+  BybitOrderFlowFeed,
+  CoinbaseOrderFlowFeed,
+  HyperliquidOrderFlowFeed,
+  OkxOrderFlowFeed,
+  type OrderFlowFeed,
+} from './orderflow/feeds';
+import { OrderFlowService } from './orderflow/service';
 import { BinanceKlineStream, PollingBarsStream } from './stream';
 import type { BarsStream } from './stream';
 import { VenueKlineStream } from './ws';
@@ -91,6 +102,18 @@ const screener = new ScreenerService({
 // Alert rules and their event log are owned by the process, not by a renderer
 // connection: jobs keep running between sockets and survive a sidecar restart.
 const alerts = new AlertService({ hubs });
+
+// Order flow is live-only: each browser session drives a ref-counted set of
+// public venue book and trade sockets.
+const orderFeeds = new Map<string, OrderFlowFeed>([
+  ['binance', new BinanceOrderFlowFeed()],
+  ['okx', new OkxOrderFlowFeed()],
+  ['bybit', new BybitOrderFlowFeed()],
+  ['bitget', new BitgetOrderFlowFeed()],
+  ['hyperliquid', new HyperliquidOrderFlowFeed()],
+  ['coinbase', new CoinbaseOrderFlowFeed()],
+]);
+const orderflow = new OrderFlowService(hubs, orderFeeds);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -368,6 +391,7 @@ async function onStreamMessage(ws: WebSocket, subscriptions: Subscriptions, raw:
 
 const wss = new WebSocketServer({ noServer: true });
 const screenerWss = new WebSocketServer({ noServer: true });
+const orderflowWss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${host}:${port}`}`);
@@ -377,6 +401,12 @@ server.on('upgrade', (req, socket, head) => {
   }
   if (url.pathname === '/screener') {
     screenerWss.handleUpgrade(req, socket, head, (ws) => screenerWss.emit('connection', ws, req));
+    return;
+  }
+  if (url.pathname === '/orderflow') {
+    orderflowWss.handleUpgrade(req, socket, head, (ws) =>
+      orderflowWss.emit('connection', ws, req),
+    );
     return;
   }
   socket.destroy();
@@ -465,6 +495,65 @@ screenerWss.on('connection', (ws) => {
     } catch {
       // Ignore malformed control frames; the next snapshot recovers.
     }
+  });
+});
+
+orderflowWss.on('connection', (ws) => {
+  console.log('[sidecar] orderflow ws connected');
+  const send = (frame: OrderFlowFrame): void => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+  };
+  const session = orderflow.session(send);
+  ws.on('message', (raw) => {
+    try {
+      const message = JSON.parse(raw.toString()) as {
+        type?: unknown;
+        symbol?: unknown;
+        venues?: unknown;
+        grouping?: unknown;
+        value?: unknown;
+      };
+      if (message.type === 'subscribe' && typeof message.symbol === 'string') {
+        session.handle({
+          type: 'subscribe',
+          symbol: message.symbol,
+          venues: Array.isArray(message.venues)
+            ? message.venues.filter((venue): venue is VenueId => typeof venue === 'string')
+            : null,
+          grouping:
+            typeof message.grouping === 'number' && message.grouping > 0
+              ? message.grouping
+              : null,
+        });
+        return;
+      }
+      if (message.type === 'venues') {
+        session.handle({
+          type: 'venues',
+          venues: Array.isArray(message.venues)
+            ? message.venues.filter((venue): venue is VenueId => typeof venue === 'string')
+            : null,
+        });
+        return;
+      }
+      if (message.type === 'grouping') {
+        session.handle({
+          type: 'grouping',
+          value:
+            typeof message.value === 'number' && message.value > 0 ? message.value : null,
+        });
+        return;
+      }
+      if (message.type === 'unsubscribe') {
+        session.handle({ type: 'unsubscribe' });
+      }
+    } catch {
+      // Ignore malformed control frames; the next subscribe recovers.
+    }
+  });
+  ws.on('close', () => {
+    session.close();
+    console.log('[sidecar] orderflow ws closed');
   });
 });
 

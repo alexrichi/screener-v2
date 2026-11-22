@@ -176,13 +176,21 @@ the same `build` string.
   and when the active favorites list is empty.
 - Sort, chips, search, columns, widths and favorites persist on this device,
   and the table view is shared by every workspace tab.
-- Screener, Pine, Library, and Alerts
+- Screener, Pine, Library, Alerts, and Order flow
   open as Vela side panels from the chart's right sidebar; the open panel and
   width persist, and armed alerts keep running through reloads and sidecar
   restarts. The strategy dock sits at
   the foot of the chart column, under the range presets; the drawing toolbar and
   the right rail keep their full height. It resizes with a drag handle, collapses
   to its header, and keeps its state across reloads.
+- Order flow panel with `Book`, `DOM`, and `Trades` views over the public books
+  and tapes of every venue. The sidecar keeps the full snapshot+diff books,
+  reads them around the chart venue's mid, and serves one combined ladder of up
+  to 100 levels a side at the chosen step (about 1/500 of the price by default).
+  `Sold`, `Bought`, `Delta`, and `Volume` count trades since the panel opened or
+  `Reset`. The tape filters by notional, joins one order's fills, and can pause
+  or freeze on hover. Venue toggles, follow mode, columns, colors, and zoom
+  persist per instrument; the visible tab and venue list stay panel-wide.
 - Favorites: named lists managed from the star popover in the screener toolbar.
   `Default` is the default list; star a symbol to add it to the active list.
   Lists are stored at `screener.favorites.v2` per instrument

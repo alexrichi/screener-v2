@@ -12,6 +12,8 @@ export interface InstrumentInput {
   pricePrecision?: number;
   /** Actual price step (e.g. 0.1), when the venue exposes it. */
   tickSize?: number;
+  /** Base units per contract, for derivatives quoted in contracts. */
+  contractSize?: number;
   /** Required: only the adapter knows the symbol Vela's provider expects. */
   velaSymbol: string;
 }
@@ -74,5 +76,8 @@ export function makeInstrument(input: InstrumentInput): Instrument {
     kind: input.kind,
     pricePrecision: input.pricePrecision ?? 2,
     tickSize: input.tickSize,
+    ...(input.contractSize && input.contractSize > 0
+      ? { contractSize: input.contractSize }
+      : {}),
   };
 }

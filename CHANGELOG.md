@@ -5,6 +5,14 @@ the build stamp; the updater compares only the version.
 
 ## Unreleased
 
+- The Order flow side panel aggregates public books and tapes from all six
+  venues. `Book` shows the ladder around the chart venue's mid, `DOM` shows
+  sold, bought and delta at each price since opening or Reset, and `Trades`
+  filters by notional, joins one order's fills, pauses, and freezes on hover.
+  Prices group at a chosen step; each instrument keeps its own step and
+  Book/DOM/Trades settings, while the visible tab and venue list stay
+  panel-wide.
+  and the panel follows the active chart symbol.
 - Pine indicators can arm an alert from their legend bell. The alert keeps a
   snapshot of the script, inputs, symbol and timeframe and runs on closed bars in
   the sidecar after the chart or workspace tab closes. The Alerts panel separates

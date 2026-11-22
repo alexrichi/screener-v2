@@ -227,6 +227,8 @@ export class OkxVenueAdapter implements VenueAdapter {
                 kind: 'perp',
                 velaSymbol: `OKX:${row.instId}`,
                 pricePrecision: decimals(row.tickSz),
+                tickSize: Number(row.tickSz) > 0 ? Number(row.tickSz) : undefined,
+                contractSize: Number(row.ctVal) > 0 ? Number(row.ctVal) : 1,
               });
             }),
         )

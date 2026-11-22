@@ -99,6 +99,8 @@ src/
     AiChatTabs.tsx                current-chat / all-chats tab strip
     AiModelPicker.tsx             composer model catalog and reasoning level
     AlertsPanel.tsx               app-wide armed rules and alert history in the right rail
+    OrderFlowPanel.tsx            Book / DOM / Trades side panel over aggregated books
+    OrderFlowSettings.tsx         per-tab Book, DOM and Trades settings
     StrategyEquity.tsx            strategy net P&L curve (zero line, downsample)
     StrategyPanel.tsx             app-owned strategy dock under the chart
     ReplayBar.tsx                 floating, draggable bar replay controls over ws.replay
@@ -115,6 +117,7 @@ src/
     SettingsDialog.tsx            per-venue watch thresholds, metrics timeframe, scan defaults
   hooks/
     useScreener.ts                server-owned screener: snapshot, WS patches, viewport, config
+    useOrderFlow.ts               one live /orderflow socket per panel; symbol and venue follow
     useDictation.ts               microphone recording and sidecar transcription
   lib/
     ai/debug.worker.ts            disposable pine-engine debug run over sidecar bars
@@ -128,6 +131,8 @@ src/
     utils.ts                      shadcn `cn` helper for registry components
     alerts.ts                     app-owned alert rules and history: replay
                                   ingest, clearedAt watermark, unread badge
+    orderflow.ts                  shared order-flow types, book/trade merge, grouping,
+                                  settings and the panel reducer
     binance.ts                    public futures REST, symbol/timeframe mapping, klines
     format.ts                     price, percent, volume, funding, layout labels
     indicatorLibrary.ts           .pine library model, storage key, validators, import
@@ -190,6 +195,12 @@ sidecar/
                                   series host for request.*
   hub.ts                          one adapter per venue; shared caches/fan-out
   luxalgo.ts                      LuxAlgo Library source fetch and cache
+  orderflow/
+    books.ts                      per-venue snapshot/delta book accumulator
+    feeds.ts                      Binance REST snapshot + depth diff, five more
+                                  public book/trade sockets, full-depth books
+    service.ts                    peer resolution, chart-venue clip, step grouping,
+                                  10 Hz combined ladder and trade fan-out
   screener.ts                     server-owned watched table: activation, warm-up, metrics, patches
   stream.ts                       Binance kline WS plus a REST-polling stream for
                                   venues without a WS feed
@@ -703,12 +714,12 @@ key (OpenCode Go publishes it at `/inference/go/v1/models`, not under
 model with `reasoning: 'none'`.
 
 **The right-hand panels are Vela side panels.** `lib/velaPanels.tsx`
-registers `Screener`, `Pine`, `Library`, and `Alerts` with
+registers `Screener`, `Pine`, `Library`, `Alerts`, and `Order flow` with
 `registerSidePanel` at import time and portals the React content into the
 bodies Vela hands `mount`. Mounts are keyed `<tabId>:<panelId>`;
 `openVelaPanel` targets the active tab and the portals render only into its
 bodies. The shell runs with
-`sidebar: { top: ['screener-screenshot', '|', 'screener', 'pine', 'library', '|', 'alerts'] }`
+`sidebar: { top: ['screener-screenshot', '|', 'screener', 'pine', 'library', '|', 'alerts', 'orderflow'] }`
 (Vela dev): the rail's top action downloads the screenshot of its own tab
 (`setScreenshotTarget` maps `<tabId>` to `ws.downloadScreenshot()`), and the
 topbar copy is hidden with app CSS so the `mod+alt+s` chord stays registered.
@@ -821,6 +832,38 @@ intrabar fill ordering. Limits already through the open and gaps through a stop
 fill at that bar's open, so every fill price stays inside its bar. A marketable
 bracket leg therefore closes at the open, not at its target.
 `strategy.closedtrades.<field>(n)` reads the ledger.
+
+**Order flow is app-owned.** The `Order flow` side panel reads aggregated
+public books and trades for the active chart symbol. One `/orderflow` WebSocket
+per mounted panel; `sidecar/orderflow/service.ts` resolves the symbol to one
+instrument per venue (same base and a USD-like quote; a spot venue is read from
+its USD book when the chart is a perp) and starts the ref-counted
+`sidecar/orderflow/feeds.ts` sockets. The feeds are Binance `@depth@100ms`
+seeded by a REST depth snapshot, plus raw `trade` (the futures `aggTrade`
+stream is silent), OKX `books` plus `trades`, Bybit `orderbook.200` plus
+`publicTrade`, Bitget `books` plus `trade`, Hyperliquid `l2Book` plus `trades`,
+and Coinbase `level2_batch` plus `matches`
+(whose side is the maker side). `books.ts` keeps each venue's full snapshot+delta book; Binance seeds a REST
+depth snapshot and applies the `@depth` diffs with the `U/u/pu` sequence, while
+the other venues use their snapshot+delta channels (Bybit `orderbook.200`). The
+service groups the selected venues at the step and sends one combined ladder of
+up to 100 levels a side plus the trade tape at 10 Hz; `lib/orderflow.ts` holds
+the frame, settings and reducer, and the browser never merges raw venue books.
+`Sold`, `Bought`,
+`Delta` and `Volume` count trades since the panel opened or `Reset`; the
+`Trades` view filters by notional, joins one order's fills, pauses, and freezes
+on hover. Every `Book`, `DOM` and `Trades` setting lives at
+`screener.orderflow.v2`, keyed per instrument (`orderFlowSymbolKey`); the
+visible tab and include list are panel-wide, and the panel follows
+`activeTab.symbol`.
+
+**Combined order flow reads around the chart venue.** Merging every venue's raw
+book can cross bids and asks when a spot or USD book trades at a basis. The
+sidecar keeps the chart venue's mid as the reference and drops other venues'
+levels on the wrong side of it; do not remove that clip or the DOM shows a
+crossed spread. OKX derivative books and trades are sized in contracts;
+`Instrument.contractSize` converts them to base, so keep it when an adapter adds
+a contract venue.
 
 **Venue adapters own all exchange specifics.** `VenueAdapter` exposes only
 `Instrument`, `VenueBar`, `VenueTicker` and the private `TradingPort`; the table,
@@ -993,9 +1036,17 @@ Useful browser probes:
   the left edge shows candles instead of empty space.
 - The right sidebar's top camera downloads the tab's layout PNG; the topbar has
   no screenshot button. The panel buttons open `Screener`, `Pine`, `Library`,
-  and `Alerts` as one Vela side panel at a time; the topbar keeps Maximize and
-  Layouts. The open panel and width survive reload. The legend source action
-  opens the Pine panel.
+  `Alerts`, and `Order flow` as one Vela side panel at a time; the topbar keeps
+  Maximize and Layouts. The open panel and width survive reload. The legend
+  source action opens the Pine panel.
+- The `Order flow` panel lists `6 exchanges` on `BTCUSDT.P`, with Book, DOM and
+  Trades views. DOM shows sold, bid, price, ask, bought and delta; the ladder
+  follows the market, holds on hover, and the `Group prices by` menu changes the
+  step. The Book centers on the spread and its `Center` button returns after a
+  scroll. Reset clears sold/bought/delta and the `Traded since` clock. The
+  Trades tape pauses, filters by notional, and joins fills. Unchecking a venue
+  in the Exchange menu drops its rows; switching the chart symbol reloads the
+  panel for that symbol.
 - A script with `alert()` on the active chart fills the `Alerts` rail panel with
   the symbol, timeframe, message and indicator; the topbar has no bell, and the
   rail button carries the alert count. Clearing empties the list and the count,

@@ -19,6 +19,7 @@ import { FavoritesMenu } from './components/FavoritesMenu';
 import { LibraryPanel } from './components/LibraryPanel';
 import { ReplayBar } from './components/ReplayBar';
 import { AlertsPanel } from './components/AlertsPanel';
+import { OrderFlowPanel } from './components/OrderFlowPanel';
 import { PinePanel } from './components/PinePanel';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -2388,6 +2389,7 @@ export default function App() {
               />
             ),
             alerts: <AlertsPanel />,
+            orderflow: <OrderFlowPanel symbol={activeTab?.symbol ?? ''} />,
           }}
         />
       </main>
