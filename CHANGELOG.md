@@ -4,6 +4,7 @@ The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
 ## 0.2.0 — 2026-11-22
+Commit: 7d6d9c6
 
 - Binance spot is listed beside its USDⓈ-M perpetuals. Spot rows, charts, the
   scanner, and order flow use the spot REST/WS endpoints; `BINANCE:BTCUSDT` is
