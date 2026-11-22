@@ -156,7 +156,7 @@ export function Segmented<T extends string>({
             className={cn(
               'h-6 rounded-[4px] px-2 text-[11px] font-medium transition-colors',
               active
-                ? 'bg-primary-soft text-primary-foreground shadow-[inset_0_0_0_1px_rgba(70,95,255,0.35)]'
+                ? 'bg-primary-soft text-foreground shadow-[inset_0_0_0_1px_rgba(70,95,255,0.35)]'
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >

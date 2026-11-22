@@ -394,7 +394,7 @@ export function AppHeader({
                   className={cn(
                     'rounded border px-1 font-mono text-[9px] leading-4',
                     active
-                      ? 'border-primary/30 bg-primary/15 text-primary-foreground/90'
+                      ? 'border-primary/30 bg-primary/15 text-foreground'
                       : 'border-border bg-muted/60 text-muted-foreground',
                   )}
                 >

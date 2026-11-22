@@ -1132,7 +1132,7 @@ export function ScreenerTable({
                 className={cn(
                   'h-6 rounded-[4px] border px-2 text-[11px] font-medium transition-colors',
                   active
-                    ? 'border-primary/50 bg-primary-soft text-primary-foreground'
+                    ? 'border-primary/50 bg-primary-soft text-foreground'
                     : 'border-border/70 text-muted-foreground hover:bg-accent hover:text-foreground',
                 )}
               >
