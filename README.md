@@ -63,6 +63,21 @@ Any OpenAI-compatible endpoint works: OpenRouter, a local Ollama/LM Studio, or a
 provider API. The model needs tool calling; vision is optional but required for
 questions about the chart image.
 
+**What the AI assistant can do**
+
+- Read the active chart: symbol, timeframe, visible range, indicators and
+  drawings. **Chart** attaches a PNG of the active chart to the newest user
+  message.
+- Work on Pine: open the current script, read large files by line range, patch
+  only the changed anchors, create a new indicator or strategy, and apply the
+  editor buffer to the chart. Creating a new script asks before replacing an
+  unsaved draft.
+- Run and debug: execute the buffer live on the chart and in a disposable
+  worker, then compare plots, variables, warnings and errors. The bound script
+  is shown as `Editing <name>` and survives switching Pine tabs.
+- Draw: list native chart drawings, add one by tool and anchors, or update,
+  restyle, remove and clear them as undoable chart actions.
+
 The sidebar keeps every chat until you delete it. `Chat` / `All chats` tabs:
 history searches titles and chart context, groups chats by date, renames inline
 and deletes. After the first reply it generates a short title in the user's
