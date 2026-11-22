@@ -228,6 +228,13 @@ html.light .vela-ws-grid[data-multi='1'] .vela-cell[data-active='1']::after {
   z-index: 50;
 }
 
+/* Vela's own alert toast duplicates the app-owned Alerts panel and notifications.
+   Only the kit toaster uses this slot; script and provider errors use `.vela-toast`,
+   so those stay visible. */
+.vela-workspace [data-slot='toast'] {
+  display: none !important;
+}
+
 /* Vela appends its in-chart settings dialogs (chart settings, indicator inputs,
    drawing settings) to the chart cell and marks their backdrop/positioner
    `data-contained`, so the cell's overflow clips them. On desktop, pin those

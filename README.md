@@ -250,8 +250,12 @@ the same `build` string.
   survive an app reload and a sidecar restart: missed events arrive as one
   summary toast when the app reconnects, cleared history stays cleared, and an
   only-once rule is never re-armed after it fired. A fully closed app does not
-  evaluate (the sidecar stops with it). `request.*` scripts are not supported
-  yet. Screener-wide alerts are not available.
+  evaluate (the sidecar stops with it). `request.*` scripts run through the
+  sidecar's session host, including foreign-symbol and lower-timeframe series; a
+  missing series adds a warning without stopping the rule. A venue the app does
+  not serve is `na` without a warning, like the chart. Viewport-dependent
+  scripts are rejected when the alert is created. Screener-wide alerts are not
+  available.
 - AI sidebar on the left, outside the Vela dock, so it stays visible next to the
   chart and the Pine editor. Its toggle sits at the top of the chart's left
   drawing toolbar, above the cursor tool. Chats are kept until deleted, and accept images,

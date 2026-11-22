@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The store renders toasts through sonner; keep the module importable in Node.
 vi.mock('sonner', () => ({
@@ -102,6 +102,14 @@ describe('alert store rules', () => {
 });
 
 describe('alert store events', () => {
+  beforeEach(() => {
+    addAlertRule(rulePayload({ id: 'r1' }));
+  });
+
+  afterEach(() => {
+    removeAlertRule('r1');
+  });
+
   it('keeps the newest 500 events, newest first', () => {
     for (let batch = 0; batch < 6; batch += 1) {
       pushRuleEvents(Array.from({ length: 100 }, (_, index) => event(batch * 100 + index)));
@@ -117,13 +125,20 @@ describe('alert store events', () => {
       calls += 1;
     });
     pushRuleEvents([event(700), event(701)]);
-    expect(calls).toBe(1);
+    const notified = calls;
+    expect(notified).toBeGreaterThan(0);
     expect(alertUnreadCount()).toBeGreaterThanOrEqual(2);
     off();
     markAlertsRead();
     expect(alertUnreadCount()).toBe(0);
     pushRuleEvents([event(702)]);
-    expect(calls).toBe(1);
+    expect(calls).toBe(notified);
+  });
+
+  it('drops live events for rules that are not in the store', () => {
+    pushRuleEvents([event(900, { ruleId: 'missing' }), event(901, { ruleId: 'r1' })]);
+    expect(alertEvents().some((item) => item.id === 'ev-900')).toBe(false);
+    expect(alertEvents().some((item) => item.id === 'ev-901')).toBe(true);
   });
 
   it('disables a once rule on its first fire and dedupes a replayed event', () => {

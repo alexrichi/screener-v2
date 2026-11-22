@@ -41,38 +41,68 @@ const INSTRUMENT: Instrument = {
   pricePrecision: 2,
 };
 
+const ETH: Instrument = {
+  ...INSTRUMENT,
+  key: 'binance:perp:ETHUSDT',
+  nativeId: 'ETHUSDT',
+  display: 'ETHUSDT.P',
+  velaSymbol: 'BINANCE:ETHUSDT.P',
+  base: 'ETH',
+};
+
+interface BarsCall {
+  instrument: Instrument;
+  timeframe: string;
+  bars: number;
+  opts: Record<string, unknown>;
+}
+
 interface StubHub {
   hub: VenueHub;
   calls: () => number;
+  barCalls: () => BarsCall[];
   setBars: (bars: VenueBar[]) => void;
+  setSeries: (symbol: string, timeframe: string, bars: VenueBar[]) => void;
 }
 
-function makeStubHub(): StubHub {
+function makeStubHub(instruments: readonly Instrument[] = [INSTRUMENT]): StubHub {
   let bars: VenueBar[] = [];
   let count = 0;
+  const calls: BarsCall[] = [];
+  const series = new Map<string, VenueBar[]>();
   const hub = {
-    getInstruments: async () => [INSTRUMENT],
-    getBars: async () => {
+    getInstruments: async () => [...instruments],
+    getBars: async (
+      instrument: Instrument,
+      timeframe: string,
+      requested: number,
+      opts: Record<string, unknown> = {},
+    ) => {
       count += 1;
-      return bars;
+      calls.push({ instrument, timeframe, bars: requested, opts });
+      return series.get(`${instrument.velaSymbol}@${timeframe}`) ?? bars;
     },
   } as unknown as VenueHub;
   return {
     hub,
     calls: () => count,
+    barCalls: () => calls,
     setBars: (next: VenueBar[]) => {
       bars = next;
+    },
+    setSeries: (symbol: string, timeframe: string, next: VenueBar[]) => {
+      series.set(`${symbol}@${timeframe}`, next);
     },
   };
 }
 
-function barsUpTo(openTime: number, count = 5): VenueBar[] {
+function barsUpTo(openTime: number, count = 5, step = INTERVAL): VenueBar[] {
   const out: VenueBar[] = [];
   for (let index = count - 1; index >= 0; index -= 1) {
-    const time = openTime - index * INTERVAL;
+    const time = openTime - index * step;
     out.push({
       openTime: time,
-      closeTime: time + INTERVAL - 1,
+      closeTime: time + step - 1,
       open: 100,
       high: 101,
       low: 99,
@@ -132,7 +162,13 @@ function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unkn
   };
 }
 
-type Frame = { op?: string; events?: Array<Record<string, unknown>> };
+type Frame = {
+  op?: string;
+  events?: Array<Record<string, unknown>>;
+  ruleId?: string;
+  message?: string;
+  error?: string;
+};
 
 function collector(): { frames: Frame[]; send: (payload: unknown) => void } {
   const frames: Frame[] = [];
@@ -309,5 +345,143 @@ describe('pause and re-enable', () => {
     const events = liveEvents(frames);
     expect(events).toHaveLength(2);
     expect(events[1]!.time).toBe(BASE + 3 * INTERVAL);
+  });
+});
+
+describe('request.security series', () => {
+  it('fetches a foreign symbol and fires', async () => {
+    const stub = makeStubHub([INSTRUMENT, ETH]);
+    stub.setBars(barsUpTo(BASE));
+    stub.setSeries(ETH.velaSymbol, '15', barsUpTo(BASE + INTERVAL));
+    const service = newService(stub);
+    const { frames, send } = collector();
+    service.subscribe(send);
+
+    service.setRules([
+      makeRule({
+        id: 'foreign-1',
+        script: `//@version=6
+indicator("probe")
+eth = request.security("ETHUSDT", "15", close)
+alert("eth " + str.tostring(eth))`,
+      }),
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    stub.setBars(barsUpTo(BASE + INTERVAL));
+    await vi.advanceTimersByTimeAsync(INTERVAL + CLOSE_DELAY);
+
+    expect(liveEvents(frames)).toHaveLength(1);
+    const call = stub
+      .barCalls()
+      .find(
+        (entry) =>
+          entry.instrument.velaSymbol === ETH.velaSymbol && entry.timeframe === '15',
+      );
+    expect(call).toBeDefined();
+    expect(call!.bars).toBeGreaterThanOrEqual(50);
+    expect(call!.opts.from).toBe(BASE - 3 * INTERVAL);
+    expect(call!.opts.to).toBe(BASE + 2 * INTERVAL);
+    expect(frames.filter((frame) => frame.op === 'alerts.warning')).toHaveLength(0);
+  });
+
+  it('fetches lower-timeframe bars with the full range', async () => {
+    const stub = makeStubHub();
+    stub.setBars(barsUpTo(BASE, 1500));
+    stub.setSeries(
+      INSTRUMENT.velaSymbol,
+      '1',
+      barsUpTo(BASE + 2 * INTERVAL - 60_000, 300, 60_000),
+    );
+    const service = newService(stub);
+    const { frames, send } = collector();
+    service.subscribe(send);
+
+    service.setRules([
+      makeRule({
+        id: 'lower-1',
+        script: `//@version=6
+indicator("probe")
+lows = request.security_lower_tf(syminfo.tickerid, "1", close)
+alert("count " + str.tostring(array.size(lows)))`,
+      }),
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    stub.setBars(barsUpTo(BASE + INTERVAL, 1500));
+    await vi.advanceTimersByTimeAsync(INTERVAL + CLOSE_DELAY);
+
+    expect(liveEvents(frames)).toHaveLength(1);
+    expect(liveEvents(frames)[0]!.message).toBe('count 15');
+    const call = stub
+      .barCalls()
+      .find(
+        (entry) =>
+          entry.instrument.velaSymbol === INSTRUMENT.velaSymbol && entry.timeframe === '1',
+      );
+    expect(call).toBeDefined();
+    // 1500 × 15m × 1.1 / 1m = 24,750.000…; the runtime's ceil + 20 is 24,771.
+    expect(call!.bars).toBe(24_771);
+    expect(call!.opts.from).toBe(BASE + INTERVAL - 1499 * INTERVAL);
+    expect(call!.opts.to).toBe(BASE + 2 * INTERVAL);
+    expect(frames.filter((frame) => frame.op === 'alerts.warning')).toHaveLength(0);
+  });
+});
+
+describe('request.security warnings', () => {
+  it('returns na for an unserved venue without a warning', async () => {
+    const stub = makeStubHub();
+    stub.setBars(barsUpTo(BASE));
+    const service = newService(stub);
+    const { frames, send } = collector();
+    service.subscribe(send);
+
+    service.setRules([
+      makeRule({
+        id: 'unknown-venue',
+        script: `//@version=6
+indicator("probe")
+es = request.security("CME_MINI:ES1!", "15", close)
+alert("es " + str.tostring(es))`,
+      }),
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    stub.setBars(barsUpTo(BASE + INTERVAL));
+    await vi.advanceTimersByTimeAsync(INTERVAL + CLOSE_DELAY);
+
+    expect(liveEvents(frames)).toHaveLength(1);
+    expect(frames.filter((frame) => frame.op === 'alerts.warning')).toHaveLength(0);
+    expect(frames.filter((frame) => frame.op === 'alerts.error')).toHaveLength(0);
+  });
+
+  it('warns about a missing series without stopping the rule', async () => {
+    const stub = makeStubHub();
+    stub.setBars(barsUpTo(BASE));
+    const service = newService(stub);
+    const { frames, send } = collector();
+    service.subscribe(send);
+
+    service.setRules([
+      makeRule({
+        id: 'warn-1',
+        script: `//@version=6
+indicator("probe")
+missing = request.security("MISSING", "15", close)
+alert("missing " + str.tostring(missing))`,
+      }),
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    stub.setBars(barsUpTo(BASE + INTERVAL));
+    await vi.advanceTimersByTimeAsync(INTERVAL + CLOSE_DELAY);
+
+    expect(liveEvents(frames)).toHaveLength(1);
+    const warnings = frames.filter((frame) => frame.op === 'alerts.warning');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.ruleId).toBe('warn-1');
+    expect(warnings[0]!.message).toContain('MISSING');
+    expect(frames.filter((frame) => frame.op === 'alerts.error')).toHaveLength(0);
+
+    const stored = JSON.parse(readFileSync(tmpFile, 'utf8')) as {
+      rules: Array<{ enabled: boolean }>;
+    };
+    expect(stored.rules[0]!.enabled).toBe(true);
   });
 });

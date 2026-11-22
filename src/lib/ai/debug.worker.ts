@@ -1,7 +1,6 @@
 import { VENUE_IDS } from '../../venues/catalog';
-import { sameVelaSymbol } from '../../venues/instrument';
 import { SidecarVenueAdapter } from '../../venues/sidecar';
-import type { Instrument, VenueBar, VenueId } from '../../venues/types';
+import type { VenueId } from '../../venues/types';
 import type { ScriptRunSummary } from '../../types';
 import type { DebugRunRequest, DebugWorkerMessage } from './debugRun';
 import {
@@ -16,7 +15,7 @@ import {
   PineSession,
   type FetchSeries,
 } from '../pineVela/session';
-import type { PineBar } from '@screener/pine-engine';
+import { findPineInstrument, marketOf, toPineBar } from '../pineVela/seriesHost';
 
 const workerSelf = self as unknown as {
   onmessage: ((event: MessageEvent<DebugRunRequest>) => void) | null;
@@ -33,41 +32,6 @@ function venueOf(symbol: string): VenueId | null {
   const at = symbol.indexOf(':');
   const provider = (at >= 0 ? symbol.slice(0, at) : 'binance').toLowerCase();
   return VENUE_IDS.find((id) => id === provider) ?? null;
-}
-
-function flatTicker(symbol: string): string {
-  const at = symbol.indexOf(':');
-  return (at >= 0 ? symbol.slice(at + 1) : symbol)
-    .replace(/\.P$/i, '')
-    .replace(/[-_/]/g, '')
-    .toUpperCase();
-}
-
-/** A script's bare `ETHUSDT` still resolves the chart venue's perpetual. */
-function findInstrument(
-  instruments: readonly Instrument[],
-  symbol: string,
-): Instrument | undefined {
-  const exact = instruments.find((item) => sameVelaSymbol(item.velaSymbol, symbol));
-  if (exact) return exact;
-  const wanted = flatTicker(symbol);
-  return (
-    instruments.find((item) => flatTicker(item.nativeId) === wanted) ??
-    instruments.find(
-      (item) => `${item.base}${item.quote}`.toUpperCase() === wanted,
-    )
-  );
-}
-
-function pineBar(bar: VenueBar): PineBar {
-  return {
-    time: bar.openTime,
-    open: bar.open,
-    high: bar.high,
-    low: bar.low,
-    close: bar.close,
-    volume: bar.volume,
-  };
 }
 
 async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
@@ -92,9 +56,7 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
   try {
     const adapter = new SidecarVenueAdapter(venue);
     const instruments = await adapter.listInstruments();
-    const instrument = instruments.find((candidate) =>
-      sameVelaSymbol(candidate.velaSymbol, request.symbol),
-    );
+    const instrument = findPineInstrument(instruments, request.symbol);
     if (!instrument) {
       return emptyRunSummary(meta, `No ${venue} instrument matches "${request.symbol}".`);
     }
@@ -116,38 +78,17 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
     }
 
     const compiled = compilePineSession(request.source, 'ai-debug', { debug: true });
-    const prefix = venue.toUpperCase();
     const session = new PineSession({
       program: compiled.program,
       instanceId: 'ai-debug',
-      market: {
-        symbol: instrument.nativeId,
-        timeframe: request.timeframe,
-        symbolInfo: {
-          ticker: instrument.nativeId,
-          tickerid: `${prefix}:${instrument.nativeId}`,
-          prefix,
-          root: instrument.base,
-          type: instrument.kind === 'perp' ? 'futures' : 'crypto',
-          basecurrency: instrument.base,
-          currency: instrument.quote,
-          description: instrument.display,
-          timezone: 'Etc/UTC',
-          session: '24x7',
-          mintick:
-            instrument.tickSize && instrument.tickSize > 0
-              ? instrument.tickSize
-              : 1 / 10 ** instrument.pricePrecision,
-          pricescale: 10 ** instrument.pricePrecision,
-        },
-      },
-      bars: bars.map(pineBar),
+      market: marketOf(instrument, request.timeframe),
+      bars: bars.map(toPineBar),
       inputs: {},
       mode: 'live',
     });
 
     const fetchSeries: FetchSeries = async (symbol, timeframe, range) => {
-      const target = findInstrument(instruments, symbol);
+      const target = findPineInstrument(instruments, symbol);
       if (!target) throw new Error(`No ${venue} instrument matches "${symbol}"`);
       const series = await adapter.fetchBars(
         target,
@@ -156,7 +97,7 @@ async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
         undefined,
         { includeForming: true, to: range.to },
       );
-      return series.map(pineBar);
+      return series.map(toPineBar);
     };
 
     let outcome = session.run();

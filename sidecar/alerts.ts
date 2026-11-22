@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { compilePine } from '@screener/pine-engine';
 import { parseAlertEvents, parseRunnerRules } from '../src/lib/alertRules';
-import { usesRequestSeries } from '../src/lib/alertSites';
+import {
+  fetchPineSeries,
+  PineSession,
+  type FetchSeries,
+} from '../src/lib/pineVela/session';
+import { findPineInstrument, marketOf, toPineBar } from '../src/lib/pineVela/seriesHost';
 import { timeframeMs } from '../src/lib/timeframe';
 import type { AlertEvent, AlertRunnerRule, VenueId } from '../src/types';
 import type { Instrument } from '../src/venues/types';
@@ -84,6 +89,8 @@ export class AlertService {
   private readonly senders = new Set<Send>();
   /** ruleId:timeframe:velaSymbol → last evaluated bar. Survives re-arms. */
   private readonly lastEvaluated = new Map<string, number>();
+  /** Unknown request venues already logged; the chart treats them as `na` too. */
+  private readonly skippedVenues = new Set<string>();
 
   constructor(private readonly opts: Options) {
     this.stored = loadStored();
@@ -170,9 +177,6 @@ export class AlertService {
       if (this.disposed || generation !== this.generation) return;
       if (!rule.enabled) continue;
       try {
-        if (usesRequestSeries(rule.script)) {
-          throw new Error('request.* is not supported in alerts');
-        }
         const hub = this.opts.hubs.get(rule.target.venue);
         if (!hub) throw new Error(`Unknown venue "${rule.target.venue}"`);
         const program = compilePine({ source: rule.script, inputs: rule.inputs });
@@ -263,19 +267,74 @@ export class AlertService {
         return;
       }
       if (!job.program.ok) throw new Error(job.program.error ?? 'The script could not be compiled');
-      const run = job.program.run({
-        bars: bars.map((bar) => ({
-          time: bar.openTime,
-          open: bar.open,
-          high: bar.high,
-          low: bar.low,
-          close: bar.close,
-          volume: bar.volume,
-        })),
-        timeframe: job.rule.timeframe,
-        symbol: job.instrument.nativeId,
+      const warned = new Set<string>();
+      const warn = (symbol: string, timeframe: string, reason: string): void => {
+        const key = `${symbol}@${timeframe}`;
+        if (warned.has(key)) return;
+        warned.add(key);
+        this.broadcast({
+          op: 'alerts.warning',
+          ruleId: job.rule.id,
+          message: `request.*(${symbol}, ${timeframe}): ${reason}`,
+        });
+      };
+      const fetchSeries: FetchSeries = async (symbol, timeframe, range) => {
+        try {
+          const at = symbol.indexOf(':');
+          const prefix =
+            at > 0 ? symbol.slice(0, at).toLowerCase() : job.rule.target.venue;
+          const seriesHub = this.opts.hubs.get(prefix as VenueId);
+          if (!seriesHub) {
+            // The app has no provider for this venue; the engine returns na, like the chart.
+            if (!this.skippedVenues.has(prefix)) {
+              this.skippedVenues.add(prefix);
+              console.warn(
+                `[alerts] request.*(${symbol}, ${timeframe}): no provider for "${prefix}"`,
+              );
+            }
+            return [];
+          }
+          const instruments = await seriesHub.getInstruments();
+          const target = findPineInstrument(instruments, symbol);
+          if (!target) {
+            warn(symbol, timeframe, 'no matching instrument');
+            return [];
+          }
+          const series = await seriesHub.getBars(target, timeframe, range.limit, {
+            includeForming: false,
+            from: range.from,
+            to: range.to,
+            priority: 'background',
+          });
+          if (series.length === 0) {
+            warn(symbol, timeframe, 'no bars');
+            return [];
+          }
+          return series.map(toPineBar);
+        } catch (error) {
+          warn(symbol, timeframe, errorMessage(error));
+          return [];
+        }
+      };
+      const session = new PineSession({
+        program: job.program,
+        instanceId: job.rule.id,
+        market: marketOf(job.instrument, job.rule.timeframe),
+        bars: bars.map(toPineBar),
         inputs: job.rule.inputs,
       });
+      let outcome = session.run();
+      for (let round = 0; outcome.needs.length > 0 && round < 2; round += 1) {
+        const series = await fetchPineSeries(
+          outcome.needs,
+          fetchSeries,
+          (need) => warn(need.symbol, need.timeframe, 'no bars'),
+          60_000,
+        );
+        session.resume(series);
+        outcome = session.run();
+      }
+      const run = outcome.result;
       if (!run.ok) throw new Error(run.error ?? 'The script failed');
       const events: AlertEvent[] = [];
       for (const alert of run.alerts) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scanAlertSites, scriptTitle, usesRequestSeries } from '../src/lib/alertSites';
+import { scanAlertSites, scriptTitle } from '../src/lib/alertSites';
 
 describe('scanAlertSites', () => {
   it('reads positional and named titles in source order', () => {
@@ -45,18 +45,6 @@ alertcondition(ta.crossunder(fast, slow), title = cond ? "A" : "B")
       'indicator("a")\nalertcondition(close > open, "Dup")\nalertcondition(close < open, "Dup")\n',
     );
     expect(scan.conditions).toEqual(['Dup']);
-  });
-});
-
-describe('usesRequestSeries', () => {
-  it('flags request.* calls and ignores comments and strings', () => {
-    expect(usesRequestSeries('r = request.security(syminfo.tickerid, "D", close)')).toBe(true);
-    expect(usesRequestSeries('r = request.security_lower_tf(syminfo.tickerid, "1", close)')).toBe(
-      true,
-    );
-    expect(usesRequestSeries('// request.security("X", "D", close)')).toBe(false);
-    expect(usesRequestSeries('s = "request.security"')).toBe(false);
-    expect(usesRequestSeries('plot(close)\n')).toBe(false);
   });
 });
 

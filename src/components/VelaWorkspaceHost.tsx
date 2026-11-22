@@ -46,7 +46,7 @@ import type {
 import { chartSymbol, spotSymbol } from '../lib/binance';
 import { toast } from 'sonner';
 import type { LayoutApplyReport, LayoutCapture, LayoutPine } from '../lib/layouts';
-import { scanAlertSites, scriptTitle, usesRequestSeries } from '../lib/alertSites';
+import { scanAlertSites, scriptTitle } from '../lib/alertSites';
 import { CreateAlertDialog, type AlertDraft } from './CreateAlertDialog';
 import { pushStrategyRun, removeStrategyRun } from '../lib/strategyRuns';
 import { timeframeMs } from '../lib/timeframe';
@@ -772,8 +772,8 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
       createAlertHandlers.set(tab.id, (chart, indicator) => {
         const source = indicator.source;
         if (!source) return;
-        if (usesRequestSeries(source)) {
-          toast.warning('Alerts do not support request.* yet');
+        if (/chart\.(?:left|right)_visible_bar_time/.test(source)) {
+          toast.warning('Viewport functions are not available in alerts');
           return;
         }
         const scan = scanAlertSites(source);

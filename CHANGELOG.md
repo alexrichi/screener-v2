@@ -11,8 +11,12 @@ the build stamp; the updater compares only the version.
   the armed rules from a persistent history, with toast, sound and system
   notifications, global unread badges, pause and delete. Only alerts you create
   reach the history: a chart's live alert events no longer add rows on their own.
-  Scripts using `request.*` are rejected for now. Screener-wide alerts are not
-  available.
+  `request.*` scripts run through a sidecar session host over the venue hubs; a
+  missing series adds a warning instead of stopping the rule, while a venue the
+  app does not serve yields `na` without a warning, like the chart. The renderer
+  ignores warning, error and live-event frames for a rule it no longer has, and
+  its next config clears that stale rule from disk. Viewport-dependent scripts
+  are rejected when the alert is created. Screener-wide alerts are not available.
 - The alert runner now belongs to the sidecar process, not to the renderer
   socket: armed rules keep evaluating through app reloads and sidecar restarts,
   and events that fire while the app is away arrive as one summary toast on

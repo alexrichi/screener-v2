@@ -22,6 +22,7 @@ import { runnerRules } from '../lib/alertRules';
 import { toast } from 'sonner';
 
 const reportedRuleErrors = new Set<string>();
+const reportedRuleWarnings = new Set<string>();
 
 interface Options {
   config: ScreenerConfig;
@@ -102,6 +103,7 @@ export function useScreener({ config }: Options) {
             | ({ op: 'screener.patch' } & ScreenerPatch)
             | { op: 'alerts.event'; events?: unknown }
             | { op: 'alerts.replay'; events?: unknown }
+            | { op: 'alerts.warning'; ruleId?: string; message?: string }
             | { op: 'alerts.error'; ruleId?: string; error?: string };
           if (message.op === 'screener.snapshot') {
             applySnapshot(message);
@@ -116,11 +118,24 @@ export function useScreener({ config }: Options) {
             if (added > 0) {
               toast.info(`${added} alert${added === 1 ? '' : 's'} while you were away`);
             }
+          } else if (message.op === 'alerts.warning') {
+            const ruleId = message.ruleId ?? 'unknown';
+            const rule = alertRules().find((item) => item.id === ruleId);
+            // A stale on-disk rule must not surface a warning the UI cannot arm.
+            if (!rule) return;
+            const text = message.message ?? 'A request series returned no bars';
+            const key = `${ruleId}:${text}`;
+            if (!reportedRuleWarnings.has(key)) {
+              reportedRuleWarnings.add(key);
+              toast.warning(`Alert data missing: ${rule.name}`, { description: text });
+            }
           } else if (message.op === 'alerts.error') {
             // Keyed by the rule's own updatedAt: a reconnect never repeats an
             // error, an edited rule reports its new failure once.
             const rule = alertRules().find((item) => item.id === (message.ruleId ?? ''));
-            const key = `${message.ruleId ?? 'unknown'}:${rule?.updatedAt ?? 0}`;
+            // A stale on-disk rule must not surface an error the UI cannot arm.
+            if (!rule) return;
+            const key = `${message.ruleId ?? 'unknown'}:${rule.updatedAt}`;
             if (!reportedRuleErrors.has(key)) {
               reportedRuleErrors.add(key);
               toast.warning('An alert rule stopped', {

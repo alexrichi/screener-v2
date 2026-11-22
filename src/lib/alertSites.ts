@@ -208,7 +208,3 @@ export function scriptTitle(source: string): string | null {
   return named ? literal(named[1]) : null;
 }
 
-/** `request.security`/`request.security_lower_tf` need a host series the alert runner does not fetch. */
-export function usesRequestSeries(source: string): boolean {
-  return /\brequest\s*\./.test(maskStrings(stripComments(source)));
-}

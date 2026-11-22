@@ -186,7 +186,8 @@ sidecar/
   server.ts                       public-data HTTP + WebSocket server; one hub per venue
   ai.ts                           AI key-injecting proxy for an OpenAI-compatible model
   alerts.ts                       process-owned AlertService: armed rules on closed
-                                  bars, alerts.json cache/log, replay on connect
+                                  bars, alerts.json cache/log, replay, PineSession
+                                  series host for request.*
   hub.ts                          one adapter per venue; shared caches/fan-out
   luxalgo.ts                      LuxAlgo Library source fetch and cache
   screener.ts                     server-owned watched table: activation, warm-up, metrics, patches
@@ -758,8 +759,8 @@ or all plain `alert()` calls — plus a name, only-once / every-bar-close freque
 and notification channels. The rule stores the script snapshot (symbol,
 timeframe, inputs, site); it lives at `screener.alerts.rules.v1` and the log at
 `screener.alerts.log.v1`, both app-wide. The sidecar evaluates armed rules on
-closed bars (one instrument per rule, no `request.*`) through
-`alerts.config` / `alerts.event` / `alerts.error` frames on `/screener`; the
+closed bars (one instrument per rule) through `alerts.config` / `alerts.event` /
+`alerts.replay` / `alerts.warning` / `alerts.error` frames on `/screener`; the
 chart is only the creation surface. The runner is a process-owned `AlertService`
 (`sidecar/alerts.ts`), created once at boot and never disposed on a socket
 close, so jobs keep running between renderer connections and survive a sidecar
@@ -775,7 +776,18 @@ when it fires (`retireOnceRule`), and the first `alerts.config` after a
 reconnect cannot resurrect it (the `updatedAt <=` guard); a fresh enable arms
 from the latest closed bar (`newlyEnabled`) so a paused rule never fires its
 downtime, while `lastEvaluated` (`ruleId:timeframe:velaSymbol`) survives re-arms
-so a bar closed during a reconnect still fires. A fully closed packaged app does
+so a bar closed during a reconnect still fires. `request.*` runs through a
+`PineSession` over the rule's closed bars: a foreign symbol or lower-timeframe
+series fetches through the venue hubs (the market mirrors the chart's
+`symbolInfo`, with the full session range and background priority) for at most
+two rounds. A missing or empty series broadcasts `alerts.warning` and leaves the
+rule armed; fatal errors stay `alerts.error`. A venue the app has no provider for
+is `na` with one sidecar console line, not a warning, matching the chart. The
+renderer drops warning, error and live-event frames for a rule that is not in
+`screener.alerts.rules.v1`, so a stale on-disk rule cannot surface in the UI;
+the next `alerts.config` clears it from disk. Scripts that read
+`chart.left_visible_bar_time` or `chart.right_visible_bar_time` are rejected at
+creation because the runner has no viewport. A fully closed packaged app does
 not evaluate anything: the sidecar is a child that stops with it. The chart's
 live `alert` events are not logged: only armed rules reach the panel, so an
 indicator that nobody armed

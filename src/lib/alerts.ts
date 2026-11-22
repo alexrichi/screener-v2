@@ -231,11 +231,20 @@ function addEvents(incoming: AlertEvent[]): void {
   emit();
 }
 
-function ingest(incoming: unknown, limit: number, withNotify: boolean): number {
+function ingest(
+  incoming: unknown,
+  limit: number,
+  withNotify: boolean,
+  requireRule = false,
+): number {
   const parsed = parseAlertEvents(incoming, limit);
   const unique = [...new Map(parsed.map((event) => [event.id, event])).values()];
   const events = unique.filter(
-    (event) => !seen.has(event.id) && event.receivedAt > log.clearedAt,
+    (event) =>
+      !seen.has(event.id) &&
+      event.receivedAt > log.clearedAt &&
+      // A live event for a rule the UI no longer has is a stale on-disk rule.
+      (!requireRule || !event.ruleId || rules.some((rule) => rule.id === event.ruleId)),
   );
   if (events.length === 0) return 0;
   if (withNotify) {
@@ -274,7 +283,7 @@ function ingest(incoming: unknown, limit: number, withNotify: boolean): number {
 
 /** Events evaluated by the sidecar for armed rules. */
 export function pushRuleEvents(incoming: unknown): void {
-  ingest(incoming, 100, true);
+  ingest(incoming, 100, true, true);
 }
 
 /**

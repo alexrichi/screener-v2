@@ -319,6 +319,7 @@ export async function fetchPineSeries(
   needs: readonly PineSeriesRequest[],
   fetchSeries: FetchSeries | undefined,
   onForeignError: (need: PineSeriesRequest) => void,
+  timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<PineSeriesReply[]> {
   return Promise.all(
     needs.map(async (need) => {
@@ -337,7 +338,7 @@ export async function fetchPineSeries(
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () => reject(new Error('Pine series fetch timed out')),
-              FETCH_TIMEOUT_MS,
+              timeoutMs,
             );
           }),
         ]);
