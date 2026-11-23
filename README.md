@@ -180,6 +180,9 @@ the same `build` string.
   reference cell's symbol before the replay starts, even when the chart has no
   loaded bars. Every cell rewinds on the same clock; Vela pauses live updates and
   mutes alerts while replaying.
+- Right-click the chart to `Copy price <price>` or `Draw horizontal line at
+  <price>` at the crosshair, from the chart's own context menu. Copying
+  confirms with a toast; the line lands as a normal drawing with undo.
 - Quick filters are on/off chips - Gainers, Losers, `RSI <30` / `>70`,
   `RVOL ≥1.5` and price above/below VWAP - combined with AND when several are
   on, and with the `All` / `Favorites` switch. Turning on one of an opposite

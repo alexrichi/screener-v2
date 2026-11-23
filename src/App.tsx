@@ -46,6 +46,7 @@ import {
 } from './lib/layouts';
 import { setLayoutsActionLabel, setLayoutsBridge } from './lib/velaLayouts';
 import { setAiBridge, setAiRailState } from './lib/velaAi';
+import { setChartMenuBridge } from './lib/velaContextMenu';
 import {
   VelaWorkspaceHost,
   type ScriptApplyReport,
@@ -1971,6 +1972,20 @@ export default function App() {
     setAiBridge(toggleAi);
     return () => setAiBridge(null);
   }, [toggleAi]);
+
+  // The menu reads price precision from the right-clicked chart's own symbol
+  // facts; the bridge only places the drawing on the active workspace.
+  useEffect(() => {
+    setChartMenuBridge({
+      drawHLine: (price, time) => {
+        const result = activeWorkspace()?.drawOnChart([
+          { type: 'hline', points: [{ time, price }] },
+        ]);
+        return result?.errors[0] ?? null;
+      },
+    });
+    return () => setChartMenuBridge(null);
+  }, [activeWorkspace]);
 
   const newScript = useCallback(
     (input: {

@@ -602,6 +602,18 @@ lists the newest 20 so the model sees what is already on the chart. The drawing
 tools target the script target's workspace when one is bound, else the active
 workspace.
 
+**The chart context menu carries two app rows.** `lib/velaContextMenu.ts`
+registers `Copy price <price>` and `Draw horizontal line at <price>` as
+`context:body` widget actions at `order: -25`, right after `Reset chart view`.
+Vela menu labels are static, so `when(ctx)` — the only hook that runs at menu
+build with the captured pointer — rewrites them with the price formatted from
+the chart's own `symbolFacts().mintick` (space-grouped like the table; 2 digits
+until the facts land). The rows hide on study panes, and Draw
+also where the crosshair reports no time, because the drawing validator
+requires a finite one. The bridge routes to the active tab's handle: Copy
+writes the clipboard with a toast, Draw goes through `drawOnChart('hline')`,
+the same undo-able path as the AI drawings.
+
 **The AI sidebar is renderer-side and keyless.** `lib/ai/model.ts` points an
 OpenAI-compatible provider at `<sidecar>/ai/v1`; `sidecar/ai.ts` swaps in the real
 key and model. The key lives only in the sidecar process and its settings file

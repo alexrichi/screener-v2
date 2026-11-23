@@ -5,6 +5,10 @@ the build stamp; the updater compares only the version.
 
 ## Unreleased
 
+- The chart's right-click menu carries two app rows: `Copy price <price>` and
+  `Draw horizontal line at <price>`, taken from the crosshair under the click.
+  Copying confirms with a toast; the line lands through the same undo-able
+  drawing path as every other app drawing.
 - A closed or replaced Order flow panel no longer keeps its live feeds. The
   panel still mounts with the workspace, but its socket opens only while the
   panel is visible and closes as soon as it is hidden.
