@@ -26,12 +26,14 @@ export interface OrderFlowHandle {
 
 /**
  * One live order-flow socket for the active chart symbol. Venue changes reuse
- * the socket; a symbol change reconnects and resets the window.
+ * the socket; a symbol change reconnects and resets the window. A hidden panel
+ * keeps no connection: `active` false closes it and clears the window.
  */
 export function useOrderFlow(
   symbol: string,
   venues: string[] | null,
   grouping: number | null,
+  active = true,
 ): OrderFlowHandle {
   const [state, dispatch] = useReducer(orderFlowReducer, EMPTY_ORDER_FLOW_STATE);
   const socketRef = useRef<WebSocket | null>(null);
@@ -42,7 +44,7 @@ export function useOrderFlow(
   const venuesKey = venues === null ? '*' : venues.join(',');
 
   useEffect(() => {
-    if (!symbol) {
+    if (!symbol || !active) {
       dispatch({ type: 'reset' });
       return;
     }
@@ -94,7 +96,7 @@ export function useOrderFlow(
       socketRef.current = null;
       socket?.close();
     };
-  }, [symbol]);
+  }, [symbol, active]);
 
   useEffect(() => {
     const socket = socketRef.current;

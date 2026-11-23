@@ -836,7 +836,7 @@ bracket leg therefore closes at the open, not at its target.
 
 **Order flow is app-owned.** The `Order flow` side panel reads aggregated
 public books and trades for the active chart symbol. One `/orderflow` WebSocket
-per mounted panel; `sidecar/orderflow/service.ts` resolves the symbol to one
+per visible panel; `sidecar/orderflow/service.ts` resolves the symbol to one
 instrument per market (same base and a USD-like quote; a spot venue is read from
 its USD book when the chart is a perp). Every venue contributes its best match,
 and Binance contributes both its spot and USDⓈ-M books, so `BTCUSDT.P` reads
@@ -865,7 +865,10 @@ visible tab and include list are panel-wide, and the panel follows
 keys, so excluding Binance spot on BTC also excludes it on ETH; old venue-id
 lists fold into both markets. The `/orderflow` wire accepts an instrument key, a
 `venue:kind` id or a legacy venue id; `selectPeerKeys` is the single matcher both
-the first subscribe and later `venues` updates use.
+the first subscribe and later `venues` updates use. `OrderFlowPanel` mounts with
+the workspace but `useOrderFlow` stays disconnected until its root intersects
+the viewport; closing the panel or replacing it with another one closes the
+socket at once.
 
 **Combined order flow reads around the chart venue.** Merging every venue's raw
 book can cross bids and asks when a spot or USD book trades at a basis. The

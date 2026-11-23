@@ -819,11 +819,30 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
     },
     [setPreferences, symbolKey],
   );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    // The Vela dock hides a closed panel with display:none; a hidden panel has
+    // no boxes and must not keep an order-flow socket open.
+    const observer = new IntersectionObserver(
+      ([entry]) => setVisible(entry?.isIntersecting === true),
+      { threshold: 0 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const hookVenues = settings.source === 'combined' ? settings.venues : [settings.source];
   const { state, dropVenues, resetWindow } = useOrderFlow(
     symbol,
     hookVenues,
     settings.grouping,
+    visible,
   );
   const selected = resolveVenueSelection(state.peers, settings.venues);
   const normalized = normalizeVenueSelection(state.peers, settings.venues);
@@ -888,6 +907,7 @@ export function OrderFlowPanel({ symbol }: PanelProps) {
 
   return (
     <div
+      ref={rootRef}
       className="flex h-full min-h-0 flex-col bg-card text-foreground"
       style={{ fontFamily: VELA_FONT_FAMILY }}
     >

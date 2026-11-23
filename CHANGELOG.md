@@ -3,6 +3,14 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## Unreleased
+
+- A closed or replaced Order flow panel no longer keeps its live feeds. The
+  panel still mounts with the workspace, but its socket opens only while the
+  panel is visible and closes as soon as it is hidden.
+- The Trades tape keeps the newest 2,000 raw fills (it still renders 500), so a
+  long session does not grow without bound.
+
 ## 0.2.0 — 2026-11-22
 Commit: 7d6d9c6
 

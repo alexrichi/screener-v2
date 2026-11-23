@@ -656,6 +656,24 @@ describe('order flow reducer', () => {
     expect(state.buckets).toEqual({});
   });
 
+  it('keeps only the newest 2,000 raw fills', () => {
+    let state = orderFlowReducer(EMPTY_ORDER_FLOW_STATE, { type: 'frame', frame: ready });
+    const batch = Array.from({ length: 2_100 }, (_, index) =>
+      trade({
+        id: `t${index}`,
+        time: 1_700_000_000_000 + index,
+        price: 100 + index / 10_000,
+      }),
+    );
+    state = orderFlowReducer(state, {
+      type: 'frame',
+      frame: { type: 'trades', trades: batch },
+    });
+    expect(state.trades).toHaveLength(2_000);
+    expect(state.trades[0]?.id).toBe('t100');
+    expect(state.trades.at(-1)?.id).toBe('t2099');
+  });
+
   it('drops a venue\'s trades and buckets', () => {
     let state = orderFlowReducer(EMPTY_ORDER_FLOW_STATE, { type: 'frame', frame: ready });
     state = orderFlowReducer(state, {

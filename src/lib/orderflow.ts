@@ -236,6 +236,8 @@ export const DEFAULT_ORDER_FLOW_SETTINGS: OrderFlowSettings = {
   },
 };
 
+/** Raw fills kept for the tape; it renders the newest 500. */
+const TRADE_HISTORY = 2_000;
 const TABS: OrderFlowTab[] = ['book', 'dom', 'trades'];
 const UNITS: SizeUnit[] = ['base', 'quote'];
 const STYLES: BookDepthStyle[] = ['bars', 'area', 'area-line', 'line'];
@@ -667,7 +669,7 @@ export function orderFlowReducer(
     if (frame.trades.length === 0) return state;
     const trades = [...state.trades, ...frame.trades]
       .sort((left, right) => left.time - right.time)
-      .slice(-10_000);
+      .slice(-TRADE_HISTORY);
     let buckets = state.buckets;
     if (state.tickSize > 0) {
       const next = { ...state.buckets };
