@@ -10,9 +10,16 @@ import {
 } from '../src/lib/pineVela/session';
 import { findPineInstrument, marketOf, toPineBar } from '../src/lib/pineVela/seriesHost';
 import { timeframeMs } from '../src/lib/timeframe';
-import type { AlertEvent, AlertRunnerRule, VenueId } from '../src/types';
-import type { Instrument } from '../src/venues/types';
+import type {
+  AlertEvent,
+  AlertRunnerRule,
+  ChartAlertRule,
+  PriceAlertRule,
+  VenueId,
+} from '../src/types';
+import type { Instrument, VenueBar } from '../src/venues/types';
 import type { VenueHub } from './hub';
+import type { BarsStream } from './stream';
 
 /** Enough history for typical `ta.*` warm-up while keeping a run cheap. */
 const ALERT_BARS = 1_500;
@@ -27,15 +34,32 @@ type Send = (payload: unknown) => void;
 
 interface Options {
   hubs: Map<VenueId, VenueHub>;
+  streams?: Map<string, BarsStream>;
 }
 
 interface Job {
-  rule: AlertRunnerRule;
+  rule: ChartAlertRule & { targets: string[] };
   instrument: Instrument;
   program: Program;
   timer: NodeJS.Timeout | null;
   lastBar: number;
   retries: number;
+  active: boolean;
+}
+
+interface PriceState {
+  rule: PriceAlertRule & { targets: string[] };
+  upHitBar: number;
+  downHitBar: number;
+}
+
+/** One 1m stream and every price rule watching its symbol. */
+interface PriceGroup {
+  key: string;
+  instrument: Instrument;
+  rules: Map<string, PriceState>;
+  unsubscribe: (() => void) | null;
+  prevClose: number | null;
   active: boolean;
 }
 
@@ -83,6 +107,7 @@ function errorMessage(error: unknown): string {
  */
 export class AlertService {
   private jobs: Job[] = [];
+  private readonly priceGroups = new Map<string, PriceGroup>();
   private disposed = false;
   private generation = 0;
   private stored: Stored;
@@ -166,6 +191,11 @@ export class AlertService {
       if (job.timer) clearTimeout(job.timer);
     }
     this.jobs = [];
+    for (const group of this.priceGroups.values()) {
+      group.active = false;
+      group.unsubscribe?.();
+    }
+    this.priceGroups.clear();
   }
 
   private async arm(
@@ -176,6 +206,10 @@ export class AlertService {
     for (const rule of rules) {
       if (this.disposed || generation !== this.generation) return;
       if (!rule.enabled) continue;
+      if (rule.kind === 'price') {
+        await this.armPrice(rule, generation);
+        continue;
+      }
       try {
         const hub = this.opts.hubs.get(rule.target.venue);
         if (!hub) throw new Error(`Unknown venue "${rule.target.venue}"`);
@@ -212,6 +246,113 @@ export class AlertService {
       } catch (error) {
         this.fail(rule.id, error);
       }
+    }
+  }
+
+  private async armPrice(
+    rule: PriceAlertRule & { targets: string[] },
+    generation: number,
+  ): Promise<void> {
+    try {
+      const hub = this.opts.hubs.get(rule.target.venue);
+      if (!hub) throw new Error(`Unknown venue "${rule.target.venue}"`);
+      const instruments = await hub.getInstruments();
+      if (this.disposed || generation !== this.generation) return;
+      const instrument = findPineInstrument(instruments, rule.target.velaSymbol);
+      if (!instrument) throw new Error(`Unknown instrument "${rule.target.velaSymbol}"`);
+      const stream = this.opts.streams?.get(rule.target.venue);
+      if (!stream) throw new Error(`No price stream for "${rule.target.venue}"`);
+      let group = this.priceGroups.get(instrument.key);
+      if (!group) {
+        group = {
+          key: instrument.key,
+          instrument,
+          rules: new Map(),
+          unsubscribe: null,
+          prevClose: null,
+          active: true,
+        };
+        this.priceGroups.set(group.key, group);
+        try {
+          group.unsubscribe = stream.subscribe(
+            instrument,
+            '1',
+            (bar) => this.priceBar(group!, bar),
+            { fallbackPoll: true },
+          );
+        } catch (error) {
+          group.active = false;
+          this.priceGroups.delete(group.key);
+          throw error;
+        }
+      }
+      group.rules.set(rule.id, { rule, upHitBar: 0, downHitBar: 0 });
+    } catch (error) {
+      this.fail(rule.id, error);
+    }
+  }
+
+  /**
+   * Every update of a symbol's live 1m bar evaluates all price rules on it.
+   * `high`/`low` catch a sweep that crosses and returns; `prevClose` keeps the
+   * direction honest.
+   */
+  private priceBar(group: PriceGroup, bar: VenueBar): void {
+    if (this.disposed || !group.active) return;
+    const prev = group.prevClose;
+    group.prevClose = bar.close;
+    if (prev === null || !Number.isFinite(prev) || !Number.isFinite(bar.close)) return;
+    const events: AlertEvent[] = [];
+    const retire: string[] = [];
+    for (const state of group.rules.values()) {
+      const level = state.rule.price;
+      const up = prev < level && bar.high >= level;
+      const down = prev > level && bar.low <= level;
+      let direction: 'up' | 'down' | null = null;
+      if (state.rule.condition === 'crossing') {
+        if (up && state.upHitBar !== bar.openTime) direction = 'up';
+        else if (down && state.downHitBar !== bar.openTime) direction = 'down';
+      } else if (state.rule.condition === 'crossing-up') {
+        if (up && state.upHitBar !== bar.openTime) direction = 'up';
+      } else if (down && state.downHitBar !== bar.openTime) {
+        direction = 'down';
+      }
+      if (!direction) continue;
+      if (direction === 'up') state.upHitBar = bar.openTime;
+      else state.downHitBar = bar.openTime;
+      const site = direction === 'up' ? 'Crossing up' : 'Crossing down';
+      const message =
+        state.rule.message?.trim() ||
+        `${state.rule.target.symbol} crossed ${direction} ${state.rule.priceText}`;
+      events.push({
+        id: `price:${state.rule.id}:${bar.openTime}:${direction}`,
+        kind: 'rule',
+        ruleId: state.rule.id,
+        venue: group.instrument.venue,
+        velaSymbol: group.instrument.velaSymbol,
+        symbol: state.rule.target.symbol,
+        // The runner evaluates the 1m stream; the rule's timeframe is metadata.
+        timeframe: '1',
+        source: state.rule.name,
+        site,
+        message,
+        price: level,
+        time: Date.now(),
+        receivedAt: Date.now(),
+      });
+      if (state.rule.frequency === 'once') retire.push(state.rule.id);
+    }
+    if (events.length === 0) return;
+    this.record(events);
+    this.broadcast({ op: 'alerts.event', events });
+    for (const ruleId of retire) {
+      group.rules.delete(ruleId);
+      this.retireOnceRule(ruleId);
+    }
+    if (group.rules.size === 0) {
+      group.active = false;
+      group.unsubscribe?.();
+      this.priceGroups.delete(group.key);
     }
   }
 

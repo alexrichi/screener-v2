@@ -19,6 +19,7 @@ import {
 } from '../src/lib/alerts';
 import { AlertService } from '../sidecar/alerts';
 import type { VenueHub } from '../sidecar/hub';
+import type { BarsStream } from '../sidecar/stream';
 import type { Instrument, VenueBar } from '../src/venues/types';
 
 const INTERVAL = 900_000; // '15' timeframe
@@ -93,6 +94,72 @@ function makeStubHub(instruments: readonly Instrument[] = [INSTRUMENT]): StubHub
     setSeries: (symbol: string, timeframe: string, next: VenueBar[]) => {
       series.set(`${symbol}@${timeframe}`, next);
     },
+  };
+}
+
+class FakePriceStream implements BarsStream {
+  readonly streamCount = 0;
+  readonly barCount = 0;
+  readonly pollCount = 0;
+  readonly subscriptions: Array<{
+    instrument: Instrument;
+    timeframe: string;
+    onBar: (bar: VenueBar) => void;
+    off: boolean;
+  }> = [];
+
+  subscribe(
+    instrument: Instrument,
+    timeframe: string,
+    onBar: (bar: VenueBar) => void,
+  ): () => void {
+    const entry = { instrument, timeframe, onBar, off: false };
+    this.subscriptions.push(entry);
+    return () => {
+      entry.off = true;
+    };
+  }
+
+  active(): number {
+    return this.subscriptions.filter((entry) => !entry.off).length;
+  }
+
+  emit(bar: VenueBar): void {
+    for (const entry of this.subscriptions) {
+      if (!entry.off) entry.onBar(bar);
+    }
+  }
+}
+
+function liveBar(openTime: number, close: number, high: number, low: number): VenueBar {
+  return { openTime, closeTime: openTime + 60_000, open: close, high, low, close, volume: 1 };
+}
+
+function makePriceRule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 1,
+    id: 'price-1',
+    kind: 'price',
+    name: 'BTCUSDT.P Crossing Up 100.5',
+    target: {
+      kind: 'instrument',
+      venue: 'binance',
+      velaSymbol: 'BINANCE:BTCUSDT.P',
+      symbol: 'BTCUSDT.P',
+    },
+    timeframe: '15',
+    price: 100.5,
+    priceText: '100.5',
+    condition: 'crossing-up',
+    frequency: 'once',
+    notify: { toast: false, sound: false, system: false },
+    enabled: true,
+    createdAt: 1,
+    updatedAt: 1,
+    lastFiredAt: null,
+    fireCount: 0,
+    targets: ['BINANCE:BTCUSDT.P'],
+    ...overrides,
   };
 }
 
@@ -202,8 +269,11 @@ afterEach(() => {
   delete process.env.ALERTS_FILE;
 });
 
-function newService(stub: StubHub): AlertService {
-  const service = new AlertService({ hubs: new Map([['binance', stub.hub]]) });
+function newService(stub: StubHub, streams?: Map<string, BarsStream>): AlertService {
+  const service = new AlertService({
+    hubs: new Map([['binance', stub.hub]]),
+    ...(streams ? { streams } : {}),
+  });
   services.push(service);
   return service;
 }
@@ -283,6 +353,73 @@ describe('once rules', () => {
     ]);
     await vi.advanceTimersByTimeAsync(0);
     expect(stub2.calls()).toBe(0);
+  });
+});
+
+describe('price alerts', () => {
+  it('shares one 1m stream for every rule on the same symbol', async () => {
+    const stub = makeStubHub();
+    const stream = new FakePriceStream();
+    const service = newService(stub, new Map([['binance', stream]]));
+    const { frames, send } = collector();
+    service.subscribe(send);
+
+    service.setRules([
+      makePriceRule({ id: 'up-1', price: 100.5, timeframe: '15' }),
+      makePriceRule({ id: 'up-2', price: 100.7, timeframe: '5' }),
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stream.subscriptions).toHaveLength(1);
+    expect(stream.subscriptions[0]!.timeframe).toBe('1');
+    expect(stream.subscriptions[0]!.instrument.key).toBe('binance:perp:BTCUSDT');
+
+    stream.emit(liveBar(BASE, 100, 100, 99));
+    expect(liveEvents(frames)).toHaveLength(0);
+
+    stream.emit(liveBar(BASE, 100.8, 100.8, 100));
+    const events = liveEvents(frames);
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.site)).toEqual(['Crossing up', 'Crossing up']);
+    expect(stream.active()).toBe(0);
+  });
+
+  it('re-arms crossing-down on every time', async () => {
+    const stub = makeStubHub();
+    const stream = new FakePriceStream();
+    const service = newService(stub, new Map([['binance', stream]]));
+    const { frames, send } = collector();
+    service.subscribe(send);
+
+    service.setRules([
+      makePriceRule({
+        id: 'down-1',
+        price: 100.5,
+        condition: 'crossing-down',
+        frequency: 'every-time',
+      }),
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    stream.emit(liveBar(BASE, 101, 101, 101));
+    stream.emit(liveBar(BASE + 60_000, 100.4, 101, 100.4));
+    stream.emit(liveBar(BASE + 120_000, 101, 101, 101));
+    stream.emit(liveBar(BASE + 180_000, 100.4, 101, 100.4));
+
+    expect(liveEvents(frames)).toHaveLength(2);
+    expect(liveEvents(frames)[0]!.site).toBe('Crossing down');
+    expect(stream.active()).toBe(1);
+  });
+
+  it('unsubscribes when the last price rule is removed', async () => {
+    const stub = makeStubHub();
+    const stream = new FakePriceStream();
+    const service = newService(stub, new Map([['binance', stream]]));
+    service.setRules([makePriceRule({ id: 'one' })]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stream.active()).toBe(1);
+
+    service.setRules([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stream.active()).toBe(0);
   });
 });
 

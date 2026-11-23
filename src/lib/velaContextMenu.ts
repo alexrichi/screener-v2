@@ -6,6 +6,9 @@ import {
   type WidgetContext,
 } from '@luxalgo/vela/plugin';
 import { formatPrice } from './format';
+import type { PriceAlertSeed } from './priceAlert';
+import { VENUE_IDS } from '../venues/catalog';
+import type { VenueId } from '../venues/types';
 
 /**
  * The chart's right-click menu carries two app rows: copy the price under the
@@ -19,6 +22,8 @@ export interface ChartMenuBridge {
   /** Place a full-width hline at `price`; `time` only pins the drag handle.
    * Returns the host's error message, or null when the line was placed. */
   drawHLine(price: number, time: number): string | null;
+  /** Open the price-alert dialog with the clicked level and target. */
+  openPriceAlert(seed: PriceAlertSeed): void;
 }
 
 /** Decimal places of the active chart's tick, matching the axis width. */
@@ -43,13 +48,47 @@ function priceText(ctx: WidgetContext): string | null {
   if (!pointer || pointer.paneKind !== 'price') return null;
   const price = pointer.price;
   if (price == null || !Number.isFinite(price)) return null;
-  const mintick = ctx.chart.symbolFacts()?.mintick;
+  let mintick: number | undefined;
+  try {
+    mintick =
+      typeof ctx.chart?.symbolFacts === 'function'
+        ? ctx.chart.symbolFacts()?.mintick
+        : undefined;
+  } catch {
+    mintick = undefined;
+  }
   return formatPrice(price, tickDecimals(mintick));
 }
 
 function pointerTime(ctx: WidgetContext): number | null {
   const time = ctx.pointer?.time;
   return time != null && Number.isFinite(time) ? time : null;
+}
+
+/** The chart's own market, not the tab's: a right-click can hit another cell. */
+function priceSeed(ctx: WidgetContext, priceText: string): PriceAlertSeed | null {
+  const price = ctx.pointer?.price;
+  if (price == null || !Number.isFinite(price)) return null;
+  const market = ctx.chart.market;
+  const raw = (market.symbol ?? ctx.symbol ?? '').trim();
+  if (!raw) return null;
+  const at = raw.indexOf(':');
+  const provider = (
+    market.provider ??
+    (at >= 0 ? raw.slice(0, at) : 'binance')
+  ).toLowerCase();
+  if (!VENUE_IDS.includes(provider as (typeof VENUE_IDS)[number])) return null;
+  const ticker = at >= 0 ? raw.slice(at + 1) : raw;
+  const mintick = ctx.chart.symbolFacts()?.mintick;
+  return {
+    price,
+    priceText,
+    decimals: tickDecimals(mintick),
+    venue: provider as VenueId,
+    velaSymbol: `${provider.toUpperCase()}:${ticker}`,
+    symbol: ticker,
+    timeframe: ctx.timeframe || market.timeframe || '15',
+  };
 }
 
 /**
@@ -98,6 +137,27 @@ const copyItem: WidgetActionDescriptor = {
   },
 };
 
+const alertItem: WidgetActionDescriptor = {
+  id: 'screener-add-price-alert',
+  target: 'context:body',
+  label: 'Add alert',
+  icon: 'screener-alert',
+  order: -25,
+  when(ctx) {
+    if (!bridge) return false;
+    const text = priceText(ctx);
+    if (text === null) return false;
+    alertItem.label = `Add alert at ${text}`;
+    return true;
+  },
+  run(ctx) {
+    const text = priceText(ctx);
+    if (!bridge || text === null) return;
+    const seed = priceSeed(ctx, text);
+    if (seed) bridge.openPriceAlert(seed);
+  },
+};
+
 const drawItem: WidgetActionDescriptor = {
   id: 'screener-draw-hline',
   target: 'context:body',
@@ -121,10 +181,15 @@ const drawItem: WidgetActionDescriptor = {
   },
 };
 
-// Registration order breaks the -25 tie: Copy price leads, like the hosted chart.
+// Registration order breaks the -25 tie: Copy, Add alert, Draw.
 registerWidgetAction(copyItem);
+registerWidgetAction(alertItem);
 registerWidgetAction(drawItem);
 
+registerIcon(
+  'screener-alert',
+  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20h4"/></svg>',
+);
 registerIcon(
   'screener-hline',
   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>',

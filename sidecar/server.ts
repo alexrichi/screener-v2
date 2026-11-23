@@ -105,7 +105,7 @@ const screener = new ScreenerService({
 
 // Alert rules and their event log are owned by the process, not by a renderer
 // connection: jobs keep running between sockets and survive a sidecar restart.
-const alerts = new AlertService({ hubs });
+const alerts = new AlertService({ hubs, streams });
 
 // Order flow is live-only: each browser session drives a ref-counted set of
 // public venue book and trade sockets.

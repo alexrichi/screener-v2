@@ -6,15 +6,55 @@ import {
   clearFavoriteList,
   defaultFavoritesState,
   deleteFavoriteList,
+  favoriteListById,
   isFavoritesState,
   mergeFavoritesIntoActiveList,
+  mergeFavoritesIntoList,
   migrateDefaultFavoriteName,
   parseFavoritesFile,
   renameFavoriteList,
   selectFavoriteList,
   serializeFavorites,
   toggleFavoriteInActiveList,
+  toggleFavoriteInList,
 } from '../src/lib/favorites';
+
+describe('favorite list by tab id', () => {
+  it('falls back to the active list for a missing or deleted id', () => {
+    const state = addFavoriteList(defaultFavoritesState(), 'Majors');
+    const majors = state.lists[1]!;
+
+    expect(favoriteListById(state, undefined).id).toBe(majors.id);
+    expect(favoriteListById(state, 'deleted-list').id).toBe(majors.id);
+  });
+
+  it('toggles into the requested list without touching the active one', () => {
+    const state = addFavoriteList(defaultFavoritesState(), 'Majors');
+    const majors = state.lists[1]!;
+    const added = toggleFavoriteInList(
+      state,
+      DEFAULT_FAVORITE_LIST_ID,
+      'binance:perp:BTCUSDT',
+    );
+
+    expect(favoriteListById(added, DEFAULT_FAVORITE_LIST_ID).items).toEqual([
+      'binance:perp:BTCUSDT',
+    ]);
+    expect(favoriteListById(added, majors.id).items).toEqual([]);
+  });
+
+  it('merges an import into the requested list only', () => {
+    const state = addFavoriteList(defaultFavoritesState(), 'Majors');
+    const merged = mergeFavoritesIntoList(state, DEFAULT_FAVORITE_LIST_ID, [
+      { name: 'Imported', items: ['binance:perp:ETHUSDT'] },
+    ]);
+
+    expect(favoriteListById(merged, DEFAULT_FAVORITE_LIST_ID).items).toEqual([
+      'binance:perp:ETHUSDT',
+    ]);
+    expect(favoriteListById(merged, state.lists[1]!.id).items).toEqual([]);
+  });
+});
 
 describe('favorite lists', () => {
   it('starts with an empty default list', () => {

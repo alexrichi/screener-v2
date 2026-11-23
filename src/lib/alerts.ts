@@ -177,9 +177,28 @@ function beep(): void {
   }
 }
 
+let alertOpenHandler: ((event: AlertEvent) => void) | null = null;
+
+/** App registers its tab resolver here; the alert store stays React-free. */
+export function setAlertOpenHandler(
+  handler: ((event: AlertEvent) => void) | null,
+): void {
+  alertOpenHandler = handler;
+}
+
+/** Open the chart behind an event, when the app is listening. */
+export function openAlertChart(event: AlertEvent): void {
+  alertOpenHandler?.(event);
+}
+
 let askedForNotifications = false;
 
-function systemNotify(title: string, body: string, tag: string): void {
+function systemNotify(
+  title: string,
+  body: string,
+  tag: string,
+  onOpen: () => void,
+): void {
   const Notifier = (globalThis as { Notification?: typeof Notification }).Notification;
   if (!Notifier) return;
   const show = (): void => {
@@ -187,6 +206,7 @@ function systemNotify(title: string, body: string, tag: string): void {
       const notification = new Notifier(title, { body, tag });
       notification.onclick = () => {
         globalThis.focus?.();
+        onOpen();
         notification.close();
       };
     } catch {
@@ -208,11 +228,34 @@ function systemNotify(title: string, body: string, tag: string): void {
 function notify(rule: AlertRule, event: AlertEvent): void {
   if (!rule.notify.toast && !rule.notify.sound && !rule.notify.system) return;
   if (rule.notify.toast) {
-    toast(`${event.symbol} · ${rule.name}`, { description: event.message });
+    toast(`${event.symbol} · ${rule.name}`, {
+      description: event.message,
+      action: {
+        label: 'Open chart',
+        onClick: () => openAlertChart(event),
+      },
+      actionButtonStyle: {
+        background: 'transparent',
+        border: 'none',
+        boxShadow: 'none',
+        height: 'auto',
+        padding: 0,
+        color: 'var(--primary)',
+        fontSize: '12px',
+        fontWeight: '500',
+        textDecoration: 'underline',
+        textUnderlineOffset: '2px',
+      },
+    });
   }
   if (rule.notify.sound) beep();
   if (rule.notify.system) {
-    systemNotify(`${event.symbol} · ${rule.name}`, event.message, event.id);
+    systemNotify(
+      `${event.symbol} · ${rule.name}`,
+      event.message,
+      event.id,
+      () => openAlertChart(event),
+    );
   }
 }
 

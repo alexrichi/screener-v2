@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import type {
+  AlertEvent,
   IndicatorRow,
   PineInputValues,
   PlotColumn,
@@ -21,6 +22,7 @@ import { ReplayBar } from './components/ReplayBar';
 import { AlertsPanel } from './components/AlertsPanel';
 import { OrderFlowPanel } from './components/OrderFlowPanel';
 import { PinePanel } from './components/PinePanel';
+import { PriceAlertDialog } from './components/PriceAlertDialog';
 import { ScreenerTable } from './components/ScreenerTable';
 import { SettingsDialog } from './components/SettingsDialog';
 import { LayoutsDialog } from './components/LayoutsDialog';
@@ -47,6 +49,8 @@ import {
 import { setLayoutsActionLabel, setLayoutsBridge } from './lib/velaLayouts';
 import { setAiBridge, setAiRailState } from './lib/velaAi';
 import { setChartMenuBridge } from './lib/velaContextMenu';
+import { alertRules, setAlertOpenHandler } from './lib/alerts';
+import { resolveAlertChart } from './lib/alertTarget';
 import {
   VelaWorkspaceHost,
   type ScriptApplyReport,
@@ -81,19 +85,19 @@ import {
 } from './lib/usePersistedState';
 import { scanTargetsFor } from './lib/universe';
 import {
-  activeFavoriteList,
   addFavoriteList,
   clearFavoriteList,
   deleteFavoriteList,
+  favoriteListById,
   FAVORITES_STORAGE_KEY,
   initialFavoritesState,
   isFavoritesState,
-  mergeFavoritesIntoActiveList,
+  mergeFavoritesIntoList,
   parseFavoritesFile,
   renameFavoriteList,
   selectFavoriteList,
   serializeFavorites,
-  toggleFavoriteInActiveList,
+  toggleFavoriteInList,
   type FavoritesState,
 } from './lib/favorites';
 import {
@@ -115,6 +119,7 @@ import { runScriptInWorker } from './lib/ai/debugRun';
 import { fetchAiStatus, type AiStatus } from './lib/ai/model';
 import { createAppTools, type NewScriptResult } from './lib/ai/tools';
 import type { AiScriptTarget } from './lib/ai/target';
+import type { PriceAlertSeed } from './lib/priceAlert';
 import { isDraftDirty, NEW_SCRIPT } from './lib/pineDraft';
 import {
   findPineTabBySavedId,
@@ -197,7 +202,8 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
     (tab.pineAll === undefined || isBoolean(tab.pineAll)) &&
     (tab.pineInputs === undefined || isPineInputs(tab.pineInputs)) &&
     (tab.pineProps === undefined || isPineInputs(tab.pineProps)) &&
-    (tab.layoutId === undefined || isString(tab.layoutId))
+    (tab.layoutId === undefined || isString(tab.layoutId)) &&
+    (tab.favoriteListId === undefined || isString(tab.favoriteListId))
   );
 }
 
@@ -213,13 +219,19 @@ function altFor(symbol: string): string {
   return symbol === 'ETHUSDT' ? 'BTCUSDT' : 'ETHUSDT';
 }
 
-function makeTab(symbol: string, layout: string, timeframe = '15'): WorkspaceTab {
+function makeTab(
+  symbol: string,
+  layout: string,
+  timeframe = '15',
+  favoriteListId?: string,
+): WorkspaceTab {
   return {
     id: newTabId(),
     symbol,
     timeframe,
     layout,
     altSymbol: altFor(symbol),
+    ...(favoriteListId ? { favoriteListId } : {}),
   };
 }
 
@@ -356,7 +368,6 @@ export default function App() {
     fallbackFavorites,
     isFavoritesState,
   );
-  const activeFavorites = activeFavoriteList(favoritesState);
   const [pineTabs, setPineTabs] = usePersistedState<PineTab[]>(
     PINE_TABS_KEY,
     [readLegacyPineTab()],
@@ -437,6 +448,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'screener' | 'ai'>('screener');
   const [indicatorOpen, setIndicatorOpen] = useState(false);
+  const [priceAlertSeed, setPriceAlertSeed] = useState<PriceAlertSeed | null>(null);
   const [indicatorRows, setIndicatorRows] = useState<IndicatorRow[]>([]);
   const [indicatorPrefs, setIndicatorPrefs] = usePersistedState<PickerPrefs>(
     PICKER_PREFS_KEY,
@@ -605,6 +617,54 @@ export default function App() {
   );
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
+  // Each tab shows its own list; the global pick is the fallback and the
+  // default for a tab that never chose one.
+  const activeFavorites = favoriteListById(
+    favoritesState,
+    activeTab?.favoriteListId,
+  );
+
+  // Tabs from before the per-tab selection, and tabs whose list was deleted,
+  // adopt the global list once, so selecting a list elsewhere cannot retarget
+  // an old tab through the fallback.
+  useEffect(() => {
+    setTabs((prev) => {
+      let changed = false;
+      const next = prev.map((tab) => {
+        if (
+          tab.favoriteListId &&
+          favoritesState.lists.some((list) => list.id === tab.favoriteListId)
+        ) {
+          return tab;
+        }
+        changed = true;
+        return { ...tab, favoriteListId: favoritesState.activeListId };
+      });
+      return changed ? next : prev;
+    });
+  }, [favoritesState.activeListId, favoritesState.lists, setTabs]);
+
+  // A list created from the popover becomes the active tab's list; the store
+  // itself only records it as the global pick.
+  const knownFavoriteLists = useRef(
+    new Set(favoritesState.lists.map((list) => list.id)),
+  );
+  useEffect(() => {
+    const known = knownFavoriteLists.current;
+    const created = favoritesState.lists.find(
+      (list) => !known.has(list.id) && list.id === favoritesState.activeListId,
+    );
+    knownFavoriteLists.current = new Set(
+      favoritesState.lists.map((list) => list.id),
+    );
+    if (!created || !activeTab) return;
+    setTabs((prev) =>
+      prev.map((tab) =>
+        tab.id === activeTab.id ? { ...tab, favoriteListId: created.id } : tab,
+      ),
+    );
+  }, [activeTab, favoritesState.activeListId, favoritesState.lists, setTabs]);
+
   const activeLayout = activeTab?.layoutId
     ? (layouts.items.find((item) => item.id === activeTab.layoutId) ?? null)
     : null;
@@ -724,9 +784,11 @@ export default function App() {
 
   const toggleFavorite = useCallback(
     (key: string) => {
-      setFavoritesState((prev) => toggleFavoriteInActiveList(prev, key));
+      setFavoritesState((prev) =>
+        toggleFavoriteInList(prev, activeFavorites.id, key),
+      );
     },
-    [setFavoritesState],
+    [activeFavorites.id, setFavoritesState],
   );
 
   const createFavoriteList = useCallback(
@@ -746,8 +808,13 @@ export default function App() {
   const deleteFavoriteListById = useCallback(
     (id: string) => {
       setFavoritesState((prev) => deleteFavoriteList(prev, id));
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.favoriteListId === id ? { ...tab, favoriteListId: undefined } : tab,
+        ),
+      );
     },
-    [setFavoritesState],
+    [setFavoritesState, setTabs],
   );
 
   const clearFavoriteListById = useCallback(
@@ -760,8 +827,15 @@ export default function App() {
   const selectFavoriteListById = useCallback(
     (id: string) => {
       setFavoritesState((prev) => selectFavoriteList(prev, id));
+      if (activeTab) {
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === activeTab.id ? { ...tab, favoriteListId: id } : tab,
+          ),
+        );
+      }
     },
-    [setFavoritesState],
+    [activeTab, setFavoritesState, setTabs],
   );
 
   const exportFavorites = useCallback(() => {
@@ -790,7 +864,7 @@ export default function App() {
           return;
         }
         setFavoritesState((prev) =>
-          mergeFavoritesIntoActiveList(prev, parsed.lists),
+          mergeFavoritesIntoList(prev, activeFavorites.id, parsed.lists),
         );
         const details = [
           `Added to ${activeFavorites.name}`,
@@ -808,7 +882,7 @@ export default function App() {
         });
       }
     },
-    [setFavoritesState, activeFavorites.name],
+    [setFavoritesState, activeFavorites.id, activeFavorites.name],
   );
 
   const openSymbols = useMemo(() => tabs.map((tab) => tab.symbol), [tabs]);
@@ -903,17 +977,24 @@ export default function App() {
   );
 
   const addTab = useCallback(
-    (symbol: string) => {
+    (symbol: string, timeframe?: string) => {
       const tab = makeTab(
         symbol,
         settings.defaultLayout,
-        activeTab?.timeframe ?? '15',
+        timeframe ?? activeTab?.timeframe ?? '15',
+        activeFavorites.id,
       );
       newTabRef.current = tab.id;
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tab.id);
     },
-    [activeTab?.timeframe, setActiveTabId, setTabs, settings.defaultLayout],
+    [
+      activeFavorites.id,
+      activeTab?.timeframe,
+      setActiveTabId,
+      setTabs,
+      settings.defaultLayout,
+    ],
   );
 
   const openScriptLibrary = useCallback(() => {
@@ -1329,13 +1410,19 @@ export default function App() {
         toast.success(`Loaded ${item.name}`);
       }
     },
-    [activeTab, activeWorkspace, closeLayouts, refreshIndicatorRows, setTabs],
+    [
+      activeTab,
+      activeWorkspace,
+      closeLayouts,
+      refreshIndicatorRows,
+      setTabs,
+    ],
   );
 
   const openLayoutTab = useCallback(
     (item: LayoutItem) => {
       const tab: WorkspaceTab = {
-        ...makeTab(item.symbol, item.layout, item.timeframe),
+        ...makeTab(item.symbol, item.layout, item.timeframe, activeFavorites.id),
         altSymbol: item.altSymbol || altFor(item.symbol),
         layoutId: item.id,
         ...(item.pine
@@ -1352,7 +1439,7 @@ export default function App() {
       setActiveTabId(tab.id);
       closeLayouts();
     },
-    [closeLayouts, setActiveTabId, setTabs],
+    [activeFavorites.id, closeLayouts, setActiveTabId, setTabs],
   );
 
   const duplicateLayoutItem = useCallback(
@@ -1974,7 +2061,7 @@ export default function App() {
   }, [toggleAi]);
 
   // The menu reads price precision from the right-clicked chart's own symbol
-  // facts; the bridge only places the drawing on the active workspace.
+  // facts; the bridge only places drawings and opens the price-alert dialog.
   useEffect(() => {
     setChartMenuBridge({
       drawHLine: (price, time) => {
@@ -1983,9 +2070,24 @@ export default function App() {
         ]);
         return result?.errors[0] ?? null;
       },
+      openPriceAlert: (seed) => setPriceAlertSeed(seed),
     });
     return () => setChartMenuBridge(null);
   }, [activeWorkspace]);
+
+  // A notification or alert-history click lands on the chart the alert came
+  // from: its tab when one still shows the symbol, else a new tab at the rule's
+  // chart timeframe.
+  useEffect(() => {
+    const openAlert = (event: AlertEvent) => {
+      const target = resolveAlertChart(event, tabs, alertRules());
+      if (!target) return;
+      if (target.kind === 'tab') setActiveTabId(target.tabId);
+      else addTab(target.symbol, target.timeframe);
+    };
+    setAlertOpenHandler(openAlert);
+    return () => setAlertOpenHandler(null);
+  }, [addTab, setActiveTabId, tabs]);
 
   const newScript = useCallback(
     (input: {
@@ -2623,6 +2725,11 @@ export default function App() {
           </label>
         </div>
       </Modal>
+
+      <PriceAlertDialog
+        seed={priceAlertSeed}
+        onClose={() => setPriceAlertSeed(null)}
+      />
 
       <SettingsDialog
         open={settingsOpen}

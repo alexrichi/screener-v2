@@ -7,11 +7,13 @@ import {
   alertsVersion,
   clearAlertLog,
   markAlertsRead,
+  openAlertChart,
   removeAlertRule,
   setAlertRuleEnabled,
   subscribeAlerts,
 } from '../lib/alerts';
 import type { AlertEvent } from '../types';
+import { priceConditionLabel } from '../lib/priceAlert';
 import { timeframeLabel } from '../lib/timeframe';
 
 function timeLabel(ms: number): string {
@@ -48,6 +50,13 @@ function AlertRow({ alert }: { alert: AlertEvent }) {
             <span className="font-mono">{alert.price}</span>
           </>
         ) : null}
+        <button
+          type="button"
+          onClick={() => openAlertChart(alert)}
+          className="ml-auto shrink-0 underline underline-offset-2 hover:text-foreground"
+        >
+          Open chart
+        </button>
       </div>
     </li>
   );
@@ -123,7 +132,8 @@ export function AlertsPanel() {
             <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground">
               <BellOff className="size-6 opacity-40" />
               <p className="text-[12px]">
-                No armed alerts. Open a Pine indicator's bell in the chart legend to create one.
+                No armed alerts. Right-click the chart to add a price alert, or open a Pine
+                indicator's bell in the chart legend.
               </p>
             </div>
           ) : (
@@ -154,16 +164,30 @@ export function AlertsPanel() {
                   <div className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
                     <span className="font-mono text-foreground/80">{rule.target.symbol}</span>
                     <span>·</span>
-                    <span>{timeframeLabel(rule.timeframe)}</span>
-                    <span>·</span>
-                    <span className="min-w-0 truncate">{rule.indicatorTitle}</span>
+                    {rule.kind === 'price' ? (
+                      <>
+                        <span>{priceConditionLabel(rule.condition)}</span>
+                        <span>·</span>
+                        <span className="font-mono tabular-nums">{rule.priceText}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{timeframeLabel(rule.timeframe)}</span>
+                        <span>·</span>
+                        <span className="min-w-0 truncate">{rule.indicatorTitle}</span>
+                      </>
+                    )}
                   </div>
                   <div className="mt-0.5 text-[10px] text-muted-foreground">
-                    {[
-                      ...rule.sites,
-                      ...(rule.includeAlert ? ['alert()'] : []),
-                    ].join(', ')}
-                    {rule.fireCount > 0 ? ` · fired ${rule.fireCount}` : ''}
+                    {rule.kind === 'price'
+                      ? `Price alert${rule.fireCount > 0 ? ` · fired ${rule.fireCount}` : ''}`
+                      : [
+                          ...rule.sites,
+                          ...(rule.includeAlert ? ['alert()'] : []),
+                        ].join(', ')}
+                    {rule.kind === 'chart' && rule.fireCount > 0
+                      ? ` · fired ${rule.fireCount}`
+                      : ''}
                   </div>
                 </li>
               ))}

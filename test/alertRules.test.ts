@@ -44,6 +44,7 @@ describe('parseAlertRule', () => {
     );
     expect(rule).not.toBeNull();
     expect(rule!.name).toHaveLength(120);
+    if (rule!.kind !== 'chart') throw new Error('expected a chart rule');
     expect(rule!.indicatorTitle).toHaveLength(120);
     expect(rule!.notify).toEqual({ toast: true, sound: false, system: false });
     expect(rule!.lastFiredAt).toBeNull();
@@ -81,8 +82,66 @@ describe('parseAlertRule', () => {
       }),
     );
     expect(rule).not.toBeNull();
+    if (rule!.kind !== 'chart') throw new Error('expected a chart rule');
     expect(rule!.sites).toEqual([]);
     expect(rule!.inputs).toEqual({ a: 1, b: 's', c: true });
+  });
+});
+
+function pricePayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 1,
+    id: 'p1',
+    kind: 'price',
+    name: 'BTCUSDT.P Crossing 61 733.2',
+    target: {
+      kind: 'instrument',
+      venue: 'binance',
+      velaSymbol: 'BINANCE:BTCUSDT.P',
+      symbol: 'BTCUSDT.P',
+    },
+    timeframe: '15',
+    price: 61733.2,
+    priceText: '61 733.2',
+    condition: 'crossing',
+    frequency: 'once',
+    message: '  swept the level  ',
+    notify: { toast: true, sound: false, system: false },
+    enabled: true,
+    createdAt: 1,
+    updatedAt: 2,
+    lastFiredAt: null,
+    fireCount: 0,
+    ...overrides,
+  };
+}
+
+describe('parse price alert rules', () => {
+  it('accepts crossing rules and trims the message', () => {
+    const rule = parseAlertRule(pricePayload());
+    expect(rule).not.toBeNull();
+    if (rule?.kind !== 'price') throw new Error('expected a price rule');
+    expect(rule.price).toBe(61733.2);
+    expect(rule.priceText).toBe('61 733.2');
+    expect(rule.condition).toBe('crossing');
+    expect(rule.frequency).toBe('once');
+    expect(rule.message).toBe('swept the level');
+  });
+
+  it('accepts every-time and both directions', () => {
+    for (const condition of ['crossing-up', 'crossing-down'] as const) {
+      const rule = parseAlertRule(
+        pricePayload({ condition, frequency: 'every-time' }),
+      );
+      expect(rule?.kind).toBe('price');
+    }
+  });
+
+  it('drops an invalid level, condition, frequency or display text', () => {
+    expect(parseAlertRule(pricePayload({ price: 0 }))).toBeNull();
+    expect(parseAlertRule(pricePayload({ priceText: '' }))).toBeNull();
+    expect(parseAlertRule(pricePayload({ condition: 'above' }))).toBeNull();
+    expect(parseAlertRule(pricePayload({ frequency: 'once-per-bar-close' }))).toBeNull();
   });
 });
 

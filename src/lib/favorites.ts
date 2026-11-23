@@ -128,20 +128,36 @@ export function activeFavoriteList(state: FavoritesState): FavoriteList {
   );
 }
 
+/** The list a tab shows; a missing or deleted id falls back to the active list. */
+export function favoriteListById(
+  state: FavoritesState,
+  id: string | undefined,
+): FavoriteList {
+  return state.lists.find((list) => list.id === id) ?? activeFavoriteList(state);
+}
+
+export function toggleFavoriteInList(
+  state: FavoritesState,
+  id: string | undefined,
+  key: string,
+): FavoritesState {
+  const list = favoriteListById(state, id);
+  const items = list.items.includes(key)
+    ? list.items.filter((item) => item !== key)
+    : [...list.items, key];
+  return {
+    ...state,
+    lists: state.lists.map((item) =>
+      item.id === list.id ? { ...item, items } : item,
+    ),
+  };
+}
+
 export function toggleFavoriteInActiveList(
   state: FavoritesState,
   key: string,
 ): FavoritesState {
-  const active = activeFavoriteList(state);
-  const items = active.items.includes(key)
-    ? active.items.filter((item) => item !== key)
-    : [...active.items, key];
-  return {
-    ...state,
-    lists: state.lists.map((list) =>
-      list.id === active.id ? { ...list, items } : list,
-    ),
-  };
+  return toggleFavoriteInList(state, state.activeListId, key);
 }
 
 export function selectFavoriteList(
@@ -240,22 +256,30 @@ export function clearFavoriteList(
   };
 }
 
-/** Add every imported ticker to the active list; list names in the file are ignored. */
+/** Add every imported ticker to one list; list names in the file are ignored. */
+export function mergeFavoritesIntoList(
+  state: FavoritesState,
+  id: string | undefined,
+  imported: ParsedFavoriteList[],
+): FavoritesState {
+  const list = favoriteListById(state, id);
+  const items = uniqueItems([
+    ...list.items,
+    ...imported.flatMap((item) => item.items),
+  ]);
+  return {
+    ...state,
+    lists: state.lists.map((item) =>
+      item.id === list.id ? { ...item, items } : item,
+    ),
+  };
+}
+
 export function mergeFavoritesIntoActiveList(
   state: FavoritesState,
   imported: ParsedFavoriteList[],
 ): FavoritesState {
-  const active = activeFavoriteList(state);
-  const items = uniqueItems([
-    ...active.items,
-    ...imported.flatMap((list) => list.items),
-  ]);
-  return {
-    ...state,
-    lists: state.lists.map((list) =>
-      list.id === active.id ? { ...list, items } : list,
-    ),
-  };
+  return mergeFavoritesIntoList(state, state.activeListId, imported);
 }
 
 export function serializeFavorites(state: FavoritesState): string {

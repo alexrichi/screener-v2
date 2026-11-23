@@ -5,10 +5,30 @@ the build stamp; the updater compares only the version.
 
 ## Unreleased
 
-- The chart's right-click menu carries two app rows: `Copy price <price>` and
-  `Draw horizontal line at <price>`, taken from the crosshair under the click.
-  Copying confirms with a toast; the line lands through the same undo-able
-  drawing path as every other app drawing.
+- The chart's right-click menu carries three app rows: `Copy price <price>`,
+  `Add alert at <price>` and `Draw horizontal line at <price>`, taken from the
+  crosshair under the click. Copying confirms with a toast; the line lands
+  through the same undo-able drawing path as every other app drawing.
+- Price alerts: `Add alert at <price>` opens a prefilled dialog with the level,
+  condition (`Crossing`, `Crossing Up`, `Crossing Down`), frequency (`Only once`,
+  `Every time`) and optional message. The sidecar keeps one live 1-minute
+  subscription per symbol for all of its price alerts and evaluates the forming
+  bar's `high`, `low` and previous close, so a sweep that crosses and returns
+  still fires. Rules live in the same store and Alerts panel as chart alerts and
+  keep running after the chart closes; an only-once rule is retired after its
+  first hit.
+- Each workspace tab keeps its own favorites list in the screener: the stars,
+  the `Favorites` scope and import follow the tab's selected list, while the
+  named lists, the export and the venue filter stay global. A new tab inherits
+  the active tab's list, and deleting a list falls back to the global pick.
+- The screener never shows rows of a venue this window unchecked. Snapshot and
+  patch rows are filtered against the live venue selection, so a second app
+  window widening the shared sidecar config, or a snapshot that races the venue
+  prune, cannot leak foreign rows into the favorites list.
+- An alert toast has an `Open chart` action, its system notification is
+  clickable, and every row in the Alerts history has the same link. They open
+  the tab that already shows the alert's symbol, or a new tab at the chart
+  timeframe the alert was created with.
 - A closed or replaced Order flow panel no longer keeps its live feeds. The
   panel still mounts with the workspace, but its socket opens only while the
   panel is visible and closes as soon as it is hidden.

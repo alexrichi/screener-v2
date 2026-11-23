@@ -289,6 +289,11 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   subscription for every USDT swap and reads the cached rates into
   `VenueTicker`. A socket failure leaves funding null without failing the
   tickers. Unchecking OKX closes that socket; the next ticker poll reconnects it.
+  Snapshot and patch rows pass `filterRowsForVenues` (`lib/screenerClient.ts`),
+  which drops rows of venues this window unchecked. The sidecar's venue config is
+  process-wide, so another app window can widen it, and a snapshot served before
+  the venue prune can still carry foreign rows; the filter keeps either from
+  reaching `rows`.
 - Vela charts use `SidecarVelaProvider(venueId)`, one provider per entry in
   `venues/catalog.ts`. History, live candles and ranged backfills all go through
   the sidecar: the provider sends the requested depth (and `to` for older
@@ -322,6 +327,10 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   renamed, cleared, and deleted from the star popover. Legacy
   `screener.favorites` items fold into the default list on first read. The active
   list name labels the favorites button, while the panel title stays `Screener`.
+  Each workspace tab stores its own `favoriteListId` in `screener.tabs`; the
+  global `activeListId` is the fallback for old tabs and the seed for a new tab,
+  which inherits the active tab's list. The named lists and the venue selection
+  stay global. Deleting a list clears the tabs that pointed to it.
   Import adds every ticker to the active list; list names in the file are
   ignored. Export writes every list as JSON. The table always shows every watched
   row: a favorite below its venue's watch threshold is not watched, so it is not fetched and not
@@ -602,17 +611,18 @@ lists the newest 20 so the model sees what is already on the chart. The drawing
 tools target the script target's workspace when one is bound, else the active
 workspace.
 
-**The chart context menu carries two app rows.** `lib/velaContextMenu.ts`
-registers `Copy price <price>` and `Draw horizontal line at <price>` as
-`context:body` widget actions at `order: -25`, right after `Reset chart view`.
-Vela menu labels are static, so `when(ctx)` — the only hook that runs at menu
-build with the captured pointer — rewrites them with the price formatted from
-the chart's own `symbolFacts().mintick` (space-grouped like the table; 2 digits
-until the facts land). The rows hide on study panes, and Draw
-also where the crosshair reports no time, because the drawing validator
+**The chart context menu carries three app rows.** `lib/velaContextMenu.ts`
+registers `Copy price <price>`, `Add alert at <price>` and `Draw horizontal
+line at <price>` as `context:body` widget actions at `order: -25`, right after
+`Reset chart view`. Vela menu labels are static, so `when(ctx)` — the only hook
+that runs at menu build with the captured pointer — rewrites them with the
+price formatted from the chart's own `symbolFacts().mintick` (space-grouped like
+the table; 2 digits until the facts land). The rows hide on study panes, and
+Draw also where the crosshair reports no time, because the drawing validator
 requires a finite one. The bridge routes to the active tab's handle: Copy
-writes the clipboard with a toast, Draw goes through `drawOnChart('hline')`,
-the same undo-able path as the AI drawings.
+writes the clipboard with a toast, Add alert opens the prefilled price-alert
+dialog from the clicked cell's symbol, timeframe and level, and Draw goes
+through `drawOnChart('hline')`, the same undo-able path as the AI drawings.
 
 **The AI sidebar is renderer-side and keyless.** `lib/ai/model.ts` points an
 OpenAI-compatible provider at `<sidecar>/ai/v1`; `sidecar/ai.ts` swaps in the real
@@ -732,7 +742,7 @@ registers `Screener`, `Pine`, `Library`, `Alerts`, and `Order flow` with
 bodies Vela hands `mount`. Mounts are keyed `<tabId>:<panelId>`;
 `openVelaPanel` targets the active tab and the portals render only into its
 bodies. The shell runs with
-`sidebar: { top: ['screener-screenshot', '|', 'screener', 'pine', 'library', '|', 'alerts', 'orderflow'] }`
+`sidebar: { top: ['screener-screenshot', '|', 'screener', 'pine', 'library', 'orderflow', '|', 'alerts'] }`
 (Vela dev): the rail's top action downloads the screenshot of its own tab
 (`setScreenshotTarget` maps `<tabId>` to `ws.downloadScreenshot()`), and the
 topbar copy is hidden with app CSS so the `mod+alt+s` chord stays registered.
@@ -785,7 +795,19 @@ timeframe, inputs, site); it lives at `screener.alerts.rules.v1` and the log at
 `screener.alerts.log.v1`, both app-wide. The sidecar evaluates armed rules on
 closed bars (one instrument per rule) through `alerts.config` / `alerts.event` /
 `alerts.replay` / `alerts.warning` / `alerts.error` frames on `/screener`; the
-chart is only the creation surface. The runner is a process-owned `AlertService`
+chart is only the creation surface. Price alerts are a second `kind: 'price'`:
+the chart's context menu opens a prefilled dialog with the clicked level, and
+the rule stores the level, `crossing` / `crossing-up` / `crossing-down`, and
+`once` / `every-time`. The sidecar keeps ONE ref-counted 1m `BarsStream`
+subscription per instrument for every price rule on it; evaluation is always on
+that 1m bar, so the stored timeframe is context only, never a schedule. Each
+forming-bar update evaluates all levels with `close`,
+`high` and `low`, so a sweep that crosses and returns still fires; one hit per
+direction per bar, and `every-time` re-arms after the price returns to the other
+side. The last rule removed unsubscribes the stream. Price rules share the same
+history, badges and notification path; they do not compile a Pine script and do
+not use `newlyEnabled` / `lastEvaluated`, which stay chart-rule bookkeeping. The
+runner is a process-owned `AlertService`
 (`sidecar/alerts.ts`), created once at boot and never disposed on a socket
 close, so jobs keep running between renderer connections and survive a sidecar
 restart. **Renderer wins**: `screener.alerts.rules.v1` is the source of truth;
@@ -816,7 +838,13 @@ not evaluate anything: the sidecar is a child that stops with it. The chart's
 live `alert` events are not logged: only armed rules reach the panel, so an
 indicator that nobody armed
 never adds history rows. Badges show
-the global unread count. `pine-engine` raises `alert()`/`alertcondition()` on the
+the global unread count. A toast carries an `Open chart` action, its system
+notification is clickable, and every History row has the same `Open chart` link;
+all three call `lib/alertTarget.resolveAlertChart` through the `openAlertChart`
+bridge `App` registers with `setAlertOpenHandler`. An open tab whose active
+symbol matches is activated, otherwise a new tab opens with the rule's chart
+timeframe (the stored one, not the 1m stream). The store stays React-free.
+`pine-engine` raises `alert()`/`alertcondition()` on the
 current bar only, once per bar per call site. Do not read Vela's private alert
 list, add a second bell, or move alerts back into the per-tab workspace document.
 Screener-wide and favorites alerts are a later `kind`; the runner already takes
@@ -1099,6 +1127,10 @@ Useful browser probes:
   expanding `1 → 2×1` fills the second cell with `altSymbol`, not a duplicate.
 - Clicking a table row changes the active cell symbol and the tab label; the
   selected row is matched by its venue-qualified symbol.
+- Each workspace tab keeps its own favorites list: pick a list in one tab, switch
+  to another with a different one, and each shows its own stars and `Favorites`
+  scope; the venues stay global and reload keeps both. A new tab starts on the
+  active tab's list, and deleting a list falls back to the global pick.
 - Starring a row keeps it in the active list after reload; the star click does not
   change the active workspace symbol. The default list starts empty, can be
   renamed or cleared, cannot be deleted, and legacy bare favorites migrate to

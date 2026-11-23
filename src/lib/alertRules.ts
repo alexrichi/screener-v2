@@ -2,8 +2,12 @@ import type {
   AlertEvent,
   AlertFrequency,
   AlertInputValues,
+  AlertPriceCondition,
   AlertRule,
   AlertRunnerRule,
+  ChartAlertRule,
+  PriceAlertFrequency,
+  PriceAlertRule,
 } from '../types';
 import { VENUE_IDS } from '../venues/catalog';
 
@@ -12,6 +16,12 @@ export const MAX_ALERT_SCRIPT_CHARS = 200_000;
 export const MAX_ALERT_SITES = 50;
 
 const FREQUENCIES: readonly AlertFrequency[] = ['once', 'once-per-bar-close'];
+const PRICE_CONDITIONS: readonly AlertPriceCondition[] = [
+  'crossing',
+  'crossing-up',
+  'crossing-down',
+];
+const PRICE_FREQUENCIES: readonly PriceAlertFrequency[] = ['once', 'every-time'];
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -40,7 +50,7 @@ function stringList(value: unknown, cap: number): string[] {
 
 /** A stored rule is trusted only when every field the runner reads is valid. */
 export function parseAlertRule(value: unknown): AlertRule | null {
-  if (!isObject(value) || value.kind !== 'chart') return null;
+  if (!isObject(value) || (value.kind !== 'chart' && value.kind !== 'price')) return null;
   const target = value.target;
   if (!isObject(target) || target.kind !== 'instrument') return null;
   if (
@@ -57,15 +67,9 @@ export function parseAlertRule(value: unknown): AlertRule | null {
     typeof value.id !== 'string' ||
     value.id.length === 0 ||
     typeof value.name !== 'string' ||
-    typeof value.script !== 'string' ||
-    value.script.length === 0 ||
-    value.script.length > MAX_ALERT_SCRIPT_CHARS ||
     typeof value.timeframe !== 'string' ||
     value.timeframe.length === 0 ||
-    typeof value.indicatorTitle !== 'string' ||
-    !FREQUENCIES.includes(value.frequency as AlertFrequency) ||
     typeof value.enabled !== 'boolean' ||
-    typeof value.includeAlert !== 'boolean' ||
     !finite(value.createdAt) ||
     !finite(value.updatedAt) ||
     !finite(value.fireCount)
@@ -74,37 +78,76 @@ export function parseAlertRule(value: unknown): AlertRule | null {
   }
   const notify = value.notify;
   if (!isObject(notify)) return null;
-  const sites = stringList(value.sites, MAX_ALERT_SITES);
-  if (sites.length === 0 && value.includeAlert !== true) return null;
-  return {
-    version: 1,
+  const notification = {
+    toast: notify.toast === true,
+    sound: notify.sound === true,
+    system: notify.system === true,
+  };
+  const common = {
+    version: 1 as const,
     id: value.id,
-    kind: 'chart',
     name: value.name.slice(0, 120),
     target: {
-      kind: 'instrument',
+      kind: 'instrument' as const,
       venue: target.venue as AlertRule['target']['venue'],
       velaSymbol: target.velaSymbol,
       symbol: target.symbol,
     },
     timeframe: value.timeframe,
-    script: value.script,
-    inputs: inputValues(value.inputs),
-    sites,
-    includeAlert: value.includeAlert,
-    frequency: value.frequency as AlertFrequency,
-    notify: {
-      toast: notify.toast === true,
-      sound: notify.sound === true,
-      system: notify.system === true,
-    },
-    indicatorTitle: value.indicatorTitle.slice(0, 120),
+    notify: notification,
     enabled: value.enabled,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     lastFiredAt: finite(value.lastFiredAt) ? value.lastFiredAt : null,
     fireCount: Math.max(0, Math.floor(value.fireCount)),
   };
+  if (value.kind === 'chart') {
+    if (
+      typeof value.script !== 'string' ||
+      value.script.length === 0 ||
+      value.script.length > MAX_ALERT_SCRIPT_CHARS ||
+      typeof value.indicatorTitle !== 'string' ||
+      !FREQUENCIES.includes(value.frequency as AlertFrequency) ||
+      typeof value.includeAlert !== 'boolean'
+    ) {
+      return null;
+    }
+    const sites = stringList(value.sites, MAX_ALERT_SITES);
+    if (sites.length === 0 && value.includeAlert !== true) return null;
+    const rule: ChartAlertRule = {
+      ...common,
+      kind: 'chart',
+      script: value.script,
+      inputs: inputValues(value.inputs),
+      sites,
+      includeAlert: value.includeAlert,
+      frequency: value.frequency as AlertFrequency,
+      indicatorTitle: value.indicatorTitle.slice(0, 120),
+    };
+    return rule;
+  }
+  if (
+    !finite(value.price) ||
+    value.price <= 0 ||
+    typeof value.priceText !== 'string' ||
+    value.priceText.length === 0 ||
+    !PRICE_CONDITIONS.includes(value.condition as AlertPriceCondition) ||
+    !PRICE_FREQUENCIES.includes(value.frequency as PriceAlertFrequency)
+  ) {
+    return null;
+  }
+  const rule: PriceAlertRule = {
+    ...common,
+    kind: 'price',
+    price: value.price,
+    priceText: value.priceText.slice(0, 40),
+    condition: value.condition as AlertPriceCondition,
+    frequency: value.frequency as PriceAlertFrequency,
+    ...(typeof value.message === 'string' && value.message.trim()
+      ? { message: value.message.trim().slice(0, 500) }
+      : {}),
+  };
+  return rule;
 }
 
 /** Rules from storage or a WebSocket frame; malformed entries are dropped. */

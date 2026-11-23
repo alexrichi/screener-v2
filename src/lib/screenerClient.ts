@@ -1,4 +1,10 @@
-import type { ScreenerConfig, ScreenerPatch, ScreenerRow, ScreenerSnapshot } from '../types';
+import type {
+  ScreenerConfig,
+  ScreenerPatch,
+  ScreenerRow,
+  ScreenerSnapshot,
+} from '../types';
+import type { VenueId } from '../venues/types';
 import { sidecarBaseUrl } from '../venues/sidecar';
 
 function baseUrl(): string {
@@ -16,6 +22,20 @@ export function mergeScreenerRows(
   return [...byKey.values()].sort(
     (left, right) => (right.quoteVolume ?? -1) - (left.quoteVolume ?? -1),
   );
+}
+
+/**
+ * Rows this client may show. The sidecar's config is process-wide, so another
+ * app window (or a snapshot taken before the venue prune) can deliver rows for
+ * venues this window unchecked; `undefined` keeps every venue, like `wants()`.
+ */
+export function filterRowsForVenues(
+  rows: readonly ScreenerRow[],
+  venues: readonly VenueId[] | undefined,
+): ScreenerRow[] {
+  if (!venues) return [...rows];
+  const allowed = new Set(venues);
+  return rows.filter((row) => allowed.has(row.instrument.venue));
 }
 
 export function screenerWsUrl(): string {

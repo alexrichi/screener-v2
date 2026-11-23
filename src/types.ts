@@ -94,10 +94,28 @@ export interface AlertInstrumentTarget {
 
 export type AlertFrequency = 'once' | 'once-per-bar-close';
 
+/** How a price alert reacts to the level. */
+export type AlertPriceCondition = 'crossing' | 'crossing-up' | 'crossing-down';
+export type PriceAlertFrequency = 'once' | 'every-time';
+
 export interface AlertNotificationPrefs {
   toast: boolean;
   sound: boolean;
   system: boolean;
+}
+
+interface AlertRuleBase {
+  version: 1;
+  id: string;
+  name: string;
+  target: AlertInstrumentTarget;
+  timeframe: string;
+  notify: AlertNotificationPrefs;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastFiredAt: number | null;
+  fireCount: number;
 }
 
 /**
@@ -105,13 +123,8 @@ export interface AlertNotificationPrefs {
  * the script and inputs and is evaluated by the sidecar on closed bars, so the
  * chart and its workspace tab can close without stopping it.
  */
-export interface AlertRule {
-  version: 1;
-  id: string;
+export interface ChartAlertRule extends AlertRuleBase {
   kind: 'chart';
-  name: string;
-  target: AlertInstrumentTarget;
-  timeframe: string;
   script: string;
   inputs: AlertInputValues;
   /** `alertcondition` titles to watch. */
@@ -119,14 +132,25 @@ export interface AlertRule {
   /** Also fire for plain `alert()` calls. */
   includeAlert: boolean;
   frequency: AlertFrequency;
-  notify: AlertNotificationPrefs;
   indicatorTitle: string;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-  lastFiredAt: number | null;
-  fireCount: number;
 }
+
+/**
+ * A level alert. The runner watches the live forming bar of the target and
+ * fires when the price crosses the level; `every-time` re-arms after the price
+ * returns to the other side.
+ */
+export interface PriceAlertRule extends AlertRuleBase {
+  kind: 'price';
+  price: number;
+  /** Price as shown when the alert was created, e.g. `61 733.2`. */
+  priceText: string;
+  condition: AlertPriceCondition;
+  frequency: PriceAlertFrequency;
+  message?: string;
+}
+
+export type AlertRule = ChartAlertRule | PriceAlertRule;
 
 /** One fired alert, shown in the global history. */
 export interface AlertEvent {
@@ -148,9 +172,7 @@ export interface AlertEvent {
 }
 
 /** A rule as the sidecar evaluates it: targets are already resolved. */
-export interface AlertRunnerRule extends AlertRule {
-  targets: string[];
-}
+export type AlertRunnerRule = AlertRule & { targets: string[] };
 
 /** One row of the active chart's indicator picker. */
 export interface IndicatorRow {
@@ -188,6 +210,8 @@ export interface WorkspaceTab {
   pineProps?: PineInputValues;
   /** Saved layout this tab was opened from or last linked to. */
   layoutId?: string;
+  /** Favorites list this tab's screener shows; the global pick is the fallback. */
+  favoriteListId?: string;
 }
 
 /** JSON-safe input overrides for a script's settings dialog. */

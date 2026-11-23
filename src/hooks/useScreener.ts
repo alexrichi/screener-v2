@@ -8,6 +8,7 @@ import type {
 } from '../types';
 import {
   fetchScreenerSnapshot,
+  filterRowsForVenues,
   mergeScreenerRows,
   postScreenerConfig,
   screenerWsUrl,
@@ -46,7 +47,7 @@ export function useScreener({ config }: Options) {
 
   const applySnapshot = useCallback((snapshot: ScreenerSnapshot) => {
     setRows(
-      [...snapshot.rows].sort(
+      filterRowsForVenues(snapshot.rows, configRef.current.venues).sort(
         (left, right) => (right.quoteVolume ?? -1) - (left.quoteVolume ?? -1),
       ),
     );
@@ -108,7 +109,13 @@ export function useScreener({ config }: Options) {
           if (message.op === 'screener.snapshot') {
             applySnapshot(message);
           } else if (message.op === 'screener.patch') {
-            setRows((current) => mergeScreenerRows(current, message));
+            // The sidecar's venue config is shared; another window can widen it.
+            setRows((current) =>
+              mergeScreenerRows(current, {
+                ...message,
+                rows: filterRowsForVenues(message.rows, configRef.current.venues),
+              }),
+            );
             setStatus(message.status);
             setLoading(false);
           } else if (message.op === 'alerts.event') {

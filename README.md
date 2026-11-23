@@ -180,9 +180,11 @@ the same `build` string.
   reference cell's symbol before the replay starts, even when the chart has no
   loaded bars. Every cell rewinds on the same clock; Vela pauses live updates and
   mutes alerts while replaying.
-- Right-click the chart to `Copy price <price>` or `Draw horizontal line at
-  <price>` at the crosshair, from the chart's own context menu. Copying
-  confirms with a toast; the line lands as a normal drawing with undo.
+- Right-click the chart to `Copy price <price>`, `Add alert at <price>` or
+  `Draw horizontal line at <price>` at the crosshair, from the chart's own
+  context menu. Copying confirms with a toast; the line lands as a normal
+  drawing with undo. A price alert opens a prefilled dialog with the clicked
+  level, the chart's symbol and timeframe.
 - Quick filters are on/off chips - Gainers, Losers, `RSI <30` / `>70`,
   `RVOL ≥1.5` and price above/below VWAP - combined with AND when several are
   on, and with the `All` / `Favorites` switch. Turning on one of an opposite
@@ -223,7 +225,8 @@ the same `build` string.
   into the active list; export every list as JSON. The `All` / `Favorites` switch
   before the list shows only the active list, and the quick filters and
   search still apply within it. The active list name labels the favorites
-  button in the screener toolbar.
+  button in the screener toolbar. Each workspace tab keeps its own selected
+  list, while the named lists and the venue filter stay shared across tabs.
 - Pine editor with tabs, presets and Monaco highlighting, completions, signature
   help, folding, search, semantic colors, outline, formatting, rich hover docs,
   context actions (Go to Definition, Discard, New tab, Open script, Save,
@@ -288,6 +291,18 @@ the same `build` string.
   not serve is `na` without a warning, like the chart. Viewport-dependent
   scripts are rejected when the alert is created. Screener-wide alerts are not
   available.
+- Price alerts: `Add alert at <price>` in the chart's context menu opens a
+  prefilled dialog for that level. The condition is `Crossing`, `Crossing Up`
+  or `Crossing Down`, the frequency `Only once` or `Every time`. The sidecar
+  watches the symbol's live 1-minute bar with `high`, `low` and the previous
+  close, so a sweep that crosses and returns still fires, and one stream serves
+  every price alert on that symbol. Price alerts share the Alerts panel, history
+  and notification settings, and keep running after the chart or tab closes.
+  Evaluation is always on the live 1m bar, whatever timeframe the chart shows.
+- Alert notifications are clickable. `Open chart` on a toast, a click on the
+  system notification, or the `Open chart` link in the Alerts panel's history
+  opens the tab that already shows the symbol; when no tab does, it opens a new
+  tab at the alert's chart timeframe.
 - AI sidebar on the left, outside the Vela dock, so it stays visible next to the
   chart and the Pine editor. Its toggle sits at the top of the chart's left
   drawing toolbar, above the cursor tool. Chats are kept until deleted, and accept images,
