@@ -3,7 +3,7 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
-## Unreleased
+## 0.3.0 — 2026-11-23
 
 - The chart's right-click menu carries three app rows: `Copy price <price>`,
   `Add alert at <price>` and `Draw horizontal line at <price>`, taken from the
