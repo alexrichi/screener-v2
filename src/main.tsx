@@ -1,3 +1,4 @@
+import './migrate';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { BUILD_VERSION } from './lib/buildVersion';

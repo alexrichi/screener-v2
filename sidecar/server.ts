@@ -2,6 +2,7 @@ import http from 'node:http';
 import { URL } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { BinanceVenueAdapter } from '../src/venues/binance';
+import { BinanceSpotVenueAdapter } from '../src/venues/binanceSpot';
 import { BitgetVenueAdapter } from '../src/venues/bitget';
 import { BybitVenueAdapter } from '../src/venues/bybit';
 import { CoinbaseVenueAdapter } from '../src/venues/coinbase';
@@ -26,7 +27,7 @@ import {
   type OrderFlowFeed,
 } from './orderflow/feeds';
 import { OrderFlowService } from './orderflow/service';
-import { BinanceKlineStream, BinanceVenueStream, PollingBarsStream, SPOT_WS_URL } from './stream';
+import { BinanceKlineStream, PollingBarsStream, SPOT_WS_URL } from './stream';
 import type { BarsStream } from './stream';
 import { VenueKlineStream } from './ws';
 import {
@@ -36,9 +37,11 @@ import {
   OKX_STREAM,
 } from './venueStreams';
 import { ScreenerService } from './screener';
+import { VENUE_IDS } from '../src/venues/catalog';
 
 const hubs = new Map<string, VenueHub>([
   ['binance', new VenueHub(new BinanceVenueAdapter())],
+  ['binance_spot', new VenueHub(new BinanceSpotVenueAdapter())],
   ['okx', new VenueHub(new OkxVenueAdapter())],
   ['bybit', new VenueHub(new BybitVenueAdapter())],
   ['bitget', new VenueHub(new BitgetVenueAdapter())],
@@ -46,16 +49,16 @@ const hubs = new Map<string, VenueHub>([
   ['coinbase', new VenueHub(new CoinbaseVenueAdapter())],
 ]);
 
-const binanceBars = (instrument: Instrument, timeframe: string) =>
-  hubs.get('binance')!.getBars(instrument, timeframe, 2, { includeForming: true });
+const barsFor = (venue: string) => (instrument: Instrument, timeframe: string) =>
+  hubs.get(venue)!.getBars(instrument, timeframe, 2, { includeForming: true });
 
 const streams = new Map<string, BarsStream>([
+  // Spot and USDⓈ-M are separate services: their kline sockets, limits and
+  // failures stay apart.
+  ['binance', new BinanceKlineStream(barsFor('binance'))],
   [
-    'binance',
-    new BinanceVenueStream(
-      new BinanceKlineStream(binanceBars),
-      new BinanceKlineStream(binanceBars, SPOT_WS_URL),
-    ),
+    'binance_spot',
+    new BinanceKlineStream(barsFor('binance_spot'), SPOT_WS_URL),
   ],
   [
     'okx',
@@ -92,6 +95,8 @@ const streams = new Map<string, BarsStream>([
 const host = process.env.SIDECAR_HOST ?? '127.0.0.1';
 const port = Number(process.env.SIDECAR_PORT ?? 8787);
 
+const envMinVolume = process.env.SCREENER_MIN_VOLUME;
+
 const screener = new ScreenerService({
   hubs,
   streams,
@@ -99,7 +104,15 @@ const screener = new ScreenerService({
     timeframe: process.env.SCREENER_TIMEFRAME ?? '15',
     rvolDays: Number(process.env.SCREENER_RVOL_DAYS ?? 7),
     rsiPeriod: Number(process.env.SCREENER_RSI_PERIOD ?? 14),
-    minVolume: Number(process.env.SCREENER_MIN_VOLUME ?? 1_000_000),
+    // A process-wide default still seeds every venue when the operator sets it;
+    // otherwise each venue keeps its own catalog default.
+    ...(envMinVolume !== undefined
+      ? {
+          minVolumeByVenue: Object.fromEntries(
+            VENUE_IDS.map((venue) => [venue, Number(envMinVolume)]),
+          ),
+        }
+      : {}),
   },
 });
 
@@ -111,6 +124,7 @@ const alerts = new AlertService({ hubs, streams });
 // public venue book and trade sockets.
 const orderFeeds = new Map<string, OrderFlowFeed>([
   ['binance', new BinanceOrderFlowFeed()],
+  ['binance_spot', new BinanceOrderFlowFeed()],
   ['okx', new OkxOrderFlowFeed()],
   ['bybit', new BybitOrderFlowFeed()],
   ['bitget', new BitgetOrderFlowFeed()],

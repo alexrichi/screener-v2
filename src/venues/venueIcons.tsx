@@ -1,5 +1,5 @@
 import type { VenueId } from '../types';
-import { VENUE_CATALOG } from './catalog';
+import { VENUE_CATALOG, velaNameOf } from './catalog';
 import { cn } from '../ui/cn';
 
 function svgDataUri(svg: string): string {
@@ -30,6 +30,7 @@ const HYPERLIQUID_PNG =
 
 const ICONS: Record<VenueId, string> = {
   binance: BINANCE_SVG,
+  binance_spot: BINANCE_SVG,
   okx: OKX_SVG,
   bybit: BYBIT_PNG,
   bitget: BITGET_SVG,
@@ -80,7 +81,7 @@ export function installVenueBadgeIcons(): void {
     ...VENUE_CATALOG.map((venue) => {
       const src = ICONS[venue.id];
       if (!src) return '';
-      return `.vela-sp-badge[data-p="${venue.id}"]::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; background: url("${src}") center / contain no-repeat; }`;
+      return `.vela-sp-badge[data-p="${velaNameOf(venue.id)}"]::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; background: url("${src}") center / contain no-repeat; }`;
     }),
   ].join('\n');
   document.head.appendChild(style);

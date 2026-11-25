@@ -65,13 +65,15 @@ export class SidecarVelaProvider implements DataProvider {
   constructor(
     private readonly venue: string,
     private readonly label = venue.toUpperCase(),
+    /** Vela provider name; the symbol prefix. Matches the workspace provider key. */
+    private readonly name = venue,
   ) {
     this.sidecar = new SidecarVenueAdapter(venue);
   }
 
   info(): ProviderInfo {
     return {
-      name: this.venue,
+      name: this.name,
       displayName: this.label,
       requiresApiKey: false,
       supportedTimeframes: ['1', '5', '15', '60', '240', 'D'],
@@ -168,7 +170,7 @@ export class SidecarVelaProvider implements DataProvider {
     const instrument = await this.findInstrument(ticker);
     const scale = 10 ** instrument.pricePrecision;
     const mintick = instrument.tickSize && instrument.tickSize > 0 ? instrument.tickSize : 1 / scale;
-    const prefix = this.venue.toUpperCase();
+    const prefix = this.name.toUpperCase();
     return {
       ticker,
       tickerid: `${prefix}:${ticker}`,

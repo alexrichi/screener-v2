@@ -661,7 +661,7 @@ function TradesTab({
                 <span className="relative ml-2 flex items-center justify-end gap-1.5 border-l border-border/60 pl-3 text-muted-foreground">
                   <VenueIcon venue={trade.venue} size={11} />
                   <span className="w-3 text-center text-[9px] font-semibold text-foreground/60">
-                    {trade.venue === 'binance'
+                    {trade.venue === 'binance' || trade.venue === 'binance_spot'
                       ? trade.peer.split(':')[1] === 'spot'
                         ? 'S'
                         : 'P'

@@ -18,7 +18,7 @@ import type {
   VenueTicker,
 } from './types';
 
-/** The request limit `fetchKlines` uses, and therefore its Binance weight tier. */
+/** The request limit `fetchKlines` uses, and therefore its weight tier. */
 function klinesWeight(bars: number): number {
   const limit = Math.min(1500, Math.max(2, bars + 1));
   if (limit <= 100) return 1;
@@ -27,24 +27,21 @@ function klinesWeight(bars: number): number {
   return 10;
 }
 
+/** USDⓈ-M futures: 2400 weight per minute per IP. Spot is a separate venue. */
 export const BINANCE_RATE_LIMIT: RateLimitPolicy = {
   maxConcurrent: 4,
-  buckets: [
-    // Shared by USDⓈ-M perps and USDT spot. The spot budget is larger, so the
-    // futures limit is the conservative cap for both.
-    { id: 'weight', type: 'weight', limit: 2400, windowMs: 60_000 },
-  ],
+  buckets: [{ id: 'weight', type: 'weight', limit: 2400, windowMs: 60_000 }],
 };
 
 /**
- * Binance spot and USDT-M public market data. Public endpoints only; the
+ * Binance USDⓈ-M perpetual public market data. Public endpoints only; the
  * sidecar can add the trading port later without changing this shape.
  */
 export class BinanceVenueAdapter implements VenueAdapter {
   readonly id = 'binance';
   readonly label = 'Binance';
   readonly capabilities = {
-    markets: ['spot', 'perp'] as Array<'spot' | 'perp'>,
+    markets: ['perp'] as Array<'spot' | 'perp'>,
     stream: false,
     funding: true,
     trading: false,
@@ -62,7 +59,7 @@ export class BinanceVenueAdapter implements VenueAdapter {
   ): Promise<T> {
     try {
       const value = await this.limiter.run({ bucket: 'weight', cost, signal, priority }, fn);
-      this.limiter.observe('weight', binanceUsedWeight());
+      this.limiter.observe('weight', binanceUsedWeight('perp'));
       return value;
     } catch (error) {
       if (error instanceof BinanceHttpError && (error.status === 429 || error.status === 418)) {
@@ -78,7 +75,7 @@ export class BinanceVenueAdapter implements VenueAdapter {
 
   async listInstruments(signal?: AbortSignal): Promise<Instrument[]> {
     if (!this.instrumentsPromise) {
-      this.instrumentsPromise = this.request(20, () => fetchSymbolMeta(signal), signal)
+      this.instrumentsPromise = this.request(1, () => fetchSymbolMeta('perp', signal), signal)
         .then((rows) =>
           rows.map((row) =>
             makeInstrument({
@@ -86,8 +83,8 @@ export class BinanceVenueAdapter implements VenueAdapter {
               nativeId: row.symbol,
               base: row.base,
               quote: row.quote,
-              kind: row.kind,
-              velaSymbol: `BINANCE:${row.symbol}${row.kind === 'perp' ? '.P' : ''}`,
+              kind: 'perp',
+              velaSymbol: `BINANCE:${row.symbol}.P`,
               pricePrecision: row.pricePrecision,
               tickSize: row.tickSize,
             }),
@@ -104,14 +101,12 @@ export class BinanceVenueAdapter implements VenueAdapter {
   async fetchTickers(signal?: AbortSignal): Promise<VenueTicker[]> {
     const [instruments, rows] = await Promise.all([
       this.listInstruments(signal),
-      // Futures tickers (50) + premium index (10) + spot tickers (80).
-      this.request(140, () => fetchUniverse(signal), signal),
+      // Futures tickers (50) + premium index (10).
+      this.request(60, () => fetchUniverse('perp', signal), signal),
     ]);
-    const byKey = new Map(
-      instruments.map((item) => [`${item.kind}:${item.nativeId}`, item]),
-    );
+    const byKey = new Map(instruments.map((item) => [item.nativeId, item]));
     return rows.flatMap((row) => {
-      const instrument = byKey.get(`${row.kind}:${row.symbol}`);
+      const instrument = byKey.get(row.symbol);
       if (!instrument) return [];
       return [{
         instrument,
@@ -132,21 +127,21 @@ export class BinanceVenueAdapter implements VenueAdapter {
     opts: VenueFetchOptions = {},
   ): Promise<VenueBar[]> {
     const wanted = Math.max(1, Math.min(100_000, Math.floor(bars)));
-    const pageSize = instrument.kind === 'spot' ? 1000 : 1500;
+    const pageSize = 1500;
     if (wanted <= pageSize) {
       return this.request(
         klinesWeight(wanted),
         () =>
           fetchKlines(instrument.nativeId, timeframe, wanted, signal, {
             ...opts,
-            kind: instrument.kind,
+            kind: 'perp',
           }),
         signal,
         opts.priority,
       );
     }
-    // Binance caps a kline page at 1500 futures / 1000 spot rows; walk backward
-    // through the shared limiter so a deep chart never bypasses the venue budget.
+    // Binance caps a futures kline page at 1500 rows; walk backward through the
+    // shared limiter so a deep chart never bypasses the venue budget.
     const pages: PineBar[][] = [];
     let to = opts.to;
     let remaining = wanted;
@@ -158,7 +153,7 @@ export class BinanceVenueAdapter implements VenueAdapter {
           fetchKlines(instrument.nativeId, timeframe, page, signal, {
             includeForming: opts.includeForming === true && pages.length === 0,
             to,
-            kind: instrument.kind,
+            kind: 'perp',
           }),
         signal,
         opts.priority,

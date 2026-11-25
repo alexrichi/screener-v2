@@ -83,6 +83,7 @@ import {
   isString,
   usePersistedState,
 } from './lib/usePersistedState';
+import { isSettings } from './lib/settings';
 import { scanTargetsFor } from './lib/universe';
 import {
   addFavoriteList,
@@ -139,10 +140,9 @@ import { useTheme } from './ui/theme';
 import { Button, Input } from './ui/primitives';
 import { Modal } from './ui/overlays';
 import { sameVelaSymbol } from './venues/instrument';
-import { isVenueSelection, VENUE_IDS } from './venues/catalog';
+import { DEFAULT_SCREENER_VENUES, isVenueSelection, VENUE_IDS } from './venues/catalog';
 
 const DEFAULT_SETTINGS: Settings = {
-  minVolume: 1_000_000,
   topN: 100,
   scanTimeframe: '15',
   scanBars: 500,
@@ -152,32 +152,6 @@ const DEFAULT_SETTINGS: Settings = {
   rvolDays: 7,
   rsiPeriod: 14,
 };
-
-const LAYOUTS = new Set(['1', '2h', '2v', '4', '8']);
-
-function isSettings(value: unknown): value is Settings {
-  const settings = value as Partial<Settings>;
-  return (
-    typeof settings === 'object' &&
-    settings !== null &&
-    isNumber(settings.minVolume) &&
-    (settings.minVolumeByVenue === undefined ||
-      isVolumeOverrides(settings.minVolumeByVenue)) &&
-    isNumber(settings.topN) &&
-    isNumber(settings.scanBars) &&
-    isNumber(settings.refreshSeconds) &&
-    isString(settings.scanTimeframe) &&
-    isString(settings.defaultLayout) &&
-    LAYOUTS.has(settings.defaultLayout)
-  );
-}
-
-function isVolumeOverrides(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  return Object.entries(value).every(
-    ([venue, amount]) => VENUE_IDS.includes(venue as VenueId) && isNumber(amount) && amount >= 0,
-  );
-}
 
 function isPineInputs(value: unknown): value is PineInputValues {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -294,7 +268,7 @@ export default function App() {
   );
   const [marketVenues, setMarketVenues] = usePersistedState<VenueId[]>(
     'screener.marketVenues',
-    VENUE_IDS,
+    [...DEFAULT_SCREENER_VENUES],
     isVenueSelection,
   );
   const selectedVenues = useMemo(
@@ -312,14 +286,12 @@ export default function App() {
       timeframe: settings.metricsTimeframe ?? '15',
       rvolDays: settings.rvolDays ?? 7,
       rsiPeriod: settings.rsiPeriod ?? 14,
-      minVolume: settings.minVolume,
       minVolumeByVenue: settings.minVolumeByVenue,
       venues: selectedVenues,
     }),
     [
       selectedVenues,
       settings.metricsTimeframe,
-      settings.minVolume,
       settings.minVolumeByVenue,
       settings.rsiPeriod,
       settings.rvolDays,

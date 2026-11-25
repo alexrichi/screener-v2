@@ -105,7 +105,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map([['binance', stream.stream]]),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
 
     await service.poll();
@@ -132,7 +132,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map([['binance', fakeStream().stream]]),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
     await service.poll();
     expect(service.snapshot().rows).toEqual([]);
@@ -145,7 +145,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map([['binance', stream.stream]]),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
     await service.poll();
     await settle();
@@ -175,7 +175,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map([['binance', fakeStream().stream]]),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
 
     await service.poll();
@@ -233,7 +233,7 @@ describe('screener service', () => {
         ['okx', okx.hub],
       ]),
       streams: new Map(),
-      config: { minVolume: 1_000_000, venues: ['binance'] },
+      config: { venues: ['binance'] },
     });
 
     await service.poll();
@@ -271,7 +271,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map(),
-      config: { minVolume: 1_000_000, venues: ['binance'] },
+      config: { venues: ['binance'] },
     });
     const polling = service.poll();
     service.setConfig({ venues: [] });
@@ -318,7 +318,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map(),
-      config: { minVolume: 1_000_000, venues: ['binance'] },
+      config: { venues: ['binance'] },
     });
     await service.poll();
     expect(seriesCalls).toBe(4);
@@ -342,7 +342,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map(),
-      config: { minVolume: 1_000_000, venues: ['binance'] },
+      config: { venues: ['binance'] },
     });
     await service.poll();
     await settle();
@@ -363,7 +363,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map([['binance', stream.stream]]),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
     try {
       await service.poll();
@@ -442,7 +442,7 @@ describe('screener service', () => {
         ['okx', okxHub],
       ]),
       streams: new Map(),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
 
     await service.poll();
@@ -501,7 +501,7 @@ describe('screener service', () => {
         ['okx', okxHub],
       ]),
       streams: new Map(),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
 
     const polled = service.poll();
@@ -551,7 +551,7 @@ describe('screener service', () => {
         ['okx', build('okx', 'BTC-USDT-SWAP', 500_000)],
       ]),
       streams: new Map(),
-      config: { minVolume: 1_000_000, minVolumeByVenue: { okx: 100_000 } },
+      config: { minVolumeByVenue: { okx: 100_000 } },
     });
 
     await service.poll();
@@ -573,7 +573,7 @@ describe('screener service', () => {
     const service = new ScreenerService({
       hubs: new Map([['binance', hub]]),
       streams: new Map(),
-      config: { minVolume: 1_000_000 },
+      config: {},
     });
     expect(() =>
       service.setConfig({

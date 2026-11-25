@@ -63,30 +63,49 @@ interface SymbolMeta {
   tickSize?: number;
 }
 
-let metaCache: { at: number; rows: SymbolMeta[] } | null = null;
+/** USDⓈ-M and spot are separate services with their own IP weight budgets. */
+export type BinanceMarketKind = 'spot' | 'perp';
+
+let metaCache: Record<BinanceMarketKind, { at: number; rows: SymbolMeta[] } | null> = {
+  spot: null,
+  perp: null,
+};
 const META_TTL_MS = 10 * 60_000;
 
-/** Binance reports the IP's used weight per minute; keep the highest value seen this minute. */
-let usedWeight = { minute: -1, value: 0 };
+/**
+ * Binance reports the IP's used weight per minute on each API. Keep the highest
+ * value seen this minute per market: spot and USDⓈ-M do not share a budget.
+ */
+const usedWeight: Record<BinanceMarketKind, { minute: number; value: number }> = {
+  spot: { minute: -1, value: 0 },
+  perp: { minute: -1, value: 0 },
+};
 
-export function binanceUsedWeight(): number {
+export function binanceUsedWeight(kind: BinanceMarketKind): number {
+  const entry = usedWeight[kind];
   const minute = Math.floor(Date.now() / 60_000);
-  return usedWeight.minute === minute ? usedWeight.value : 0;
+  return entry.minute === minute ? entry.value : 0;
 }
 
-function noteUsedWeight(response: Response): void {
+function noteUsedWeight(response: Response, kind: BinanceMarketKind): void {
   const header = Number(response.headers.get('x-mbx-used-weight-1m'));
   if (!Number.isFinite(header) || header <= 0) return;
   const minute = Math.floor(Date.now() / 60_000);
-  if (minute !== usedWeight.minute) {
-    usedWeight = { minute, value: 0 };
+  const entry = usedWeight[kind];
+  if (minute !== entry.minute) {
+    entry.minute = minute;
+    entry.value = 0;
   }
-  usedWeight.value = Math.max(usedWeight.value, header);
+  entry.value = Math.max(entry.value, header);
 }
 
-async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+async function fetchJson<T>(
+  url: string,
+  kind: BinanceMarketKind,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch(url, { signal });
-  noteUsedWeight(response);
+  noteUsedWeight(response, kind);
   if (!response.ok) {
     let detail = '';
     try {
@@ -128,14 +147,13 @@ function numberOrNull(value: unknown): number | null {
 }
 
 export function chartSymbol(symbol: string): string {
-  // A provider-prefixed ticker is authoritative: Binance spot is `BTCUSDT`,
-  // its perpetual is `BTCUSDT.P`. A bare ticker has always meant the perp.
+  // A provider-prefixed ticker is authoritative; a bare ticker means the perp.
+  // Old stored symbols are converted by the startup migrator, not at read time.
   if (symbol.includes(':')) return symbol;
   return symbol.endsWith('.P') ? symbol : `${symbol}.P`;
 }
 
 export function spotSymbol(symbol: string): string {
-  // A provider prefix owns its ticker; only bare Binance tickers lose `.P`.
   if (symbol.includes(':')) return symbol;
   return symbol.endsWith('.P') ? symbol.slice(0, -2) : symbol;
 }
@@ -180,38 +198,47 @@ export function binanceInterval(timeframe: string): string {
   return interval;
 }
 
-export async function fetchSymbolMeta(signal?: AbortSignal): Promise<SymbolMeta[]> {
-  if (metaCache && Date.now() - metaCache.at < META_TTL_MS) return metaCache.rows;
-  const [futures, spot] = await Promise.allSettled([
-    fetchJson<BinanceExchangeInfo>(`${FUTURES}/exchangeInfo`, signal),
-    fetchJson<BinanceExchangeInfo>(`${SPOT}/exchangeInfo`, signal),
-  ]);
-  if (futures.status === 'rejected') throw futures.reason;
+/** A USDⓈ-M perpetual, including Binance's TradFi (equity and commodity) perps. */
+export function isTradablePerp(row: {
+  contractType?: string;
+  quoteAsset: string;
+  status: string;
+}): boolean {
+  return (
+    (row.contractType === 'PERPETUAL' || row.contractType === 'TRADIFI_PERPETUAL') &&
+    row.quoteAsset === 'USDT' &&
+    row.status === 'TRADING'
+  );
+}
+
+export async function fetchSymbolMeta(
+  kind: BinanceMarketKind,
+  signal?: AbortSignal,
+): Promise<SymbolMeta[]> {
+  const cached = metaCache[kind];
+  if (cached && Date.now() - cached.at < META_TTL_MS) return cached.rows;
+  const base = kind === 'spot' ? SPOT : FUTURES;
+  const info = await fetchJson<BinanceExchangeInfo>(`${base}/exchangeInfo`, kind, signal);
   const rows: SymbolMeta[] = [];
-  for (const s of futures.value.symbols) {
-    if (
-      s.contractType !== 'PERPETUAL' ||
-      s.quoteAsset !== 'USDT' ||
-      s.status !== 'TRADING'
-    ) {
-      continue;
+  if (kind === 'perp') {
+    for (const s of info.symbols) {
+      if (!isTradablePerp(s)) continue;
+      rows.push({
+        symbol: s.symbol,
+        base: s.baseAsset,
+        quote: s.quoteAsset,
+        kind: 'perp',
+        pricePrecision:
+          typeof s.pricePrecision === 'number'
+            ? Math.max(0, Math.min(8, s.pricePrecision))
+            : decimalsFromTickSize(s.tickSize),
+        tickSize: numberFromTickSize(
+          s.tickSize ?? s.filters?.find((f) => f.filterType === 'PRICE_FILTER')?.tickSize,
+        ),
+      });
     }
-    rows.push({
-      symbol: s.symbol,
-      base: s.baseAsset,
-      quote: s.quoteAsset,
-      kind: 'perp',
-      pricePrecision:
-        typeof s.pricePrecision === 'number'
-          ? Math.max(0, Math.min(8, s.pricePrecision))
-          : decimalsFromTickSize(s.tickSize),
-      tickSize: numberFromTickSize(
-        s.tickSize ?? s.filters?.find((f) => f.filterType === 'PRICE_FILTER')?.tickSize,
-      ),
-    });
-  }
-  if (spot.status === 'fulfilled') {
-    for (const s of spot.value.symbols) {
+  } else {
+    for (const s of info.symbols) {
       if (
         s.status !== 'TRADING' ||
         s.quoteAsset !== 'USDT' ||
@@ -229,13 +256,8 @@ export async function fetchSymbolMeta(signal?: AbortSignal): Promise<SymbolMeta[
         tickSize: numberFromTickSize(tick),
       });
     }
-  } else {
-    console.warn(
-      '[binance] spot exchange info unavailable',
-      spot.reason instanceof Error ? spot.reason.message : spot.reason,
-    );
   }
-  metaCache = { at: Date.now(), rows };
+  metaCache[kind] = { at: Date.now(), rows };
   return rows;
 }
 
@@ -254,23 +276,28 @@ export interface BinanceMarketRow {
   tickSize?: number;
 }
 
-export async function fetchUniverse(signal?: AbortSignal): Promise<BinanceMarketRow[]> {
-  const [meta, futuresTickers, premium, spotTickers] = await Promise.all([
-    fetchSymbolMeta(signal),
-    fetchJson<BinanceTicker24h[]>(`${FUTURES}/ticker/24hr`, signal),
-    fetchJson<BinancePremiumIndex[]>(`${FUTURES}/premiumIndex`, signal),
-    fetchJson<BinanceTicker24h[]>(`${SPOT}/ticker/24hr`, signal).catch((error) => {
-      console.warn(
-        '[binance] spot tickers unavailable',
-        error instanceof Error ? error.message : error,
-      );
-      return [] as BinanceTicker24h[];
-    }),
-  ]);
+export async function fetchUniverse(
+  kind: BinanceMarketKind,
+  signal?: AbortSignal,
+): Promise<BinanceMarketRow[]> {
   const tickerByKey = new Map<string, BinanceTicker24h>();
-  for (const ticker of futuresTickers) tickerByKey.set(`perp:${ticker.symbol}`, ticker);
-  for (const ticker of spotTickers) tickerByKey.set(`spot:${ticker.symbol}`, ticker);
-  const fundingBySymbol = new Map(premium.map((p) => [p.symbol, p]));
+  const fundingBySymbol = new Map<string, BinancePremiumIndex>();
+  const meta = await fetchSymbolMeta(kind, signal);
+  if (kind === 'perp') {
+    const [futuresTickers, premium] = await Promise.all([
+      fetchJson<BinanceTicker24h[]>(`${FUTURES}/ticker/24hr`, kind, signal),
+      fetchJson<BinancePremiumIndex[]>(`${FUTURES}/premiumIndex`, kind, signal),
+    ]);
+    for (const ticker of futuresTickers) tickerByKey.set(`perp:${ticker.symbol}`, ticker);
+    for (const entry of premium) fundingBySymbol.set(entry.symbol, entry);
+  } else {
+    const spotTickers = await fetchJson<BinanceTicker24h[]>(
+      `${SPOT}/ticker/24hr`,
+      kind,
+      signal,
+    );
+    for (const ticker of spotTickers) tickerByKey.set(`spot:${ticker.symbol}`, ticker);
+  }
 
   const rows: BinanceMarketRow[] = meta.map((m) => {
     const ticker = tickerByKey.get(`${m.kind}:${m.symbol}`);
@@ -323,8 +350,9 @@ export async function fetchKlines(
   opts: KlineOptions = {},
 ): Promise<PineBar[]> {
   const interval = binanceInterval(timeframe);
-  const base = opts.kind === 'spot' ? SPOT : FUTURES;
-  const maxPage = opts.kind === 'spot' ? 1000 : 1500;
+  const kind = opts.kind ?? 'perp';
+  const base = kind === 'spot' ? SPOT : FUTURES;
+  const maxPage = kind === 'spot' ? 1000 : 1500;
   const limit = Math.min(maxPage, Math.max(2, bars + (opts.includeForming ? 0 : 1)));
   const query = new URLSearchParams({
     symbol,
@@ -334,7 +362,7 @@ export async function fetchKlines(
   if (opts.from != null) query.set('startTime', String(Math.floor(opts.from)));
   if (opts.to != null) query.set('endTime', String(Math.floor(opts.to)));
   const url = `${base}/klines?${query.toString()}`;
-  const raw = await fetchJson<Array<Array<string | number>>>(url, signal);
+  const raw = await fetchJson<Array<Array<string | number>>>(url, kind, signal);
   const now = Date.now();
   const parsed = raw
     .map((row) => ({

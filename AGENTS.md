@@ -141,6 +141,7 @@ src/
     indicatorPicker.ts            picker entries, relevance filter, favorites/recents
     luxalgoLibrary.ts             bundled LuxAlgo catalog, family labels, source fetch
     favorites.ts                  named favorite lists, migration, import/export
+    migrations/                  database-style migrations: one file per app release that changed storage
     pineDraft.ts                  saved/source dirty comparison and starter templates
     pineTabs.ts                   Pine editor tab model, source normalization, legacy migration and validators
     pineVela/engine.ts            Vela ScriptingEngine: worker orchestration and result mapping
@@ -262,8 +263,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   never bulk-copied into the repo.
 - The screener table is server-owned. `sidecar/screener.ts` polls venue tickers
   (`VenueHub` owns the adapters, caches and in-flight de-duplication), watches
-  every instrument whose 24h quote volume clears the watch threshold
-  (`minVolume`, or the venue's `minVolumeByVenue` override), and backfills
+  every instrument whose 24h quote volume clears its venue's own watch
+  threshold (`minVolumeByVenue`, defaulted per venue in `venues/catalog.ts`; there
+  is no shared global threshold), and backfills
   `rvolDays + 1` days of `metricsTimeframe` candles for each one. Watched
   instruments subscribe to their venue's kline stream in batches; Coinbase has no
   candle WS, so its rows refresh through a slow REST tail. `topN` no longer trims
@@ -923,12 +925,20 @@ a contract venue.
 scanner and Vela consume those shapes, never native ticker formats. Instrument
 identity is `venue:kind:nativeId`; display is `BTCUSDT.P` for perps and
 `BTCUSDT` / `BTC/USD` for spot. API requests use `nativeId`, Vela uses
-`velaSymbol`. Binance is the one adapter that lists both USDT spot and USDⓈ-M
-perps: a bare ticker means the perpetual, while a prefixed `BINANCE:BTCUSDT` is
-spot and `BINANCE:BTCUSDT.P` is the perp. `sameVelaSymbol` keeps those two
-distinct; `chartSymbol` only adds `.P` to a bare ticker. Spot tickers and klines
-use `api.binance.com/api/v3`, futures use `fapi.binance.com/fapi/v1`; the two
-kline sockets are routed by `BinanceVenueStream`. Rate limits are declared per adapter and enforced by
+`velaSymbol`. Binance runs as two venues: `binance` serves USDⓈ-M perpetuals
+(`BINANCE:BTCUSDT.P`, `src/venues/binance.ts`) and `binance_spot` serves spot
+(`BINANCE.SPOT:BTCUSDT`, `src/venues/binanceSpot.ts`), each with its own
+endpoints, page caps, `RateLimiter` and `x-mbx-used-weight-1m` observation
+(2400 vs 6000 weight per minute). The venue id stays `binance_spot`; the Vela
+provider name is `VenueCatalogEntry.velaName` (`binance.spot`), used for the
+provider map, the symbol prefix and the picker badge CSS (`velaNameOf` and
+`venueForVelaName` map between the two). A bare ticker means the perpetual; the old
+`BINANCE:BTCUSDT` spot symbol is converted to `BINANCE.SPOT:BTCUSDT` by the
+startup migration, not while rendering. Vela's symbol grammar allows only
+`[A-Za-z0-9_.]` in a provider prefix, so the spot prefix uses `.`, not `-`.
+Spot tickers and klines
+use `api.binance.com/api/v3`, futures use `fapi.binance.com/fapi/v1`; each
+venue has its own kline stream and order-flow feed. Rate limits are declared per adapter and enforced by
 `RateLimiter`: a weighted token bucket (`burst = limit`, continuous refill)
 with one scheduler. Under budget requests go immediately; over budget they are
 paced evenly. Waiting for a bucket never holds a concurrency slot, and
@@ -1021,6 +1031,19 @@ current theme's defaults: a chart saved dark opens light, and turning one
 checkbox off stores just that checkbox. `Apply defaults` applies
 `defaultChartConfig` for the active theme. Never derive defaults from a renderer
 instance or a hidden reference chart.
+
+**Stored state has a database-style migration history.** `lib/migrations/` holds
+one file per storage schema revision; `screener.schemaVersion` is the integer
+revision the storage is on (missing or malformed = 0) and is independent of the
+app version. `main.tsx` runs `runMigrations` before React reads anything: pending
+revisions run in order, each inside a full localStorage snapshot that is restored
+when the migration throws, and the revision is written only after it succeeds.
+Upgrade only: a stored revision newer than the build is left untouched. The
+renderer reads the current schema only — do not add legacy branches to
+`chartSymbol`, `parseAlertRule`, `sameVelaSymbol` or `usePersistedState`; add a
+migration file and give it the next `schema` number instead. Imported layout and
+favorite files are external input, not storage: the startup runner does not touch
+them, so treat them as current-schema data.
 
 **Binance streams may fall back to polling.** The bundled provider can log
 `stream delivered no data; falling back to polling` in restricted environments.
@@ -1377,9 +1400,9 @@ reaching into `node_modules` or the peer `../Vela` checkout:
 The docs page exposes "View as Markdown"; the LLM index is
 <https://docs.luxalgo.com/llms.mdx/vela/content.md>. Vite and `tsconfig` resolve
 `@luxalgo/vela` to the local `../Vela/src` checkout; `package.json` keeps the npm
-pin as a fallback and must name the same minor: `^0.10.14`.
+pin as a fallback and must name the same minor: `^0.10.19`.
 
-The checkout must be Vela 0.10.14 or newer. Since 0.10.7 `cell.timeframe` and
+The checkout must be Vela 0.10.19 or newer. Since 0.10.7 `cell.timeframe` and
 `cell.priceStyle` are the values the chart shows (a provider or style fallback),
 while `cell.requestedTimeframe` and `cell.requestedPriceStyle` are the user's
 choices: persist and capture the requested values, display the shown ones.

@@ -373,7 +373,7 @@ describe('rate limiter', () => {
       })) as typeof fetch;
     try {
       await fetchKlines('BTCUSDT', '15', 2);
-      expect(binanceUsedWeight()).toBe(2200);
+      expect(binanceUsedWeight('perp')).toBe(2200);
     } finally {
       globalThis.fetch = original;
     }

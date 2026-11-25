@@ -61,7 +61,7 @@ import { PINE_ID, rememberScriptName } from '../lib/velaScripts';
 import '../lib/velaScale';
 import { velaDarkTheme, velaLightTheme } from '../lib/velaTheme';
 import { stripChartDefaultsInState, stripWorkspaceDocument } from '../lib/velaChartConfig';
-import { VENUE_CATALOG, VENUE_IDS } from '../venues/catalog';
+import { VENUE_CATALOG, VENUE_IDS, velaNameOf, venueForVelaName } from '../venues/catalog';
 import { SidecarVelaProvider } from '../venues/vela';
 
 export interface SavedScript {
@@ -787,7 +787,8 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         const provider = (chart as Vela).market?.provider;
         const cellProvider = (cell.chart as Vela).market?.provider;
         const prefix = cell.symbol.includes(':') ? cell.symbol.split(':')[0] : '';
-        const venue = (provider || cellProvider || prefix || 'binance').toLowerCase();
+        const providerName = provider || cellProvider || prefix || 'binance';
+        const venue = venueForVelaName(providerName) ?? providerName.toLowerCase();
         if (!VENUE_IDS.includes(venue as VenueId)) {
           toast.warning('The chart venue is not available for alerts');
           return;
@@ -795,7 +796,7 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
         const symbol = cell.symbol.replace(/^[^:]+:/, '');
         const velaSymbol = cell.symbol.includes(':')
           ? cell.symbol
-          : `${venue.toUpperCase()}:${cell.symbol}`;
+          : `${velaNameOf(venue).toUpperCase()}:${cell.symbol}`;
         const handle = cell.chart.indicators().find((item) => item.id === indicator.id);
         const inputs: AlertInputValues = {};
         for (const [key, value] of Object.entries(handle?.inputValues() ?? {})) {
@@ -879,8 +880,9 @@ export const VelaWorkspaceHost = forwardRef<VelaWorkspaceHandle, Props>(
             cells: cellSeeds,
             providers: Object.fromEntries(
               VENUE_CATALOG.map((venue) => [
-                venue.id,
-                () => new SidecarVelaProvider(venue.id, venue.label),
+                velaNameOf(venue.id),
+                () =>
+                  new SidecarVelaProvider(venue.id, venue.label, velaNameOf(venue.id)),
               ]),
             ),
             engines: {

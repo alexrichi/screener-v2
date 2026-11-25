@@ -3,6 +3,7 @@ import {
   baseFromSymbol,
   binanceInterval,
   chartSymbol,
+  isTradablePerp,
   spotSymbol,
   symbolLabel,
 } from '../src/lib/binance';
@@ -191,15 +192,18 @@ describe('binance symbols and intervals', () => {
     expect(chartSymbol('binance:BTCUSDT')).toBe('binance:BTCUSDT');
     expect(chartSymbol('binance:BTCUSDT.P')).toBe('binance:BTCUSDT.P');
     expect(chartSymbol('BINANCE:BTCUSDT')).toBe('BINANCE:BTCUSDT');
+    expect(chartSymbol('BINANCE.SPOT:BTCUSDT')).toBe('BINANCE.SPOT:BTCUSDT');
     expect(chartSymbol('OKX:BTC-USDT-SWAP')).toBe('OKX:BTC-USDT-SWAP');
     expect(spotSymbol('BTCUSDT.P')).toBe('BTCUSDT');
     expect(spotSymbol('BINANCE:BTCUSDT.P')).toBe('BINANCE:BTCUSDT.P');
     expect(spotSymbol('BINANCE:BTCUSDT')).toBe('BINANCE:BTCUSDT');
+    expect(spotSymbol('BINANCE.SPOT:BTCUSDT')).toBe('BINANCE.SPOT:BTCUSDT');
     expect(baseFromSymbol('1000PEPEUSDT.P')).toBe('1000PEPE');
     expect(baseFromSymbol('binance:BTCUSDT.P')).toBe('BTC');
     expect(baseFromSymbol('binance:BTCUSDT')).toBe('BTC');
     expect(symbolLabel('BTCUSDT')).toBe('BTC');
     expect(symbolLabel('binance:BTCUSDT.P')).toBe('BTC');
+    expect(symbolLabel('BINANCE.SPOT:BTCUSDT')).toBe('BTC');
     expect(symbolLabel('OKX:BTC-USDT-SWAP')).toBe('BTC');
     expect(symbolLabel('COINBASE:BTC-USD')).toBe('BTC');
   });
@@ -215,6 +219,29 @@ describe('binance symbols and intervals', () => {
     expect(binanceInterval('1M')).toBe('1M');
     expect(binanceInterval('1m')).toBe('1m');
     expect(() => binanceInterval('7')).toThrow('Unsupported timeframe');
+  });
+
+  it('accepts both perpetual contract types and nothing else', () => {
+    // Binance lists TradFi (equity/commodity) perps beside the crypto ones.
+    expect(
+      isTradablePerp({ contractType: 'PERPETUAL', quoteAsset: 'USDT', status: 'TRADING' }),
+    ).toBe(true);
+    expect(
+      isTradablePerp({
+        contractType: 'TRADIFI_PERPETUAL',
+        quoteAsset: 'USDT',
+        status: 'TRADING',
+      }),
+    ).toBe(true);
+    expect(
+      isTradablePerp({ contractType: 'CURRENT_QUARTER', quoteAsset: 'USDT', status: 'TRADING' }),
+    ).toBe(false);
+    expect(
+      isTradablePerp({ contractType: 'PERPETUAL', quoteAsset: 'USDC', status: 'TRADING' }),
+    ).toBe(false);
+    expect(
+      isTradablePerp({ contractType: 'PERPETUAL', quoteAsset: 'USDT', status: 'SETTLING' }),
+    ).toBe(false);
   });
 });
 

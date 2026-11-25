@@ -7,12 +7,12 @@ import {
 } from '@luxalgo/vela/plugin';
 import { formatPrice } from './format';
 import type { PriceAlertSeed } from './priceAlert';
-import { VENUE_IDS } from '../venues/catalog';
+import { VENUE_IDS, velaNameOf, venueForVelaName } from '../venues/catalog';
 import type { VenueId } from '../venues/types';
 
 /**
- * The chart's right-click menu carries two app rows: copy the price under the
- * click and draw an hline there. Vela menu labels are static (`MessageLike`),
+ * The chart's right-click menu carries three app rows: copy the price under the
+ * click, add an alert there and draw an hline there. Vela menu labels are static (`MessageLike`),
  * but `when(ctx)` runs at every menu build with the pointer captured at open,
  * so the label is rewritten there — the only live-price hook on Vela 0.10.x
  * without patching Vela. The rows sort with the built-ins by `order`; -25
@@ -73,19 +73,24 @@ function priceSeed(ctx: WidgetContext, priceText: string): PriceAlertSeed | null
   const raw = (market.symbol ?? ctx.symbol ?? '').trim();
   if (!raw) return null;
   const at = raw.indexOf(':');
-  const provider = (
+  const providerName = (
     market.provider ??
     (at >= 0 ? raw.slice(0, at) : 'binance')
   ).toLowerCase();
-  if (!VENUE_IDS.includes(provider as (typeof VENUE_IDS)[number])) return null;
+  const venue =
+    venueForVelaName(providerName) ??
+    (VENUE_IDS.includes(providerName as (typeof VENUE_IDS)[number])
+      ? (providerName as VenueId)
+      : null);
+  if (!venue) return null;
   const ticker = at >= 0 ? raw.slice(at + 1) : raw;
   const mintick = ctx.chart.symbolFacts()?.mintick;
   return {
     price,
     priceText,
     decimals: tickDecimals(mintick),
-    venue: provider as VenueId,
-    velaSymbol: `${provider.toUpperCase()}:${ticker}`,
+    venue,
+    velaSymbol: at >= 0 ? raw : `${velaNameOf(venue).toUpperCase()}:${ticker}`,
     symbol: ticker,
     timeframe: ctx.timeframe || market.timeframe || '15',
   };

@@ -65,40 +65,6 @@ export interface BarsStream {
   ): Unsubscribe;
 }
 
-/** Binance spot and USDⓈ-M use different sockets; one stream routes by kind. */
-export class BinanceVenueStream implements BarsStream {
-  constructor(
-    private readonly perp: BarsStream,
-    private readonly spot: BarsStream,
-  ) {}
-
-  get streamCount(): number {
-    return this.perp.streamCount + this.spot.streamCount;
-  }
-
-  get barCount(): number {
-    return this.perp.barCount + this.spot.barCount;
-  }
-
-  get pollCount(): number {
-    return this.perp.pollCount + this.spot.pollCount;
-  }
-
-  subscribe(
-    instrument: Instrument,
-    timeframe: string,
-    onBar: (bar: VenueBar) => void,
-    opts?: BarsSubscriptionOptions,
-  ): Unsubscribe {
-    return (instrument.kind === 'spot' ? this.spot : this.perp).subscribe(
-      instrument,
-      timeframe,
-      onBar,
-      opts,
-    );
-  }
-}
-
 /**
  * One Binance WebSocket per sidecar, ref-counted per `<symbol>@kline_<tf>`.
  * Every browser, chart cell and future consumer shares the same upstream

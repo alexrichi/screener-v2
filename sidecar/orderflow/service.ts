@@ -7,6 +7,7 @@ import type {
 } from '../../src/lib/orderflow';
 import { autoGrouping, resolveVenueSelection } from '../../src/lib/orderflow';
 import { findPineInstrument } from '../../src/lib/pineVela/seriesHost';
+import { venueForVelaName } from '../../src/venues/catalog';
 import type { Instrument, MarketKind } from '../../src/venues/types';
 import type { VenueHub } from '../hub';
 import type { FeedHandlers, OrderFlowFeed } from './feeds';
@@ -106,7 +107,7 @@ async function resolve(
   const prefix = at > 0 ? symbol.slice(0, at).toLowerCase() : '';
   let primary: Instrument | undefined;
   if (prefix) {
-    const hub = hubs.get(prefix);
+    const hub = hubs.get(venueForVelaName(prefix) ?? prefix);
     if (hub) primary = findPineInstrument(await hub.getInstruments(), symbol);
   }
   if (!primary) {

@@ -354,9 +354,9 @@ export function orderFlowPeerSource(peer: Pick<OrderFlowPeer, 'venue' | 'kind'>)
 }
 
 /**
- * Read the stored include list for the current symbol. Entries are `venue:kind`
- * so the panel-wide list keeps Binance spot and perp separate on every chart; a
- * legacy venue id includes both markets and an instrument key still matches.
+ * Read the stored include list for the current symbol. Entries are `venue:kind`,
+ * an instrument key or a venue id; old lists are converted by the startup
+ * migrator.
  */
 function storedHasPeer(stored: readonly string[], peer: OrderFlowPeer): boolean {
   return stored.some(

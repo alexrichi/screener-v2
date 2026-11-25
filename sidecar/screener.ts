@@ -13,7 +13,7 @@ import type {
   VenueId,
 } from '../src/types';
 import type { Instrument, Unsubscribe, VenueBar, VenueTicker } from '../src/venues/types';
-import { VENUE_IDS } from '../src/venues/catalog';
+import { defaultMinVolume, VENUE_IDS } from '../src/venues/catalog';
 import type { VenueHub } from './hub';
 import type { BarsStream } from './stream';
 
@@ -31,7 +31,6 @@ const DEFAULT_CONFIG: ScreenerConfig = {
   timeframe: '15',
   rvolDays: 7,
   rsiPeriod: 14,
-  minVolume: 1_000_000,
 };
 
 const METRIC_IDS: Array<keyof ScreenerMetrics> = [
@@ -105,9 +104,6 @@ function invalidConfig(config: ScreenerConfig): string | null {
   }
   if (!Number.isFinite(config.rsiPeriod) || config.rsiPeriod < 2 || config.rsiPeriod > 50) {
     return 'rsiPeriod must be between 2 and 50';
-  }
-  if (!Number.isFinite(config.minVolume) || config.minVolume < 0) {
-    return 'minVolume must be non-negative';
   }
   for (const [venue, volume] of Object.entries(config.minVolumeByVenue ?? {})) {
     if (!VENUE_IDS.includes(venue as VenueId)) {
@@ -240,9 +236,10 @@ export class ScreenerService {
       candidate.rvolDays !== this.config.rvolDays ||
       candidate.rsiPeriod !== this.config.rsiPeriod;
     const venuesChanged = !sameVenues(candidate.venues, this.config.venues);
-    const volumesChanged =
-      candidate.minVolume !== this.config.minVolume ||
-      !sameVolumes(candidate.minVolumeByVenue, this.config.minVolumeByVenue);
+    const volumesChanged = !sameVolumes(
+      candidate.minVolumeByVenue,
+      this.config.minVolumeByVenue,
+    );
     const previousVenues = this.config.venues ?? [...this.hubs.keys()];
     const nextVenues = candidate.venues ?? [...this.hubs.keys()];
     this.config = candidate;
@@ -304,7 +301,7 @@ export class ScreenerService {
   }
 
   private volumeThreshold(venue: VenueId): number {
-    return this.config.minVolumeByVenue?.[venue] ?? this.config.minVolume;
+    return this.config.minVolumeByVenue?.[venue] ?? defaultMinVolume(venue);
   }
 
   /** Drop watched rows the venue's threshold no longer covers. */

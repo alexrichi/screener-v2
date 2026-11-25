@@ -1,4 +1,4 @@
-import { VENUE_IDS } from '../../venues/catalog';
+import { VENUE_IDS, venueForVelaName } from '../../venues/catalog';
 import { SidecarVenueAdapter } from '../../venues/sidecar';
 import type { VenueId } from '../../venues/types';
 import type { ScriptRunSummary } from '../../types';
@@ -31,7 +31,7 @@ const MAX_SERIES_ROUNDS = 2;
 function venueOf(symbol: string): VenueId | null {
   const at = symbol.indexOf(':');
   const provider = (at >= 0 ? symbol.slice(0, at) : 'binance').toLowerCase();
-  return VENUE_IDS.find((id) => id === provider) ?? null;
+  return venueForVelaName(provider) ?? (VENUE_IDS.includes(provider) ? provider : null);
 }
 
 async function run(request: DebugRunRequest): Promise<ScriptRunSummary> {
