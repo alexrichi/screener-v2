@@ -81,7 +81,8 @@ const INPUT_TYPES: Record<string, InputSchema['type']> = {
   session: 'session',
   timeframe: 'timeframe',
   symbol: 'symbol',
-  time: 'int',
+  // Vela renders a date + time picker for `time`, matching Pine's epoch-ms input.
+  time: 'time',
   enum: 'string',
 };
 
