@@ -4,6 +4,7 @@ The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
 ## 0.4.0 — 2026-11-26
+Commit: d45b5d2
 
 - Binance spot is its own venue: `Binance Spot` lists USDT spot with its own
   rate budget, name and `BINANCE.SPOT:` chart symbols; the screener starts with
