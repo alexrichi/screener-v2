@@ -3,6 +3,22 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## 0.4.0 — 2026-11-26
+
+- Binance spot is its own venue: `Binance Spot` lists USDT spot with its own
+  rate budget, name and `BINANCE.SPOT:` chart symbols; the screener starts with
+  it unchecked.
+- Watch thresholds are per venue. Settings keeps one value per exchange, and
+  removing a venue from the screener no longer changes another's threshold.
+- Stored state migrates through database-style schema revisions
+  (`screener.schemaVersion`) before React reads it. The upgrade moves legacy
+  spot tabs, layouts, workspaces, favorites, order-flow preferences, watch
+  thresholds and alert rules and history to `binance_spot` / `BINANCE.SPOT`.
+- Binance USDⓈ-M instruments include its TradFi (equity and commodity)
+  perpetuals such as `QQQUSDT`, beside the crypto contracts.
+- Vela 0.10.19 (vela-ui 0.4.5): price tags on the scale, a compare overlay and
+  drawing fixes.
+
 ## 0.3.0 — 2026-11-23
 Commit: 64da42b
 
