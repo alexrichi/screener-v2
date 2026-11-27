@@ -1446,15 +1446,17 @@ Monaco token colors need six or eight digits. `syncContextViewTheme` copies the
 menu's `--vscode-*` variables from the editor root onto its container: Monaco
 renders the context menu in a shadow root that is a sibling of
 `.monaco-editor`, so without the copy the menu is transparent. `pineFeatures.ts`
-maps the editor-agnostic core of the local MIT
-`../pine-script-syntax-highlighter` checkout (aliased as
-`@pine-highlighter/*`) onto Monaco: document formatting, signature help,
-semantic tokens for user symbols, definition lookup and the document outline.
-Hover uses the reference data from the same checkout, loaded in its own 1.25 MB
+maps the editor-agnostic core of `pine-script-syntax-highlighter` (MIT,
+vendored at `../pine-editor/src/vendor/pine-highlighter` with its `LICENSE`)
+onto Monaco: document formatting, signature help, semantic tokens for user
+symbols, definition lookup and the document outline. Hover uses the vendored
+`data/reference.json`, loaded in its own 1.25 MB
 chunk on the first hover: hovering a function shows its v6 description,
 parameters and returns, a bare object name such as `array` or `label` shows the
-type docs, and a namespace such as `syminfo` lists its members. Only its `core/`
-directory is imported; its VS Code providers are not. The validator and its 475
+type docs, and a namespace such as `syminfo` lists its members. Only the seven
+core files are vendored; its VS Code providers are not. The vendor README
+records the upstream version and commit; update it by copying those files and
+keeping the `../data/reference.json` import. The validator and its 475
 signatures load through a dynamic import on first use, so neither is in the
 initial bundle. `@screener/pine-editor/monaco/react` exports the `PineEditor`
 component; `PinePanel` lazy-loads it and passes the app theme. The component

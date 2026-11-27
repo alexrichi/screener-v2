@@ -39,10 +39,6 @@ const velaUiSrc = path.resolve(root, '../Vela/packages/vela-ui/src');
 const pineEngineSrc = path.resolve(root, '../pine-engine/src/index.ts');
 const pineEditorSrc = path.resolve(root, '../pine-editor/src/index.ts');
 const pineEditorMonaco = path.resolve(root, '../pine-editor/src/monaco');
-const pineHighlighterCore = path.resolve(
-  root,
-  '../pine-script-syntax-highlighter/src/extension/core',
-);
 
 /** Resolve the Vela UI kit from its workspace source, as Vela's own playground does. */
 function velaUiSource(): import('vite').Plugin {
@@ -98,35 +94,6 @@ export default defineConfig({
       {
         find: /^@screener\/pine-editor\/monaco\/react$/,
         replacement: path.join(pineEditorMonaco, 'react.tsx'),
-      },
-      // Local Pine highlighter checkout: formatter, symbols and semantic tokens.
-      {
-        find: /^@pine-highlighter\/formatter$/,
-        replacement: path.join(pineHighlighterCore, 'formatter.ts'),
-      },
-      {
-        find: /^@pine-highlighter\/document-model$/,
-        replacement: path.join(pineHighlighterCore, 'document-model.ts'),
-      },
-      {
-        find: /^@pine-highlighter\/semantic$/,
-        replacement: path.join(pineHighlighterCore, 'semantic.ts'),
-      },
-      {
-        find: /^@pine-highlighter\/call-resolver$/,
-        replacement: path.join(pineHighlighterCore, 'call-resolver.ts'),
-      },
-      {
-        find: /^@pine-highlighter\/tokenizer$/,
-        replacement: path.join(pineHighlighterCore, 'tokenizer.ts'),
-      },
-      {
-        find: /^@pine-highlighter\/reference$/,
-        replacement: path.join(pineHighlighterCore, 'reference.ts'),
-      },
-      {
-        find: /^@pine-highlighter\/symbols$/,
-        replacement: path.join(pineHighlighterCore, 'symbols.ts'),
       },
     ],
   },

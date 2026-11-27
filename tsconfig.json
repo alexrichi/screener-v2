@@ -19,8 +19,7 @@
       "@screener/pine-engine": ["../pine-engine/src/index.ts"],
       "@screener/pine-editor": ["../pine-editor/src/index.ts"],
       "@screener/pine-editor/monaco": ["../pine-editor/src/monaco/index.ts"],
-      "@screener/pine-editor/monaco/react": ["../pine-editor/src/monaco/react.tsx"],
-      "@pine-highlighter/*": ["../pine-script-syntax-highlighter/src/extension/core/*"]
+      "@screener/pine-editor/monaco/react": ["../pine-editor/src/monaco/react.tsx"]
     },
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,
