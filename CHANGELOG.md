@@ -4,6 +4,7 @@ The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
 ## 0.4.2 — 2026-11-27
+Commit: 0398c41
 
 - Binance USDⓈ-M klines subscribe on `/market/stream`. The legacy `/stream`
   path still opens but no longer delivers market streams after the April 2026
