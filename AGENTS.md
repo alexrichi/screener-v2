@@ -1048,9 +1048,13 @@ migration file and give it the next `schema` number instead. Imported layout and
 favorite files are external input, not storage: the startup runner does not touch
 them, so treat them as current-schema data.
 
-**Binance streams may fall back to polling.** The bundled provider can log
-`stream delivered no data; falling back to polling` in restricted environments.
-That is expected; do not treat it as a chart bug.
+**Binance streams may fall back to polling.** USDⓈ-M klines use
+`wss://fstream.binance.com/market/stream`. The legacy `/stream` path still opens
+but no longer delivers market streams after the April 2026 `/public` / `/market`
+/ `/private` split, so it must not be used for klines; order-flow depth and trade
+still work on it (`/public/stream` is the documented alternative). The bundled
+provider can log `stream delivered no data; falling back to polling` in
+restricted environments. That is expected; do not treat it as a chart bug.
 
 **Synced drawings rebuild their links.** Vela 0.10.7 relinks identical drawing
 copies on boot, `applyState` and when drawings sync is enabled; the app stores no

@@ -2,8 +2,11 @@ import { WebSocket } from 'ws';
 import { binanceInterval } from '../src/lib/binance';
 import type { Instrument, Unsubscribe, VenueBar } from '../src/venues/types';
 
-/** Binance USDⓈ-M combined stream endpoint. */
-const DEFAULT_WS_URL = 'wss://fstream.binance.com/stream';
+/**
+ * Binance USDⓈ-M market streams. Since the April 2026 `/public` / `/market` /
+ * `/private` split the legacy `/stream` path still opens but sends no klines.
+ */
+const DEFAULT_WS_URL = 'wss://fstream.binance.com/market/stream';
 export const SPOT_WS_URL = process.env.BINANCE_SPOT_WS_URL ?? 'wss://stream.binance.com:9443/stream';
 const RECONNECT_MS = 2_000;
 /** If the venue socket stays silent this long, start REST polling for the stream. */
