@@ -52,6 +52,20 @@ export function timeframeMsOf(timeframe: string): number {
   return minutes * 60_000;
 }
 
+/**
+ * True when the series has no bar for the current window: the tail is at least
+ * two bars behind `now`. A stopped service or a suspended machine leaves this
+ * state, and a tail-only refresh would leave a hole in the series.
+ */
+export function seriesTailStale(
+  bars: readonly { time: number }[],
+  timeframe: string,
+  now: number,
+): boolean {
+  const last = bars.at(-1);
+  return !last || now - last.time > timeframeMsOf(timeframe) * 2;
+}
+
 /** A bar is forming while its open time plus the timeframe is still ahead of `now`. */
 export function splitBars(
   bars: readonly MetricBar[],

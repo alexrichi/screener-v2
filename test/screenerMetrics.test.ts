@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   barsPerDay,
   computeMetrics,
+  seriesTailStale,
   sessionRangePct,
   splitBars,
   volumeChange24h,
@@ -31,6 +32,13 @@ describe('screener metrics', () => {
     expect(barsPerDay('30')).toBe(48);
     expect(barsPerDay('60')).toBe(24);
     expect(() => barsPerDay('7')).toThrow();
+  });
+
+  it('flags a series whose tail is two bars behind', () => {
+    const bars = [bar(START, 100, 101, 99, 100), bar(START + 15 * MINUTE, 100, 101, 99, 100)];
+    expect(seriesTailStale(bars, '15', START + 60 * MINUTE)).toBe(true);
+    expect(seriesTailStale(bars, '15', START + 30 * MINUTE)).toBe(false);
+    expect(seriesTailStale([], '15', START)).toBe(true);
   });
 
   it('splits the newest bar into forming until its close time passes', () => {

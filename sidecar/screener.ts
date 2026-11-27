@@ -1,6 +1,8 @@
 import {
   barsPerDay,
   computeMetrics,
+  seriesTailStale,
+  timeframeMsOf,
   type MetricBar,
   type ScreenerMetrics,
 } from '../src/lib/screenerMetrics';
@@ -44,6 +46,8 @@ const METRIC_IDS: Array<keyof ScreenerMetrics> = [
 interface SeriesEntry {
   bars: MetricBar[];
   at: number;
+  /** A bar arrived after a hole; the next refresh must fetch the full window. */
+  needsFull?: boolean;
 }
 
 interface ScreenerOptions {
@@ -185,6 +189,12 @@ export class ScreenerService {
 
   start(): void {
     if (this.tickerTimer) return;
+    // A renderer reload stops the service and drops every stream subscription.
+    // Restore them before the REST refresh keeps the series alive on its own.
+    for (const key of this.watched) {
+      const row = this.rows.get(key);
+      if (row) this.ensureStream(row.instrument);
+    }
     void this.poll();
     this.tickerTimer = setInterval(() => void this.poll(), TICKER_INTERVAL_MS);
     this.patchTimer = setInterval(() => this.flushPatches(), PATCH_INTERVAL_MS);
@@ -371,11 +381,13 @@ export class ScreenerService {
     if (!series) return row;
     const last = row.price ?? series.bars.at(-1)?.close ?? Number.NaN;
     if (!Number.isFinite(last)) return row;
-    const metrics = computeMetrics(series.bars, last, Date.now(), {
-      timeframe: this.config.timeframe,
-      rvolDays: this.config.rvolDays,
-      rsiPeriod: this.config.rsiPeriod,
-    });
+    const metrics = series.needsFull
+      ? emptyMetrics()
+      : computeMetrics(series.bars, last, Date.now(), {
+          timeframe: this.config.timeframe,
+          rvolDays: this.config.rvolDays,
+          rsiPeriod: this.config.rsiPeriod,
+        });
     const missing = METRIC_IDS.filter((id) => metrics[id] === null);
     const staleAfter = 2 * 60_000 * Number(this.config.timeframe);
     return {
@@ -487,8 +499,14 @@ export class ScreenerService {
   private onBar(instrument: Instrument, bar: VenueBar): void {
     const next = metricBar(bar);
     const series = this.series.get(instrument.key);
+    const previous = series?.bars.at(-1);
+    const step = timeframeMsOf(this.config.timeframe);
+    // A bar after a hole (a suspended machine, a stopped stream) must trigger a
+    // full fetch; a tail merge would keep the hole and skew the RSI and volumes.
+    const gap = previous !== undefined && next.time - previous.time > step * 1.5;
     const bars = mergeBars(series?.bars ?? [], [next]);
-    const entry = { bars, at: Date.now() };
+    const entry: SeriesEntry = { bars, at: Date.now() };
+    if (gap || series?.needsFull) entry.needsFull = true;
     this.series.set(instrument.key, entry);
     const row = this.rows.get(instrument.key);
     if (!row || !this.watched.has(instrument.key)) return;
@@ -512,7 +530,16 @@ export class ScreenerService {
       queue.push(instrument);
       this.refreshQueues.set(instrument.venue, queue);
     }
-    for (const venue of this.refreshQueues.keys()) this.pumpRefresh(venue);
+    for (const venue of this.refreshQueues.keys()) {
+      // Rows on screen recover first; a reload refreshes the whole table.
+      this.refreshQueues
+        .get(venue)
+        ?.sort(
+          (left, right) =>
+            Number(this.visible.has(right.key)) - Number(this.visible.has(left.key)),
+        );
+      this.pumpRefresh(venue);
+    }
   }
 
   private pumpRefresh(venue: VenueId): void {
@@ -530,18 +557,25 @@ export class ScreenerService {
       this.refreshActive.set(venue, (this.refreshActive.get(venue) ?? 0) + 1);
       this.refreshing.add(instrument.key);
       const generation = this.warmGeneration;
+      const current = this.series.get(instrument.key);
+      const now = Date.now();
+      const stale =
+        !current || seriesTailStale(current.bars, this.config.timeframe, now);
+      // A full window is fetched when the tail is stale or a hole was seen; a
+      // three-bar tail would keep the hole and skew the RSI and volume windows.
+      const full = Boolean(current?.needsFull) || stale;
       void hub
         .getSeries(instrument, this.config.timeframe, {
           limit: this.maxBars(),
           refresh: true,
-          refreshBars: 3,
+          refreshBars: full ? this.maxBars() : 3,
           includeForming: true,
           priority: this.visible.has(instrument.key) ? 'interactive' : 'background',
         })
         .then((bars) => {
           if (generation !== this.warmGeneration) return;
           if (!this.wants(instrument.venue) || !this.watched.has(instrument.key)) return;
-          const entry = { bars: bars.map(metricBar), at: Date.now() };
+          const entry: SeriesEntry = { bars: bars.map(metricBar), at: Date.now() };
           this.series.set(instrument.key, entry);
           const row = this.rows.get(instrument.key);
           if (!row) return;

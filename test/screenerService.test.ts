@@ -47,21 +47,29 @@ function bars(count = 200): VenueBar[] {
 function fakeHub(series = bars()): {
   hub: VenueHub;
   calls: () => number;
+  refreshBars: () => number[];
   setQuote: (quoteVolume: number) => void;
 } {
   let quoteVolume = 2_000_000;
   let calls = 0;
+  const refreshBars: number[] = [];
   const hub = {
     getInstruments: async () => [instrument],
     getTickers: async () => [ticker(quoteVolume)],
-    getSeries: async (_instrument: Instrument, _timeframe: string, opts: { limit: number }) => {
+    getSeries: async (
+      _instrument: Instrument,
+      _timeframe: string,
+      opts: { limit: number; refreshBars?: number },
+    ) => {
       calls += 1;
+      if (opts.refreshBars !== undefined) refreshBars.push(opts.refreshBars);
       return series.slice(-opts.limit);
     },
   } as unknown as VenueHub;
   return {
     hub,
     calls: () => calls,
+    refreshBars: () => refreshBars,
     setQuote: (value) => {
       quoteVolume = value;
     },
@@ -124,6 +132,93 @@ describe('screener service', () => {
     expect(calls()).toBe(1);
     expect(stream.subscribes()).toBe(1);
     service.stop();
+  });
+
+  it('re-subscribes streams after the client reconnects', async () => {
+    const { hub } = fakeHub();
+    const stream = fakeStream();
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map([['binance', stream.stream]]),
+      config: {},
+    });
+
+    await service.poll();
+    await settle();
+    expect(stream.subscribes()).toBe(1);
+
+    service.stop();
+    service.start();
+    await settle();
+    expect(stream.subscribes()).toBe(2);
+    service.stop();
+  });
+
+  it('refreshes the full window when the series tail is stale', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-18T12:00:00Z'));
+    const { hub, refreshBars } = fakeHub();
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map([['binance', fakeStream().stream]]),
+      config: {},
+    });
+    try {
+      await service.poll();
+      await settle();
+      expect(refreshBars()).toEqual([]);
+
+      // A suspended machine or a stopped service leaves the tail hours behind.
+      vi.setSystemTime(new Date('2026-11-18T16:00:00Z'));
+      (service as unknown as { refreshDue(): void }).refreshDue();
+      await settle();
+      expect(refreshBars()).toEqual([818]);
+      expect(service.snapshot().rows[0]!.metrics.rsi).not.toBeNull();
+    } finally {
+      service.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops metrics on a series gap until a full refresh fills it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-18T12:00:00Z'));
+    const { hub, refreshBars } = fakeHub();
+    const stream = fakeStream();
+    const service = new ScreenerService({
+      hubs: new Map([['binance', hub]]),
+      streams: new Map([['binance', stream.stream]]),
+      config: {},
+    });
+    try {
+      await service.poll();
+      await settle();
+      expect(service.snapshot().rows[0]!.metrics.rsi).not.toBeNull();
+
+      // The stream resumes hours later: the next bar skips the hole.
+      const resumed = Date.now() + 4 * 60 * 60_000;
+      stream.push({
+        openTime: resumed,
+        closeTime: resumed + 15 * 60_000 - 1,
+        open: 300,
+        high: 301,
+        low: 299,
+        close: 300,
+        volume: 10,
+      });
+      const gapped = service.snapshot().rows[0]!;
+      expect(gapped.metrics.rsi).toBeNull();
+      expect(gapped.metrics.rvol).toBeNull();
+
+      vi.setSystemTime(new Date(Date.now() + 3 * 60_000));
+      (service as unknown as { refreshDue(): void }).refreshDue();
+      await settle();
+      expect(refreshBars()).toEqual([818]);
+      expect(service.snapshot().rows[0]!.metrics.rsi).not.toBeNull();
+    } finally {
+      service.stop();
+      vi.useRealTimers();
+    }
   });
 
   it('does not watch instruments below the threshold', async () => {

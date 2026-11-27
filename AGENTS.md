@@ -277,6 +277,9 @@ test/venues.test.ts               instrument, adapter and rate-limit tests
   highest-volume rows per venue. The browser sends its top 100 row keys as
   `screener.viewport`. The service computes Range 24h, VolΔ24h, RVOL, VWAPσ and
   Wilder RSI (`lib/screenerMetrics.ts`) and pushes batched patches every 2 s.
+  A renderer reconnect re-subscribes the watched streams; a stale tail or a hole
+  in the series triggers one full-window refresh, so the RSI and volume windows
+  never straddle a gap.
 - `useScreener` fetches `/screener/snapshot` once, then reads `screener.patch`
   frames from the single `/screener` WebSocket and merges them by `instrument.key`
   in 24h-volume order. Configuration (threshold, timeframe, RVOL days, RSI
