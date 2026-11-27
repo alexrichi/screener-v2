@@ -3,6 +3,14 @@
 The app follows the semver in `package.json`. About shows that version next to
 the build stamp; the updater compares only the version.
 
+## 0.4.1 — 2026-11-27
+
+- The screener keeps its candle series whole after the app is reloaded or the
+  machine resumes. The sidecar re-subscribes a watched instrument's stream, and
+  a stale tail or a hole in its series triggers one full-window refresh, so the
+  RSI and volume windows no longer straddle a gap. While a series is gapped, the
+  affected metrics show `-` instead of a wrong value.
+
 ## 0.4.0 — 2026-11-26
 Commit: d45b5d2
 
